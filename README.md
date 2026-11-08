@@ -2,7 +2,7 @@
 
 A local desktop video player with device synchronization for funscript playback. Built with Electron. Windows and Linux.
 
-**[Download Latest Release](https://github.com/DaveMakesWaves/funsync-player/releases/latest)**
+**[Download Latest Release](https://github.com/DaveMakesWaves/funsync-player/releases/latest)** — **[日本語版 README](README.ja.md)**
 
 ---
 
