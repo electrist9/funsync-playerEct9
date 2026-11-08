@@ -1653,6 +1653,8 @@
       "badgeMachine": "머신",
       "badgeHeat": "히터",
       "badgeSpray": "스프레이",
+      "featuresLabel": "기능",
+      "featuresTitle": "FunScript가 구동할 기능을 선택합니다. 비활성화된 기능에는 명령이 전송되지 않습니다.",
       "machineModeTitle": "머신 속도 모드",
       "heater": "히터",
       "spray": "한 번 분사",

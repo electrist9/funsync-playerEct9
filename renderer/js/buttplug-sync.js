@@ -35,6 +35,12 @@ const MIN_POS_DELTA = 0.5;       // Skip sends when position change is < 0.5 (ou
 const DEFAULT_LOOKAHEAD_MS = 60;      // BLE round-trip compensation — fire command this far before action
 const DEFAULT_MIN_STROKE_MS = 60;     // Floor on stroke duration — clamp sub-BLE-roundtrip strokes up
 
+// Script-routable feature types for per-device feature selection.
+// Temperature (heat) and Spray are deliberately NOT here — they are
+// manual-only comfort/utility outputs, never driven from a funscript
+// (see buttplug-manager.js _serializeDevice for the rationale).
+const FEATURE_KEYS = ['linear', 'vibrate', 'scalar', 'oscillate', 'rotate'];
+
 export class ButtplugSync {
   /**
    * @param {object} opts
@@ -86,6 +92,13 @@ export class ButtplugSync {
     // ignored"). Default {min:0, max:100} = no-op. See applyCutoff in
     // device-transform-stack.js and SCOPE-device-cutoff-threshold.md.
     this._cutoffMap = new Map();            // deviceIndex → {min, max}
+    // Per-device feature selection: deviceIndex → { linear, vibrate, scalar,
+    // oscillate, rotate } booleans. Default (absent entry) = ALL enabled.
+    // A device exposing several output types at once (e.g. JoyHub Mirage 3:
+    // Vibrate + Rotate + E-Stim) otherwise receives the same funscript
+    // position on EVERY feature it supports — users want "rotation only" /
+    // "vibration only" control. See _featureOn / setFeatureEnabled.
+    this._featureMap = new Map();
 
     // Range Extender state. When enabled, narrow scripts (natural width
     // < threshold) get stretched to 0-100 BEFORE invert/range/safety in
@@ -721,6 +734,7 @@ export class ButtplugSync {
     );
     for (const dev of devices) {
       if (!dev.canLinear) continue;
+      if (!this._featureOn(dev, 'linear')) continue;
       const assigned = this._axisAssignmentMap.get(dev.index);
       if (assigned && assigned !== 'L0') continue;
       if (this._customRoutingActive && !assigned) continue;
@@ -782,21 +796,26 @@ export class ButtplugSync {
       const pos = applyCutoff(applyRange(inverted ? 100 - stretchedPos : stretchedPos, range), cutoff);
       const prevPos = applyCutoff(applyRange(inverted ? 100 - stretchedPrev : stretchedPrev, range), cutoff);
 
-      if (dev.canLinear && emitLinear) {
+      if (dev.canLinear && emitLinear && this._featureOn(dev, 'linear')) {
         this.buttplug.sendLinear(dev.index, pos, durationMs);
       }
       // Only drive vibrate from main script if no separate vib script is loaded
       // `!dev.canOscillate` gives Oscillate precedence on hardware exposing
       // both (some Lovense): it is the more specific actuator, and driving
-      // both would fight over one motor.
-      if (dev.canVibrate && !dev.canOscillate && !this._vibActions) {
+      // both would fight over one motor. Exception: if the user DISABLED
+      // oscillate for this device, vibrate takes the same motor over instead
+      // of the device going silent.
+      if (dev.canVibrate
+        && (!dev.canOscillate || !this._featureOn(dev, 'oscillate'))
+        && !this._vibActions
+        && this._featureOn(dev, 'vibrate')) {
         const mode = this._vibeModeMap.get(dev.index) || 'speed';
         let intensity = this._computeVibeIntensity(mode, pos, prevPos, sinceLastMs);
         if (this._hasSafetyControls(dev)) intensity = this._applyScalarSafety(dev.index, intensity);
         this.buttplug.sendVibrate(dev.index, intensity);
       }
       // E-stim / scalar devices (skip if dedicated vib script is loaded — vib path drives them)
-      if (dev.canScalar && !this._vibActions) {
+      if (dev.canScalar && !this._vibActions && this._featureOn(dev, 'scalar')) {
         const mode = this._scalarModeMap.get(dev.index) || 'position';
         let intensity = this._computeVibeIntensity(mode, pos, prevPos, sinceLastMs);
         intensity = this._applyScalarSafety(dev.index, intensity);
@@ -806,14 +825,14 @@ export class ButtplugSync {
       // vibrate one: vibrate has no cap and no ramp, while a machine needs
       // both — full power is dangerous and a flywheel has real inertia.
       // Same treatment e-stim gets, for the same reason.
-      if (dev.canOscillate && !this._vibActions) {
+      if (dev.canOscillate && !this._vibActions && this._featureOn(dev, 'oscillate')) {
         const mode = this._oscillateModeMap.get(dev.index) || 'speed';
         let speed = this._computeVibeIntensity(mode, pos, prevPos, sinceLastMs);
         speed = this._applyScalarSafety(dev.index, speed);
         this.buttplug.sendOscillate(dev.index, speed);
       }
       // Rotation devices
-      if (dev.canRotate) {
+      if (dev.canRotate && this._featureOn(dev, 'rotate')) {
         const mode = this._rotateModeMap.get(dev.index) || 'speed';
         if (mode === 'position') {
           const clockwise = pos < 50;
@@ -852,6 +871,17 @@ export class ButtplugSync {
 
   _hasSafetyControls(dev) {
     return !!(dev && (dev.canScalar || dev.canOscillate));
+  }
+
+  /**
+   * Is `feature` enabled for this device? Absent map entry = all features
+   * on (the default). Every funscript-driven send branch checks this so a
+   * multi-feature device (Vibrate + Rotate + E-Stim, etc.) only receives
+   * commands for the features the user opted into.
+   */
+  _featureOn(dev, feature) {
+    const f = this._featureMap.get(dev.index);
+    return !f || f[feature] !== false;
   }
 
   /**
@@ -936,13 +966,13 @@ export class ButtplugSync {
         applyRange(stretchedVib, this._rangeMap.get(dev.index)),
         this._cutoffMap.get(dev.index),
       );
-      if (dev.canVibrate) {
+      if (dev.canVibrate && this._featureOn(dev, 'vibrate')) {
         this.buttplug.sendVibrate(
           dev.index,
           this._hasSafetyControls(dev) ? this._applyScalarSafety(dev.index, ranged) : ranged,
         );
       }
-      if (dev.canScalar) {
+      if (dev.canScalar && this._featureOn(dev, 'scalar')) {
         const scalarIntensity = this._applyScalarSafety(dev.index, ranged);
         this.buttplug.sendScalar(dev.index, scalarIntensity);
       }
@@ -1031,22 +1061,22 @@ export class ButtplugSync {
           // Custom route: send based on device capabilities. Linear was
           // handled above by _dispatchAxisLinearAtBoundary when action-
           // boundary mode is on; skip it here to avoid double-send.
-          if (dev.canLinear && !useActionBoundary) this.buttplug.sendLinear(dev.index, pos, duration);
-          else if (dev.canVibrate) this.buttplug.sendVibrate(dev.index, this._safe(dev, pos));
-          else if (dev.canRotate) this.buttplug.sendRotate(dev.index, this._safe(dev, pos), pos >= 50);
-          else if (dev.canScalar) this.buttplug.sendScalar(dev.index, this._applyScalarSafety(dev.index, pos));
+          if (dev.canLinear && !useActionBoundary && this._featureOn(dev, 'linear')) this.buttplug.sendLinear(dev.index, pos, duration);
+          else if (dev.canVibrate && this._featureOn(dev, 'vibrate')) this.buttplug.sendVibrate(dev.index, this._safe(dev, pos));
+          else if (dev.canRotate && this._featureOn(dev, 'rotate')) this.buttplug.sendRotate(dev.index, this._safe(dev, pos), pos >= 50);
+          else if (dev.canScalar && this._featureOn(dev, 'scalar')) this.buttplug.sendScalar(dev.index, this._applyScalarSafety(dev.index, pos));
         } else if (featureType === 'L' || featureType === 'A') {
-          if (dev.canLinear) this.buttplug.sendLinear(dev.index, pos, duration);
-          if (dev.canScalar) this.buttplug.sendScalar(dev.index, this._applyScalarSafety(dev.index, pos));
+          if (dev.canLinear && this._featureOn(dev, 'linear')) this.buttplug.sendLinear(dev.index, pos, duration);
+          if (dev.canScalar && this._featureOn(dev, 'scalar')) this.buttplug.sendScalar(dev.index, this._applyScalarSafety(dev.index, pos));
         } else if (featureType === 'R') {
-          if (dev.canRotate) {
+          if (dev.canRotate && this._featureOn(dev, 'rotate')) {
             const clockwise = pos < 50;
             const speed = pos < 50 ? ((50 - pos) / 50) * 100 : ((pos - 50) / 50) * 100;
             this.buttplug.sendRotate(dev.index, this._safe(dev, speed), clockwise);
           }
         } else if (featureType === 'V') {
-          if (dev.canVibrate) this.buttplug.sendVibrate(dev.index, this._safe(dev, pos));
-          if (dev.canScalar) this.buttplug.sendScalar(dev.index, this._applyScalarSafety(dev.index, pos));
+          if (dev.canVibrate && this._featureOn(dev, 'vibrate')) this.buttplug.sendVibrate(dev.index, this._safe(dev, pos));
+          if (dev.canScalar && this._featureOn(dev, 'scalar')) this.buttplug.sendScalar(dev.index, this._applyScalarSafety(dev.index, pos));
         }
       }
 
@@ -1098,6 +1128,7 @@ export class ButtplugSync {
       const assigned = this._axisAssignmentMap.get(dev.index);
       if (assigned !== tcode) continue;
       if (!dev.canLinear) continue;
+      if (!this._featureOn(dev, 'linear')) continue;
       const inverted = this._invertedDevices.has(dev.index);
       const pos = applyCutoff(
         applyRange(
@@ -1263,6 +1294,47 @@ export class ButtplugSync {
   }
 
   /**
+   * Enable/disable one funscript-driven feature for one device.
+   * `feature` ∈ FEATURE_KEYS. Turning a feature OFF must also zero the
+   * output immediately if it is currently running — Vibrate/Rotate/
+   * Oscillate hold their last intensity until something stops them
+   * (the same persist bug stop() addresses), so a mid-playback toggle
+   * would otherwise leave the motor spinning. Linear is NOT zeroed:
+   * sending position 0 would physically move the stroker to its
+   * bottom, which is worse than holding position where it stands.
+   */
+  setFeatureEnabled(deviceIndex, feature, enabled) {
+    if (!FEATURE_KEYS.includes(feature)) return;
+    let f = this._featureMap.get(deviceIndex);
+    if (!f) {
+      f = {};
+      this._featureMap.set(deviceIndex, f);
+    }
+    f[feature] = !!enabled;
+    if (!enabled && this.buttplug.connected) {
+      switch (feature) {
+        case 'vibrate': this.buttplug.sendVibrate(deviceIndex, 0); break;
+        case 'scalar': this.buttplug.sendScalar(deviceIndex, 0); break;
+        case 'oscillate': this.buttplug.sendOscillate(deviceIndex, 0); break;
+        case 'rotate': this.buttplug.sendRotate(deviceIndex, 0, true); break;
+      }
+    }
+  }
+
+  getFeatureEnabled(deviceIndex, feature) {
+    const f = this._featureMap.get(deviceIndex);
+    return !f || f[feature] !== false;
+  }
+
+  /** Full feature view for one device — always all five keys, booleans. */
+  getFeatures(deviceIndex) {
+    const f = this._featureMap.get(deviceIndex) || {};
+    const out = {};
+    for (const key of FEATURE_KEYS) out[key] = f[key] !== false;
+    return out;
+  }
+
+  /**
    * Drop every per-device entry for `deviceIndex` from the in-memory maps.
    * Called from app.js's `onDeviceRemoved` wiring so that if Intiface
    * recycles the index (e.g. after a full disconnect + reconnect), a
@@ -1280,10 +1352,12 @@ export class ButtplugSync {
     this._vibeModeMap.delete(deviceIndex);
     this._scalarModeMap.delete(deviceIndex);
     this._rotateModeMap.delete(deviceIndex);
+    this._oscillateModeMap.delete(deviceIndex);
     this._maxIntensityMap.delete(deviceIndex);
     this._rampUpMap.delete(deviceIndex);
     this._rangeMap.delete(deviceIndex);
     this._cutoffMap.delete(deviceIndex);
+    this._featureMap.delete(deviceIndex);
   }
 
   setInterpolationMode(mode) {

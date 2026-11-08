@@ -1653,6 +1653,8 @@
       "badgeMachine": "Machine",
       "badgeHeat": "Chauffage",
       "badgeSpray": "Spray",
+      "featuresLabel": "Fonctions",
+      "featuresTitle": "Choisissez les fonctions pilotées par le script. Les sorties désactivées ne reçoivent aucune commande.",
       "machineModeTitle": "Mode de vitesse de la machine",
       "heater": "Chauffage",
       "spray": "Vaporiser une fois",

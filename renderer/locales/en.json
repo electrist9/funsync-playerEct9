@@ -1777,6 +1777,8 @@
       "badgeMachine": "Machine",
       "badgeHeat": "Heater",
       "badgeSpray": "Spray",
+      "featuresLabel": "Features",
+      "featuresTitle": "Choose which features the funscript drives. Disabled outputs receive no commands.",
       "machineModeTitle": "Machine speed mode",
       "heater": "Heater",
       "spray": "Spray once",

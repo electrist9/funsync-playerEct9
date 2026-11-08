@@ -1653,6 +1653,8 @@
       "badgeMachine": "机器",
       "badgeHeat": "加热",
       "badgeSpray": "喷雾",
+      "featuresLabel": "功能",
+      "featuresTitle": "选择 FunScript 驱动哪些功能。禁用的功能不会收到任何指令。",
       "machineModeTitle": "机器速度模式",
       "heater": "加热",
       "spray": "喷一次",

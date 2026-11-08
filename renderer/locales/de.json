@@ -1653,6 +1653,8 @@
       "badgeMachine": "Maschine",
       "badgeHeat": "Heizung",
       "badgeSpray": "Spray",
+      "featuresLabel": "Funktionen",
+      "featuresTitle": "Auswählen, welche Funktionen das Skript ansteuert. Deaktivierte Ausgaben erhalten keine Befehle.",
       "machineModeTitle": "Maschinengeschwindigkeit",
       "heater": "Heizung",
       "spray": "Einmal spruehen",

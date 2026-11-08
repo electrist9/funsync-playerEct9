@@ -1580,6 +1580,45 @@ export class ConnectionPanel {
 
       row.appendChild(controlsRow);
 
+      // Per-device feature selection — shown only when the device exposes
+      // more than one script-routable feature. One funscript otherwise
+      // drives EVERY feature the device supports (e.g. JoyHub Mirage 3:
+      // Vibrate + Rotate + E-Stim); users want "rotation only" /
+      // "vibration only" control. Heat and spray are manual-only outputs
+      // and are deliberately not listed here.
+      const routableFeatures = [];
+      if (dev.canLinear) routableFeatures.push(['linear', t('connection.buttplug.badgeLinear')]);
+      if (dev.canVibrate) routableFeatures.push(['vibrate', t('connection.buttplug.badgeVibrate')]);
+      if (dev.canOscillate) routableFeatures.push(['oscillate', t('connection.buttplug.badgeMachine')]);
+      if (dev.canRotate) routableFeatures.push(['rotate', t('connection.buttplug.badgeRotate')]);
+      if (dev.canScalar) routableFeatures.push(['scalar', t('connection.buttplug.badgeEstim')]);
+      if (routableFeatures.length > 1) {
+        const featureRow = document.createElement('div');
+        featureRow.className = 'connection-panel__device-controls-row connection-panel__device-feature-row';
+        const featureLabel = document.createElement('span');
+        featureLabel.className = 'connection-panel__device-axis-label';
+        featureLabel.textContent = t('connection.buttplug.featuresLabel');
+        featureLabel.title = t('connection.buttplug.featuresTitle');
+        featureRow.appendChild(featureLabel);
+        const features = this.buttplugSync?.getFeatures(dev.index) || {};
+        for (const [key, label] of routableFeatures) {
+          const wrap = document.createElement('label');
+          wrap.className = 'connection-panel__device-toggle connection-panel__vib-control';
+          const check = document.createElement('input');
+          check.type = 'checkbox';
+          check.checked = features[key] !== false;
+          check.dataset.feature = key;
+          check.addEventListener('change', () => {
+            if (this.buttplugSync) this.buttplugSync.setFeatureEnabled(dev.index, key, check.checked);
+            this._saveButtplugDeviceSettings();
+          });
+          wrap.appendChild(check);
+          wrap.appendChild(document.createTextNode(label));
+          featureRow.appendChild(wrap);
+        }
+        row.appendChild(featureRow);
+      }
+
       // Per-device range — applies to every command type this device
       // supports (linear, vibrate, scalar, rotate). Mirrors the TCode
       // per-axis range pattern so users learn one control surface. The
@@ -1956,6 +1995,15 @@ export class ConnectionPanel {
       if (cutoff && (cutoff.min !== 0 || cutoff.max !== 100)) {
         settings.cutoff = { min: cutoff.min, max: cutoff.max };
       }
+      // Per-device feature selection: persist only DISABLED features.
+      // An absent `features` key reliably means "everything enabled".
+      const features = this.buttplugSync.getFeatures(dev.index);
+      const disabledFeatures = {};
+      let anyFeatureDisabled = false;
+      for (const key of ['linear', 'vibrate', 'scalar', 'oscillate', 'rotate']) {
+        if (features[key] === false) { disabledFeatures[key] = false; anyFeatureDisabled = true; }
+      }
+      if (anyFeatureDisabled) settings.features = disabledFeatures;
       if (Object.keys(settings).length > 0) {
         // Key by index:name — stable across sessions (Intiface preserves device indices)
         // Allows two identical devices to have separate settings
@@ -2015,6 +2063,13 @@ export class ConnectionPanel {
           && Number.isFinite(saved.cutoff.max)) {
           this.buttplugSync.setDeviceCutoff(dev.index, saved.cutoff.min, saved.cutoff.max);
         }
+        // Per-device feature selection. Only disabled features are stored;
+        // everything else defaults to enabled.
+        if (saved.features && typeof saved.features === 'object') {
+          for (const [key, enabled] of Object.entries(saved.features)) {
+            this.buttplugSync.setFeatureEnabled(dev.index, key, !!enabled);
+          }
+        }
       }
     }
 
@@ -2027,6 +2082,10 @@ export class ConnectionPanel {
       if (invertCb) invertCb.checked = this.buttplugSync.isInverted(dev.index);
       const modeSelect = row.querySelector('.connection-panel__device-select');
       if (modeSelect) modeSelect.value = this.buttplugSync.getVibeMode(dev.index);
+      row.querySelectorAll('.connection-panel__device-feature-row input[data-feature]')
+        .forEach((cb) => {
+          cb.checked = this.buttplugSync.getFeatureEnabled(dev.index, cb.dataset.feature);
+        });
     });
   }
 

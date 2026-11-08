@@ -1653,6 +1653,8 @@
       "badgeMachine": "Máquina",
       "badgeHeat": "Calefactor",
       "badgeSpray": "Spray",
+      "featuresLabel": "Funciones",
+      "featuresTitle": "Elige qué funciones controla el guion. Las salidas desactivadas no reciben comandos.",
       "machineModeTitle": "Modo de velocidad de la máquina",
       "heater": "Calefactor",
       "spray": "Pulverizar una vez",

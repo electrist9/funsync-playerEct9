@@ -1653,6 +1653,8 @@
       "badgeMachine": "マシン",
       "badgeHeat": "ヒーター",
       "badgeSpray": "スプレー",
+      "featuresLabel": "機能",
+      "featuresTitle": "FunScriptが駆動する機能を選択します。無効にした機能にはコマンドが送信されません。",
       "machineModeTitle": "マシン速度モード",
       "heater": "ヒーター",
       "spray": "1回噴射",
