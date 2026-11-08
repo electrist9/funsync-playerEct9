@@ -1655,6 +1655,7 @@
       "badgeSpray": "스프레이",
       "featuresLabel": "기능",
       "featuresTitle": "FunScript가 구동할 기능을 선택합니다. 비활성화된 기능에는 명령이 전송되지 않습니다.",
+      "featureBoundTitle": "이 기능의 하한과 상한을 설정합니다. 전송되는 값은 이 범위로 제한됩니다.",
       "machineModeTitle": "머신 속도 모드",
       "heater": "히터",
       "spray": "한 번 분사",

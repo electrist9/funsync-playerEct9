@@ -1779,6 +1779,7 @@
       "badgeSpray": "Spray",
       "featuresLabel": "Features",
       "featuresTitle": "Choose which features the funscript drives. Disabled outputs receive no commands.",
+      "featureBoundTitle": "Sets the lower and upper bounds for this feature. Sent values are clamped to this range.",
       "machineModeTitle": "Machine speed mode",
       "heater": "Heater",
       "spray": "Spray once",

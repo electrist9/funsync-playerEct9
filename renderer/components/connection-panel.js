@@ -1615,6 +1615,62 @@ export class ConnectionPanel {
           wrap.appendChild(check);
           wrap.appendChild(document.createTextNode(label));
           featureRow.appendChild(wrap);
+
+          // Per-feature output bounds (lower/upper clamp). Same cutoff
+          // semantics as the device-level output limits row, scoped to
+          // this one feature — "rotation never above 60, vibration
+          // never below 20". Compact number inputs instead of sliders:
+          // five features × two sliders would not fit the row.
+          const bounds = this.buttplugSync?.getFeatureRange(dev.index, key) || { min: 0, max: 100 };
+          const boundsWrap = document.createElement('span');
+          boundsWrap.className = 'connection-panel__feature-bounds';
+          boundsWrap.title = t('connection.buttplug.featureBoundTitle');
+          const minInput = document.createElement('input');
+          minInput.type = 'number';
+          minInput.min = '0';
+          minInput.max = '100';
+          minInput.step = '1';
+          minInput.value = String(bounds.min);
+          minInput.className = 'connection-panel__feature-bound';
+          minInput.dataset.featureBound = key;
+          minInput.dataset.bound = 'min';
+          minInput.setAttribute('aria-label', `${label} ${t('connection.buttplug.cutoffMin')}`);
+          const maxInput = document.createElement('input');
+          maxInput.type = 'number';
+          maxInput.min = '0';
+          maxInput.max = '100';
+          maxInput.step = '1';
+          maxInput.value = String(bounds.max);
+          maxInput.className = 'connection-panel__feature-bound';
+          maxInput.dataset.featureBound = key;
+          maxInput.dataset.bound = 'max';
+          maxInput.setAttribute('aria-label', `${label} ${t('connection.buttplug.cutoffMax')}`);
+          const commitBound = () => {
+            let mn = parseInt(minInput.value, 10);
+            let mx = parseInt(maxInput.value, 10);
+            if (!Number.isFinite(mn)) mn = 0;
+            if (!Number.isFinite(mx)) mx = 100;
+            mn = Math.max(0, Math.min(100, mn));
+            mx = Math.max(0, Math.min(100, mx));
+            if (mn >= mx) {
+              // Mirror the device range/cutoff sliders: push whichever
+              // side is not being edited so the clamp can never collapse.
+              if (document.activeElement === minInput) mn = mx - 1;
+              else mx = mn + 1;
+              if (mn < 0) { mn = 0; mx = Math.max(mx, 1); }
+              if (mx > 100) { mx = 100; mn = Math.min(mn, 99); }
+              minInput.value = String(mn);
+              maxInput.value = String(mx);
+            }
+            if (this.buttplugSync) this.buttplugSync.setFeatureRange(dev.index, key, mn, mx);
+            this._saveButtplugDeviceSettings();
+          };
+          minInput.addEventListener('change', commitBound);
+          maxInput.addEventListener('change', commitBound);
+          boundsWrap.appendChild(minInput);
+          boundsWrap.appendChild(document.createTextNode('–'));
+          boundsWrap.appendChild(maxInput);
+          featureRow.appendChild(boundsWrap);
         }
         row.appendChild(featureRow);
       }
@@ -2004,6 +2060,18 @@ export class ConnectionPanel {
         if (features[key] === false) { disabledFeatures[key] = false; anyFeatureDisabled = true; }
       }
       if (anyFeatureDisabled) settings.features = disabledFeatures;
+      // Per-feature output bounds: persist only non-default entries.
+      // An absent `featureRanges` key reliably means "no bounds".
+      const featureRanges = {};
+      let anyFeatureRange = false;
+      for (const key of ['linear', 'vibrate', 'scalar', 'oscillate', 'rotate']) {
+        const fr = this.buttplugSync.getFeatureRange(dev.index, key);
+        if (fr.min !== 0 || fr.max !== 100) {
+          featureRanges[key] = { min: fr.min, max: fr.max };
+          anyFeatureRange = true;
+        }
+      }
+      if (anyFeatureRange) settings.featureRanges = featureRanges;
       if (Object.keys(settings).length > 0) {
         // Key by index:name — stable across sessions (Intiface preserves device indices)
         // Allows two identical devices to have separate settings
@@ -2070,6 +2138,15 @@ export class ConnectionPanel {
             this.buttplugSync.setFeatureEnabled(dev.index, key, !!enabled);
           }
         }
+        // Per-feature output bounds. Only non-default entries are stored;
+        // everything else defaults to {min:0, max:100} (no-op clamp).
+        if (saved.featureRanges && typeof saved.featureRanges === 'object') {
+          for (const [key, fr] of Object.entries(saved.featureRanges)) {
+            if (fr && Number.isFinite(fr.min) && Number.isFinite(fr.max)) {
+              this.buttplugSync.setFeatureRange(dev.index, key, fr.min, fr.max);
+            }
+          }
+        }
       }
     }
 
@@ -2085,6 +2162,11 @@ export class ConnectionPanel {
       row.querySelectorAll('.connection-panel__device-feature-row input[data-feature]')
         .forEach((cb) => {
           cb.checked = this.buttplugSync.getFeatureEnabled(dev.index, cb.dataset.feature);
+        });
+      row.querySelectorAll('.connection-panel__feature-bound')
+        .forEach((inp) => {
+          const fr = this.buttplugSync.getFeatureRange(dev.index, inp.dataset.featureBound);
+          inp.value = String(inp.dataset.bound === 'min' ? fr.min : fr.max);
         });
     });
   }

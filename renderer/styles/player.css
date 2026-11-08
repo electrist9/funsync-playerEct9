@@ -2550,6 +2550,32 @@ html.has-wco .player__top-bar :is(button, input, select, a, [role="button"], [ta
   cursor: pointer;
 }
 
+/* Per-feature output bounds: compact min–max number inputs next to the
+   feature checkboxes in the device card's feature row. */
+.connection-panel__feature-bounds {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.connection-panel__feature-bound {
+  width: 42px;
+  padding: 2px 4px;
+  background: var(--surface-overlay);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-size: 11px;
+  text-align: center;
+}
+
+.connection-panel__feature-bound:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
 .connection-panel__device-select {
   background: var(--surface-overlay);
   border: 1px solid var(--border-subtle);

@@ -1655,6 +1655,7 @@
       "badgeSpray": "Spray",
       "featuresLabel": "Funciones",
       "featuresTitle": "Elige qué funciones controla el guion. Las salidas desactivadas no reciben comandos.",
+      "featureBoundTitle": "Establece los límites mínimo y máximo de esta función. Los valores enviados se ajustan a este rango.",
       "machineModeTitle": "Modo de velocidad de la máquina",
       "heater": "Calefactor",
       "spray": "Pulverizar una vez",

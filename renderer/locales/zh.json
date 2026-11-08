@@ -1655,6 +1655,7 @@
       "badgeSpray": "喷雾",
       "featuresLabel": "功能",
       "featuresTitle": "选择 FunScript 驱动哪些功能。禁用的功能不会收到任何指令。",
+      "featureBoundTitle": "设置此功能的下限和上限；发送的值将被限制在此范围内。",
       "machineModeTitle": "机器速度模式",
       "heater": "加热",
       "spray": "喷一次",

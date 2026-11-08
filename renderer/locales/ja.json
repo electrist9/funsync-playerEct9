@@ -1655,6 +1655,7 @@
       "badgeSpray": "スプレー",
       "featuresLabel": "機能",
       "featuresTitle": "FunScriptが駆動する機能を選択します。無効にした機能にはコマンドが送信されません。",
+      "featureBoundTitle": "その機能の下限と上限を設定します。送信される値はこの範囲に収まります。",
       "machineModeTitle": "マシン速度モード",
       "heater": "ヒーター",
       "spray": "1回噴射",

@@ -283,7 +283,7 @@ Handy 接続キーの `safeStorage`（DPAPI）暗号化ユーティリティ。�
 |---|---|---|
 | library.js | 6,878 | サムネイルグリッド、仮想スクロール、検索/ソート/フィルタ、スキャン（並列 4） |
 | script-editor.js | 3,416 | funscript エディタ本体 |
-| connection-panel.js | 3,135 | デバイス接続 UI（Handy/Buttplug/TCode/Autoblow） |
+| connection-panel.js | 3,275 | デバイス接続 UI（Handy/Buttplug/TCode/Autoblow） |
 | settings-panel.js | 2,318 | 設定 UI（SETTINGS_DEFAULTS L21–39） |
 | playlists.js / categories.js / queue-panel.js | 1,593 / 781 / 658 | グループ化・再生キュー |
 | nav-bar.js / vr-format-panel.js / eroscripts-panel.js / vr-modal.js | 598 / 579 / 528 / 457 | ナビ・VR 形式・EroScripts 検索・VR 再生モーダル |
@@ -344,13 +344,14 @@ device-transform-stack.js ── 共通変換順: [1]Range Extender → [2]Inver
 ### 6.4 Buttplug.io（Intiface Central）
 
 - **buttplug-manager.js**（742 行）: buttplug.mjs dynamic import、`connect(port=12345)`。送信結果は SENT / NOT_CONNECTED / failed の結果オブジェクト（同期ループは failed を無視、次 tick で補正）。
-- **buttplug-sync.js**（1,429 行）: `class ButtplugSync`（L38）。**`setInterval` 40ms（25Hz）— rAF ではない**（タブ非アクティブでも生き残るため）。既定 `'action-boundary'` モード = 境界毎に 1 個の LinearCmd（duration=全ストローク時間、BLE friendly）。`'interpolated'` はレガシー約 20Hz。導出強度（vibe）は常に interpolated。
-  - `_sendPendingActions`（L590–655）: catch-up index、`duration=max(50, next.at - time)`、`>MAX_GAP(5000ms)` はスキップ、補間 → `applySpeedLimit` → delta<0.5 スキップ。
-  - **設計不変条件（L643–651）**: 導出強度の分母は `sinceLastMs=max(1, now-_lastSendTime)` **のみ**。`duration` は LinearCmd 専用。混ぜると 1 ストローク毎のランプバグになる。
-  - `_dispatchLinearAtBoundary`（L664–706）: `_lastLinearSentForIdx` で重複排除、`_lastSentPos` は更新しない。
-  - `_sendToDevices`（L746–831）: 全デバイス共通ファンネル。Extender 1 回適用 → デバイス毎 invert(100-pos) → range → cutoff を **pos と prevPos 両方**に → actuator 分岐（linear / vibrate / scalar / oscillate（SCALAR 安全経路、フライホイール）/ rotate）。
-  - `_safe`（L849）: Max 上限 + ramp は `canScalar||canOscillate` のみ。
-  - **`_handleSourceChange`（L400、`emptied`）**: stopAll + index リセット + ramp 再アーミング（コミュニティの「振動が止まらない」バグ修正）。
+- **buttplug-sync.js**（1,565 行）: `class ButtplugSync`（L38）。**`setInterval` 40ms（25Hz）— rAF ではない**（タブ非アクティブでも生き残るため）。既定 `'action-boundary'` モード = 境界毎に 1 個の LinearCmd（duration=全ストローク時間、BLE friendly）。`'interpolated'` はレガシー約 20Hz。導出強度（vibe）は常に interpolated。
+  - `_sendPendingActions`（L611–676）: catch-up index、`duration=max(50, next.at - time)`、`>MAX_GAP(5000ms)` はスキップ、補間 → `applySpeedLimit` → delta<0.5 スキップ。
+  - **設計不変条件（L669–672）**: 導出強度の分母は `sinceLastMs=max(1, now-_lastSendTime)` **のみ**。`duration` は LinearCmd 専用。混ぜると 1 ストローク毎のランプバグになる。
+  - `_dispatchLinearAtBoundary`（L685–727）: `_lastLinearSentForIdx` で重複排除、`_lastSentPos` は更新しない。
+  - `_sendToDevices`（L769–860）: 全デバイス共通ファンネル。Extender 1 回適用 → デバイス毎 invert(100-pos) → range → cutoff を **pos と prevPos 両方**に → actuator 分岐（linear / vibrate / scalar / oscillate（SCALAR 安全経路、フライホイール）/ rotate）。
+  - `_safe`（L882）: Max 上限 + ramp は `canScalar||canOscillate` のみ。
+  - **機能別選択・下限/上限（2026-11 追加）**: `_featureMap`（deviceIndex → {linear, vibrate, scalar, oscillate, rotate}、既定=全有効）を `_featureOn()`（L896）が全 funscript 駆動分岐でチェック。機能 OFF 時は 1 回 0 を送信（linear はゼロ送しない）。`_featureRangeMap`（deviceIndex → {feature: {min, max}}）は `_featureClamp()`（L909）による機能別最終値への**ハードクリップ（cutoff 方式。再スケールではない）**。適用順は**デバイスレベルのスタック（range/cutoff）の後、`_applyScalarSafety` の前** — したがって Max 上限（既定 70）は常に絶対で、高い下限でも安全上限を迂回できない。min>=max は未設定扱い（degenerate passthrough）。公開 API: `setFeatureEnabled`/`getFeatureEnabled`/`getFeatures`（L1336〜）、`setFeatureRange`/`getFeatureRange`（L1376〜）。UI: 接続パネルのデバイスカード「機能」行（機能毎チェックボックス + 下限/上限の数値入力、min<max は push ロジックで強制）。永続化: `buttplug.deviceSettings` → `features` / `featureRanges`（非既定値のみ保存）。
+  - **`_handleSourceChange`（L421、`emptied`）**: stopAll + index リセット + ramp 再アーミング（コミュニティの「振動が止まらない」バグ修正）。
 - **device-transform-stack.js**（329 行）: ヘッダ L1–38 が仕様書。全エンジンが `applyDeviceStack` を経由。L24–29: **Range=再スケール / Cutoff=クリップ** の区別。`computeNaturalRange`（L207）。
 
 ### 6.5 TCode（OSR2 / SR6、10 軸）
@@ -521,7 +522,7 @@ tag `v*` で起動。win+linux matrix（`fail-fast:false`）、Node 22 + Python 
 
 ## 13. 押さえておくべき設計不変条件（改修時の注意）
 
-- ButtplugSync: 導出強度の分母は `sinceLastMs` のみ、`duration` は LinearCmd 専用（buttplug-sync.js L643–651）
+- ButtplugSync: 導出強度の分母は `sinceLastMs` のみ、`duration` は LinearCmd 専用（buttplug-sync.js L669–672）
 - `emptied` ハンドラで stopAll + ramp 再アーミング（振動が止まらないバグ、L400）
 - HSSP 操作は `_hsspChain` で直列化、stop/setup は絶対に破棄しない（handy-manager.js L214–218）
 - TCode `stop()`: シリアルは DSTOP のみ、非シリアルのみ中立フレーム（tcode-manager.js L201–224）

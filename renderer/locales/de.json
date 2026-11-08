@@ -1655,6 +1655,7 @@
       "badgeSpray": "Spray",
       "featuresLabel": "Funktionen",
       "featuresTitle": "Auswählen, welche Funktionen das Skript ansteuert. Deaktivierte Ausgaben erhalten keine Befehle.",
+      "featureBoundTitle": "Unter- und Obergrenze für diese Funktion festlegen. Sendewerte werden auf diesen Bereich begrenzt.",
       "machineModeTitle": "Maschinengeschwindigkeit",
       "heater": "Heizung",
       "spray": "Einmal spruehen",
