@@ -99,14 +99,19 @@ export class ButtplugSync {
     // position on EVERY feature it supports — users want "rotation only" /
     // "vibration only" control. See _featureOn / setFeatureEnabled.
     this._featureMap = new Map();
-    // Per-feature output bounds: deviceIndex → { feature: {min, max} }.
-    // A HARD floor/ceiling clamp on the FINAL value sent for that one
-    // feature — the per-feature analogue of _cutoffMap ("rotation never
-    // above 60, vibration never below 20"). Applied after the device-
-    // level stack (range/cutoff) and BEFORE the scalar safety cap, so
-    // the Max cap stays absolute and a high floor can never bypass it.
+    // Per-feature transforms: deviceIndex → { feature: {min, max} } for
+    // each of two independent per-feature steps, mirroring the device-
+    // level range/cutoff pair but scoped to one feature:
+    //  - _featureRangeMap: RESCALE (applyRange) — remaps that feature's
+    //    0-100 into the min-max window ("rotation only ever uses 20-80").
+    //  - _featureCutoffMap: HARD CLAMP (applyCutoff) — pins out-of-band
+    //    values ("rotation never above 60, vibration never below 20").
+    // Applied after the device-level stack (range/cutoff) — rescale
+    // first, then clamp — and BEFORE the scalar safety cap, so the Max
+    // cap stays absolute and a high floor can never bypass it.
     // Default (absent entry) = {min:0, max:100} = no-op.
-    this._featureRangeMap = new Map();
+    this._featureRangeMap = new Map();      // rescale windows
+    this._featureCutoffMap = new Map();     // clamp windows
 
     // Range Extender state. When enabled, narrow scripts (natural width
     // < threshold) get stretched to 0-100 BEFORE invert/range/safety in
@@ -753,7 +758,7 @@ export class ButtplugSync {
       // See device-transform-stack.js §2 for composition order rationale.
       pos = applyRange(pos, this._rangeMap.get(dev.index));
       pos = applyCutoff(pos, this._cutoffMap.get(dev.index));
-      pos = this._featureClamp(dev, 'linear', pos);
+      pos = this._featureTransform(dev, 'linear', pos);
       this.buttplug.sendLinear(dev.index, pos, durationMs);
     }
   }
@@ -806,7 +811,7 @@ export class ButtplugSync {
       const prevPos = applyCutoff(applyRange(inverted ? 100 - stretchedPrev : stretchedPrev, range), cutoff);
 
       if (dev.canLinear && emitLinear && this._featureOn(dev, 'linear')) {
-        this.buttplug.sendLinear(dev.index, this._featureClamp(dev, 'linear', pos), durationMs);
+        this.buttplug.sendLinear(dev.index, this._featureTransform(dev, 'linear', pos), durationMs);
       }
       // Only drive vibrate from main script if no separate vib script is loaded
       // `!dev.canOscillate` gives Oscillate precedence on hardware exposing
@@ -820,7 +825,7 @@ export class ButtplugSync {
         && this._featureOn(dev, 'vibrate')) {
         const mode = this._vibeModeMap.get(dev.index) || 'speed';
         let intensity = this._computeVibeIntensity(mode, pos, prevPos, sinceLastMs);
-        intensity = this._featureClamp(dev, 'vibrate', intensity);
+        intensity = this._featureTransform(dev, 'vibrate', intensity);
         if (this._hasSafetyControls(dev)) intensity = this._applyScalarSafety(dev.index, intensity);
         this.buttplug.sendVibrate(dev.index, intensity);
       }
@@ -828,7 +833,7 @@ export class ButtplugSync {
       if (dev.canScalar && !this._vibActions && this._featureOn(dev, 'scalar')) {
         const mode = this._scalarModeMap.get(dev.index) || 'position';
         let intensity = this._computeVibeIntensity(mode, pos, prevPos, sinceLastMs);
-        intensity = this._featureClamp(dev, 'scalar', intensity);
+        intensity = this._featureTransform(dev, 'scalar', intensity);
         intensity = this._applyScalarSafety(dev.index, intensity);
         this.buttplug.sendScalar(dev.index, intensity);
       }
@@ -839,7 +844,7 @@ export class ButtplugSync {
       if (dev.canOscillate && !this._vibActions && this._featureOn(dev, 'oscillate')) {
         const mode = this._oscillateModeMap.get(dev.index) || 'speed';
         let speed = this._computeVibeIntensity(mode, pos, prevPos, sinceLastMs);
-        speed = this._featureClamp(dev, 'oscillate', speed);
+        speed = this._featureTransform(dev, 'oscillate', speed);
         speed = this._applyScalarSafety(dev.index, speed);
         this.buttplug.sendOscillate(dev.index, speed);
       }
@@ -849,12 +854,12 @@ export class ButtplugSync {
         if (mode === 'position') {
           const clockwise = pos < 50;
           let speed = pos < 50 ? ((50 - pos) / 50) * 100 : ((pos - 50) / 50) * 100;
-          speed = this._featureClamp(dev, 'rotate', speed);
+          speed = this._featureTransform(dev, 'rotate', speed);
           if (this._hasSafetyControls(dev)) speed = this._applyScalarSafety(dev.index, speed);
           this.buttplug.sendRotate(dev.index, speed, clockwise);
         } else {
           let intensity = this._computeVibeIntensity(mode, pos, prevPos, sinceLastMs);
-          intensity = this._featureClamp(dev, 'rotate', intensity);
+          intensity = this._featureTransform(dev, 'rotate', intensity);
           if (this._hasSafetyControls(dev)) intensity = this._applyScalarSafety(dev.index, intensity);
           const clockwise = pos >= prevPos;
           this.buttplug.sendRotate(dev.index, intensity, clockwise);
@@ -899,18 +904,21 @@ export class ButtplugSync {
   }
 
   /**
-   * Clamp `value` into the user's per-feature bounds for this device.
-   * Cutoff semantics (hard floor/ceiling; in-band values untouched), NOT
-   * a rescale — see applyCutoff in device-transform-stack.js. Absent
-   * entry = {min:0, max:100} = no-op. Applied as the last per-feature
-   * shaping step but BEFORE _applyScalarSafety so the Max cap can never
-   * be bypassed by a high floor.
+   * Apply this device's per-feature transform pair to one outgoing value:
+   * rescale (feature range, applyRange) first, then clamp (feature
+   * cutoff, applyCutoff) — same order as the device-level stack. Absent
+   * entries are no-ops. Applied as the last per-feature shaping step but
+   * BEFORE _applyScalarSafety so the Max cap can never be bypassed by a
+   * high floor.
    */
-  _featureClamp(dev, feature, value) {
+  _featureTransform(dev, feature, value) {
     const r = this._featureRangeMap.get(dev.index);
     const fr = r && r[feature];
-    if (!fr) return value;
-    return applyCutoff(value, fr);
+    if (fr) value = applyRange(value, fr);
+    const c = this._featureCutoffMap.get(dev.index);
+    const fc = c && c[feature];
+    if (fc) value = applyCutoff(value, fc);
+    return value;
   }
 
   /**
@@ -996,14 +1004,14 @@ export class ButtplugSync {
         this._cutoffMap.get(dev.index),
       );
       if (dev.canVibrate && this._featureOn(dev, 'vibrate')) {
-        const vibValue = this._featureClamp(dev, 'vibrate', ranged);
+        const vibValue = this._featureTransform(dev, 'vibrate', ranged);
         this.buttplug.sendVibrate(
           dev.index,
           this._hasSafetyControls(dev) ? this._applyScalarSafety(dev.index, vibValue) : vibValue,
         );
       }
       if (dev.canScalar && this._featureOn(dev, 'scalar')) {
-        const scalarIntensity = this._applyScalarSafety(dev.index, this._featureClamp(dev, 'scalar', ranged));
+        const scalarIntensity = this._applyScalarSafety(dev.index, this._featureTransform(dev, 'scalar', ranged));
         this.buttplug.sendScalar(dev.index, scalarIntensity);
       }
     }
@@ -1091,22 +1099,22 @@ export class ButtplugSync {
           // Custom route: send based on device capabilities. Linear was
           // handled above by _dispatchAxisLinearAtBoundary when action-
           // boundary mode is on; skip it here to avoid double-send.
-          if (dev.canLinear && !useActionBoundary && this._featureOn(dev, 'linear')) this.buttplug.sendLinear(dev.index, this._featureClamp(dev, 'linear', pos), duration);
-          else if (dev.canVibrate && this._featureOn(dev, 'vibrate')) this.buttplug.sendVibrate(dev.index, this._safe(dev, this._featureClamp(dev, 'vibrate', pos)));
-          else if (dev.canRotate && this._featureOn(dev, 'rotate')) this.buttplug.sendRotate(dev.index, this._safe(dev, this._featureClamp(dev, 'rotate', pos)), pos >= 50);
-          else if (dev.canScalar && this._featureOn(dev, 'scalar')) this.buttplug.sendScalar(dev.index, this._applyScalarSafety(dev.index, this._featureClamp(dev, 'scalar', pos)));
+          if (dev.canLinear && !useActionBoundary && this._featureOn(dev, 'linear')) this.buttplug.sendLinear(dev.index, this._featureTransform(dev, 'linear', pos), duration);
+          else if (dev.canVibrate && this._featureOn(dev, 'vibrate')) this.buttplug.sendVibrate(dev.index, this._safe(dev, this._featureTransform(dev, 'vibrate', pos)));
+          else if (dev.canRotate && this._featureOn(dev, 'rotate')) this.buttplug.sendRotate(dev.index, this._safe(dev, this._featureTransform(dev, 'rotate', pos)), pos >= 50);
+          else if (dev.canScalar && this._featureOn(dev, 'scalar')) this.buttplug.sendScalar(dev.index, this._applyScalarSafety(dev.index, this._featureTransform(dev, 'scalar', pos)));
         } else if (featureType === 'L' || featureType === 'A') {
-          if (dev.canLinear && this._featureOn(dev, 'linear')) this.buttplug.sendLinear(dev.index, this._featureClamp(dev, 'linear', pos), duration);
-          if (dev.canScalar && this._featureOn(dev, 'scalar')) this.buttplug.sendScalar(dev.index, this._applyScalarSafety(dev.index, this._featureClamp(dev, 'scalar', pos)));
+          if (dev.canLinear && this._featureOn(dev, 'linear')) this.buttplug.sendLinear(dev.index, this._featureTransform(dev, 'linear', pos), duration);
+          if (dev.canScalar && this._featureOn(dev, 'scalar')) this.buttplug.sendScalar(dev.index, this._applyScalarSafety(dev.index, this._featureTransform(dev, 'scalar', pos)));
         } else if (featureType === 'R') {
           if (dev.canRotate && this._featureOn(dev, 'rotate')) {
             const clockwise = pos < 50;
             const speed = pos < 50 ? ((50 - pos) / 50) * 100 : ((pos - 50) / 50) * 100;
-            this.buttplug.sendRotate(dev.index, this._safe(dev, this._featureClamp(dev, 'rotate', speed)), clockwise);
+            this.buttplug.sendRotate(dev.index, this._safe(dev, this._featureTransform(dev, 'rotate', speed)), clockwise);
           }
         } else if (featureType === 'V') {
-          if (dev.canVibrate && this._featureOn(dev, 'vibrate')) this.buttplug.sendVibrate(dev.index, this._safe(dev, this._featureClamp(dev, 'vibrate', pos)));
-          if (dev.canScalar && this._featureOn(dev, 'scalar')) this.buttplug.sendScalar(dev.index, this._applyScalarSafety(dev.index, this._featureClamp(dev, 'scalar', pos)));
+          if (dev.canVibrate && this._featureOn(dev, 'vibrate')) this.buttplug.sendVibrate(dev.index, this._safe(dev, this._featureTransform(dev, 'vibrate', pos)));
+          if (dev.canScalar && this._featureOn(dev, 'scalar')) this.buttplug.sendScalar(dev.index, this._applyScalarSafety(dev.index, this._featureTransform(dev, 'scalar', pos)));
         }
       }
 
@@ -1167,7 +1175,7 @@ export class ButtplugSync {
         ),
         this._cutoffMap.get(dev.index),
       );
-      this.buttplug.sendLinear(dev.index, this._featureClamp(dev, 'linear', pos), duration);
+      this.buttplug.sendLinear(dev.index, this._featureTransform(dev, 'linear', pos), duration);
     }
 
     this._axisLastLinearSentIdx.set(tcode, nextIdx);
@@ -1365,13 +1373,45 @@ export class ButtplugSync {
   }
 
   /**
-   * Set per-feature output bounds (lower/upper clamp) for one device.
+   * Set per-feature output limits (lower/upper clamp) for one device.
    * `feature` ∈ FEATURE_KEYS. Values outside [min,max] are PINNED to the
    * boundary (cutoff semantics); in-band values pass through untouched —
-   * this is NOT a rescale like setDeviceRange. min >= max is stored
+   * this is NOT a rescale like setFeatureRange. min >= max is stored
    * defensively but no-ops at apply time (applyCutoff refuses degenerate
    * windows; the UI keeps min < max). Default {min:0, max:100} = no-op;
    * setting exactly that clears the stored entry.
+   */
+  setFeatureCutoff(deviceIndex, feature, min, max) {
+    if (!FEATURE_KEYS.includes(feature)) return;
+    if (!Number.isFinite(min) || !Number.isFinite(max)) return;
+    let r = this._featureCutoffMap.get(deviceIndex);
+    if (!r) {
+      r = {};
+      this._featureCutoffMap.set(deviceIndex, r);
+    }
+    if (min === 0 && max === 100) {
+      delete r[feature];
+      if (Object.keys(r).length === 0) this._featureCutoffMap.delete(deviceIndex);
+      return;
+    }
+    r[feature] = { min, max };
+  }
+
+  /** Per-feature clamp for one device. Default {min:0, max:100} = no-op. */
+  getFeatureCutoff(deviceIndex, feature) {
+    const r = this._featureCutoffMap.get(deviceIndex);
+    const fr = r && r[feature];
+    return fr ? { min: fr.min, max: fr.max } : { min: 0, max: 100 };
+  }
+
+  /**
+   * Set per-feature power range (RESCALE) for one device — the per-
+   * feature analogue of setDeviceRange: linearly remaps that feature's
+   * 0-100 into the min-max window ("rotation only ever uses 20-80").
+   * Applied BEFORE the per-feature cutoff clamp, mirroring the device-
+   * level stack order. Degenerate windows (min >= max) are stored but
+   * no-op'd at apply time (applyRange); the UI keeps min < max. Default
+   * {min:0, max:100} = no-op; setting exactly that clears the entry.
    */
   setFeatureRange(deviceIndex, feature, min, max) {
     if (!FEATURE_KEYS.includes(feature)) return;
@@ -1389,7 +1429,7 @@ export class ButtplugSync {
     r[feature] = { min, max };
   }
 
-  /** Per-feature bounds for one device. Default {min:0, max:100} = no-op. */
+  /** Per-feature rescale for one device. Default {min:0, max:100} = no-op. */
   getFeatureRange(deviceIndex, feature) {
     const r = this._featureRangeMap.get(deviceIndex);
     const fr = r && r[feature];
@@ -1421,6 +1461,7 @@ export class ButtplugSync {
     this._cutoffMap.delete(deviceIndex);
     this._featureMap.delete(deviceIndex);
     this._featureRangeMap.delete(deviceIndex);
+    this._featureCutoffMap.delete(deviceIndex);
   }
 
   setInterpolationMode(mode) {

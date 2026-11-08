@@ -1414,6 +1414,8 @@ export class ConnectionPanel {
 
   _updateButtplugDeviceList() {
     if (!this.buttplug) return;
+    // A full re-render detaches every chip anchor; drop any open editor.
+    this._closeFeatureEditor();
 
     const list = this._panel.querySelector('#bp-device-list');
     const devices = this.buttplug.devices;
@@ -1616,61 +1618,23 @@ export class ConnectionPanel {
           wrap.appendChild(document.createTextNode(label));
           featureRow.appendChild(wrap);
 
-          // Per-feature output bounds (lower/upper clamp). Same cutoff
-          // semantics as the device-level output limits row, scoped to
-          // this one feature — "rotation never above 60, vibration
-          // never below 20". Compact number inputs instead of sliders:
-          // five features × two sliders would not fit the row.
-          const bounds = this.buttplugSync?.getFeatureRange(dev.index, key) || { min: 0, max: 100 };
-          const boundsWrap = document.createElement('span');
-          boundsWrap.className = 'connection-panel__feature-bounds';
-          boundsWrap.title = t('connection.buttplug.featureBoundTitle');
-          const minInput = document.createElement('input');
-          minInput.type = 'number';
-          minInput.min = '0';
-          minInput.max = '100';
-          minInput.step = '1';
-          minInput.value = String(bounds.min);
-          minInput.className = 'connection-panel__feature-bound';
-          minInput.dataset.featureBound = key;
-          minInput.dataset.bound = 'min';
-          minInput.setAttribute('aria-label', `${label} ${t('connection.buttplug.cutoffMin')}`);
-          const maxInput = document.createElement('input');
-          maxInput.type = 'number';
-          maxInput.min = '0';
-          maxInput.max = '100';
-          maxInput.step = '1';
-          maxInput.value = String(bounds.max);
-          maxInput.className = 'connection-panel__feature-bound';
-          maxInput.dataset.featureBound = key;
-          maxInput.dataset.bound = 'max';
-          maxInput.setAttribute('aria-label', `${label} ${t('connection.buttplug.cutoffMax')}`);
-          const commitBound = () => {
-            let mn = parseInt(minInput.value, 10);
-            let mx = parseInt(maxInput.value, 10);
-            if (!Number.isFinite(mn)) mn = 0;
-            if (!Number.isFinite(mx)) mx = 100;
-            mn = Math.max(0, Math.min(100, mn));
-            mx = Math.max(0, Math.min(100, mx));
-            if (mn >= mx) {
-              // Mirror the device range/cutoff sliders: push whichever
-              // side is not being edited so the clamp can never collapse.
-              if (document.activeElement === minInput) mn = mx - 1;
-              else mx = mn + 1;
-              if (mn < 0) { mn = 0; mx = Math.max(mx, 1); }
-              if (mx > 100) { mx = 100; mn = Math.min(mn, 99); }
-              minInput.value = String(mn);
-              maxInput.value = String(mx);
-            }
-            if (this.buttplugSync) this.buttplugSync.setFeatureRange(dev.index, key, mn, mx);
-            this._saveButtplugDeviceSettings();
-          };
-          minInput.addEventListener('change', commitBound);
-          maxInput.addEventListener('change', commitBound);
-          boundsWrap.appendChild(minInput);
-          boundsWrap.appendChild(document.createTextNode('–'));
-          boundsWrap.appendChild(maxInput);
-          featureRow.appendChild(boundsWrap);
+          // Per-feature transform editor: power range (rescale) and
+          // output limits (clip), edited in a compact popover so the
+          // row stays one control per feature. The chip summarizes the
+          // active windows ("R 20–80 C 0–60") and doubles as the
+          // trigger; a muted dash when nothing is set.
+          const chip = document.createElement('button');
+          chip.type = 'button';
+          chip.className = 'connection-panel__feature-chip';
+          chip.dataset.featureChip = key;
+          chip.title = t('connection.buttplug.featureEditTitle');
+          chip.setAttribute('aria-label', `${label} ${t('connection.buttplug.featureEditTitle')}`);
+          chip.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this._showFeatureEditor(chip, dev, key, label);
+          });
+          this._updateFeatureChip(chip, dev, key);
+          featureRow.appendChild(chip);
         }
         row.appendChild(featureRow);
       }
@@ -2060,18 +2024,29 @@ export class ConnectionPanel {
         if (features[key] === false) { disabledFeatures[key] = false; anyFeatureDisabled = true; }
       }
       if (anyFeatureDisabled) settings.features = disabledFeatures;
-      // Per-feature output bounds: persist only non-default entries.
-      // An absent `featureRanges` key reliably means "no bounds".
+      // Per-feature transforms: persist only non-default entries.
+      // `featureRanges` = rescale windows, `featureCutoffs` = clamp
+      // windows; an absent key reliably means "no transform" for that
+      // kind. (Saves from before the split stored the clamp windows
+      // under `featureRanges`; the loader migrates that shape.)
       const featureRanges = {};
+      const featureCutoffs = {};
       let anyFeatureRange = false;
+      let anyFeatureCutoff = false;
       for (const key of ['linear', 'vibrate', 'scalar', 'oscillate', 'rotate']) {
         const fr = this.buttplugSync.getFeatureRange(dev.index, key);
         if (fr.min !== 0 || fr.max !== 100) {
           featureRanges[key] = { min: fr.min, max: fr.max };
           anyFeatureRange = true;
         }
+        const fc = this.buttplugSync.getFeatureCutoff(dev.index, key);
+        if (fc.min !== 0 || fc.max !== 100) {
+          featureCutoffs[key] = { min: fc.min, max: fc.max };
+          anyFeatureCutoff = true;
+        }
       }
       if (anyFeatureRange) settings.featureRanges = featureRanges;
+      if (anyFeatureCutoff) settings.featureCutoffs = featureCutoffs;
       if (Object.keys(settings).length > 0) {
         // Key by index:name — stable across sessions (Intiface preserves device indices)
         // Allows two identical devices to have separate settings
@@ -2138,12 +2113,26 @@ export class ConnectionPanel {
             this.buttplugSync.setFeatureEnabled(dev.index, key, !!enabled);
           }
         }
-        // Per-feature output bounds. Only non-default entries are stored;
-        // everything else defaults to {min:0, max:100} (no-op clamp).
+        // Per-feature transforms. Only non-default entries are stored;
+        // everything else defaults to {min:0, max:100} (no-op).
+        // Migration: saves written before the range/cutoff split stored
+        // the CLAMP windows under `featureRanges` and never wrote
+        // `featureCutoffs` — treat that shape as cutoffs. New saves
+        // write both keys with the current semantics (featureRanges =
+        // rescale, featureCutoffs = clamp).
+        const legacyClipsOnly = !saved.featureCutoffs && !!saved.featureRanges;
+        if (saved.featureCutoffs && typeof saved.featureCutoffs === 'object') {
+          for (const [key, fc] of Object.entries(saved.featureCutoffs)) {
+            if (fc && Number.isFinite(fc.min) && Number.isFinite(fc.max)) {
+              this.buttplugSync.setFeatureCutoff(dev.index, key, fc.min, fc.max);
+            }
+          }
+        }
         if (saved.featureRanges && typeof saved.featureRanges === 'object') {
           for (const [key, fr] of Object.entries(saved.featureRanges)) {
             if (fr && Number.isFinite(fr.min) && Number.isFinite(fr.max)) {
-              this.buttplugSync.setFeatureRange(dev.index, key, fr.min, fr.max);
+              if (legacyClipsOnly) this.buttplugSync.setFeatureCutoff(dev.index, key, fr.min, fr.max);
+              else this.buttplugSync.setFeatureRange(dev.index, key, fr.min, fr.max);
             }
           }
         }
@@ -2163,10 +2152,9 @@ export class ConnectionPanel {
         .forEach((cb) => {
           cb.checked = this.buttplugSync.getFeatureEnabled(dev.index, cb.dataset.feature);
         });
-      row.querySelectorAll('.connection-panel__feature-bound')
-        .forEach((inp) => {
-          const fr = this.buttplugSync.getFeatureRange(dev.index, inp.dataset.featureBound);
-          inp.value = String(inp.dataset.bound === 'min' ? fr.min : fr.max);
+      row.querySelectorAll('.connection-panel__feature-chip[data-feature-chip]')
+        .forEach((chip) => {
+          this._updateFeatureChip(chip, dev, chip.dataset.featureChip);
         });
     });
   }
@@ -2216,6 +2204,180 @@ export class ConnectionPanel {
 
     tooltip.style.left = `${left}px`;
     tooltip.style.top = `${top}px`;
+  }
+
+  /**
+   * Render one feature's chip summary: active rescale ("R 20–80") and
+   * clamp ("C 0–60") windows, or a muted dash when the feature has no
+   * transforms. Called at build time and whenever values change.
+   */
+  _updateFeatureChip(chip, dev, key) {
+    const parts = [];
+    if (this.buttplugSync) {
+      const fr = this.buttplugSync.getFeatureRange(dev.index, key);
+      if (fr.min !== 0 || fr.max !== 100) parts.push(t('connection.buttplug.featureChipRange', { min: fr.min, max: fr.max }));
+      const fc = this.buttplugSync.getFeatureCutoff(dev.index, key);
+      if (fc.min !== 0 || fc.max !== 100) parts.push(t('connection.buttplug.featureChipCutoff', { min: fc.min, max: fc.max }));
+    }
+    chip.textContent = parts.length ? parts.join(' ') : '–';
+    chip.classList.toggle('connection-panel__feature-chip--empty', parts.length === 0);
+  }
+
+  /**
+   * Per-feature transform editor popover: power range (rescale) and
+   * output limits (clip) for one feature, each a min/max number pair.
+   * Modeled on _showVibeModeHelp: appended to the panel (not the row)
+   * so the scroll container never clips it, positioned from the
+   * anchor's rect, closed on outside click or Escape. Re-clicking the
+   * same chip toggles it shut.
+   */
+  _showFeatureEditor(anchorEl, dev, key, label) {
+    const alreadyOpen = this._featureEditorPop && this._featureEditorPop._anchor === anchorEl;
+    this._closeFeatureEditor();
+    if (alreadyOpen || !this.buttplugSync) return;
+
+    const pop = document.createElement('div');
+    pop.className = 'connection-panel__feature-editor';
+    pop._anchor = anchorEl;
+
+    const title = document.createElement('div');
+    title.className = 'connection-panel__feature-editor-title';
+    title.textContent = label;
+    pop.appendChild(title);
+
+    const addGroup = (headKey, hintKey, current, commit, minAriaKey, maxAriaKey) => {
+      const group = document.createElement('div');
+      group.className = 'connection-panel__feature-editor-group';
+      const head = document.createElement('div');
+      head.className = 'connection-panel__feature-editor-head';
+      head.textContent = t(headKey);
+      head.title = t(hintKey);
+      group.appendChild(head);
+      const controls = document.createElement('div');
+      controls.className = 'connection-panel__feature-editor-row';
+      const mkInput = (bound, ariaKey, value) => {
+        const input = document.createElement('input');
+        input.type = 'number';
+        input.min = '0';
+        input.max = '100';
+        input.step = '1';
+        input.value = String(value);
+        input.className = 'connection-panel__feature-bound';
+        input.dataset.bound = bound;
+        input.setAttribute('aria-label', `${label} ${t(ariaKey)}`);
+        return input;
+      };
+      const minInput = mkInput('min', minAriaKey, current.min);
+      const maxInput = mkInput('max', maxAriaKey, current.max);
+      const commitBound = () => {
+        let mn = parseInt(minInput.value, 10);
+        let mx = parseInt(maxInput.value, 10);
+        if (!Number.isFinite(mn)) mn = 0;
+        if (!Number.isFinite(mx)) mx = 100;
+        mn = Math.max(0, Math.min(100, mn));
+        mx = Math.max(0, Math.min(100, mx));
+        if (mn >= mx) {
+          // Mirror the device range/cutoff sliders: push whichever
+          // side is not being edited so the window can never collapse.
+          if (document.activeElement === minInput) mn = mx - 1;
+          else mx = mn + 1;
+          if (mn < 0) { mn = 0; mx = Math.max(mx, 1); }
+          if (mx > 100) { mx = 100; mn = Math.min(mn, 99); }
+          minInput.value = String(mn);
+          maxInput.value = String(mx);
+        }
+        commit(mn, mx);
+        this._saveButtplugDeviceSettings();
+        this._updateFeatureChip(anchorEl, dev, key);
+      };
+      minInput.addEventListener('change', commitBound);
+      maxInput.addEventListener('change', commitBound);
+      controls.appendChild(minInput);
+      controls.appendChild(document.createTextNode('–'));
+      controls.appendChild(maxInput);
+      group.appendChild(controls);
+      pop.appendChild(group);
+    };
+
+    addGroup(
+      'connection.buttplug.featureEditorRangeTitle',
+      'connection.buttplug.featureRangeTitle',
+      this.buttplugSync.getFeatureRange(dev.index, key),
+      (mn, mx) => this.buttplugSync.setFeatureRange(dev.index, key, mn, mx),
+      'connection.buttplug.rangeMin',
+      'connection.buttplug.rangeMax',
+    );
+    addGroup(
+      'connection.buttplug.featureEditorCutoffTitle',
+      'connection.buttplug.featureBoundTitle',
+      this.buttplugSync.getFeatureCutoff(dev.index, key),
+      (mn, mx) => this.buttplugSync.setFeatureCutoff(dev.index, key, mn, mx),
+      'connection.buttplug.cutoffMin',
+      'connection.buttplug.cutoffMax',
+    );
+
+    const reset = document.createElement('button');
+    reset.type = 'button';
+    reset.className = 'connection-panel__feature-editor-reset';
+    reset.textContent = t('connection.buttplug.featureEditorReset');
+    reset.addEventListener('click', () => {
+      this.buttplugSync.setFeatureRange(dev.index, key, 0, 100);
+      this.buttplugSync.setFeatureCutoff(dev.index, key, 0, 100);
+      this._saveButtplugDeviceSettings();
+      this._updateFeatureChip(anchorEl, dev, key);
+      this._closeFeatureEditor();
+    });
+    pop.appendChild(reset);
+
+    // Close on click outside the popover. The chip's own handler
+    // stopPropagation()s, so re-clicking the anchor toggles via the
+    // alreadyOpen check above instead of racing this listener.
+    this._featureEditorCloseHandler = (e) => {
+      if (pop.contains(e.target)) return;
+      this._closeFeatureEditor();
+    };
+    this._featureEditorKeyHandler = (e) => {
+      if (e.key === 'Escape') this._closeFeatureEditor();
+    };
+    setTimeout(() => {
+      if (!this._featureEditorPop) return;
+      document.addEventListener('click', this._featureEditorCloseHandler);
+      document.addEventListener('keydown', this._featureEditorKeyHandler);
+    }, 0);
+
+    // Append to panel (not the row) so the scroll container can't clip.
+    this._panel.appendChild(pop);
+    this._featureEditorPop = pop;
+
+    // Position below the chip, flipped left if it would run off the
+    // panel's right edge; clamped vertically like _showVibeModeHelp.
+    const chipRect = anchorEl.getBoundingClientRect();
+    const panelRect = this._panel.getBoundingClientRect();
+    let left = chipRect.left - panelRect.left;
+    let top = chipRect.bottom - panelRect.top + 6;
+    pop.style.left = `${left}px`;
+    pop.style.top = `${top}px`;
+    const popWidth = pop.offsetWidth;
+    if (left + popWidth > panelRect.width) left = chipRect.right - panelRect.left - popWidth;
+    if (left < 4) left = 4;
+    const maxTop = panelRect.height - pop.offsetHeight - 8;
+    if (maxTop > 0 && top > maxTop) top = maxTop;
+    if (top < 4) top = 4;
+    pop.style.left = `${left}px`;
+    pop.style.top = `${top}px`;
+  }
+
+  _closeFeatureEditor() {
+    if (this._featureEditorCloseHandler) {
+      document.removeEventListener('click', this._featureEditorCloseHandler);
+      this._featureEditorCloseHandler = null;
+    }
+    if (this._featureEditorKeyHandler) {
+      document.removeEventListener('keydown', this._featureEditorKeyHandler);
+      this._featureEditorKeyHandler = null;
+    }
+    this._featureEditorPop?.remove();
+    this._featureEditorPop = null;
   }
 
   _showButtplugError(message) {

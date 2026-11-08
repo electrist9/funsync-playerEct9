@@ -2550,16 +2550,91 @@ html.has-wco .player__top-bar :is(button, input, select, a, [role="button"], [ta
   cursor: pointer;
 }
 
-/* Per-feature output bounds: compact min–max number inputs next to the
-   feature checkboxes in the device card's feature row. */
-.connection-panel__feature-bounds {
+/* Per-feature transform chip: sits next to each feature checkbox in the
+   device card's feature row, summarizing the active range/cutoff windows
+   ("R 20–80 C 0–60") and opening the editor popover on click. A muted
+   dash when the feature has no transforms. */
+.connection-panel__feature-chip {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  padding: 1px 6px;
+  background: var(--surface-overlay);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  color: var(--text-secondary);
   font-size: 11px;
+  line-height: 1.4;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.connection-panel__feature-chip:hover {
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+
+.connection-panel__feature-chip--empty {
+  background: none;
+  border-color: transparent;
+  color: var(--text-muted);
+}
+
+/* Per-feature transform editor popover: range (rescale) and cutoff
+   (clamp) min/max pairs. Same anchoring model as .connection-panel__vibe-help. */
+.connection-panel__feature-editor {
+  position: absolute;
+  z-index: 20;
+  background: #1a1a2e;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  padding: 10px 12px;
+  width: 210px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.connection-panel__feature-editor-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #eee;
+  margin-bottom: 8px;
+}
+
+.connection-panel__feature-editor-group {
+  margin-bottom: 8px;
+}
+
+.connection-panel__feature-editor-head {
+  color: #e94560;
+  font-size: 11px;
+  margin-bottom: 2px;
+}
+
+.connection-panel__feature-editor-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
   color: var(--text-secondary);
 }
 
+.connection-panel__feature-editor-reset {
+  margin-top: 2px;
+  padding: 3px 8px;
+  background: none;
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.connection-panel__feature-editor-reset:hover {
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+
+/* min/max number inputs inside the feature editor popover. */
 .connection-panel__feature-bound {
   width: 42px;
   padding: 2px 4px;
