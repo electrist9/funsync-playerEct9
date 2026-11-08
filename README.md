@@ -59,6 +59,9 @@ A local desktop video player with device synchronization for funscript playback.
 ### Device Integration
 - **The Handy** — HSSP cloud sync with automatic script upload, drift detection, 10-second cloud health check (catches BT-mode switches)
 - **Buttplug.io** — Connect to 700+ devices via Intiface Central (strokers, vibrators, rotators, e-stim)
+  - **Per-feature ON/OFF** — for devices that expose multiple features (e.g. rotation + vibration), choose which outputs funscript actually drives. Disabled features stay idle while the rest of the device keeps syncing.
+  - **Per-feature min/max bounds (clip)** — set a lower and upper bound (0–100) for each feature. Sent values are hard-clipped to that range: values below the floor are pinned up to it, values above the ceiling are pinned down, and everything in between plays unchanged (a clip, not a rescale). Defaults 0/100 = no effect. Bounds are saved per device and restored on reconnect.
+  - **Application order (pipeline)** — funscript position → smoothing / speed limit / extender → invert → device range (rescale) → device cutoff (clip) → **per-feature bounds (clip)** → safety cap (Max intensity + ramp-up, on scalar/oscillate devices) → device. The safety cap is always applied last, so a feature floor can never bypass the Max intensity limit, and a feature ceiling above it is still capped.
 - **TCode serial (OSR2 / SR6)** — USB serial with per-axis enable + min/max controls for all 10 axes (experimental)
 - **Autoblow Ultra / VacuGlide 2** — Cloud API (experimental)
 - **Auto-connect on startup** — Handy and Buttplug.io connect automatically if previously configured
