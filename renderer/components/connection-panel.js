@@ -2026,9 +2026,14 @@ export class ConnectionPanel {
       if (anyFeatureDisabled) settings.features = disabledFeatures;
       // Per-feature transforms: persist only non-default entries.
       // `featureRanges` = rescale windows, `featureCutoffs` = clamp
-      // windows; an absent key reliably means "no transform" for that
-      // kind. (Saves from before the split stored the clamp windows
-      // under `featureRanges`; the loader migrates that shape.)
+      // windows. The loader identifies pre-split saves (which stored
+      // clamp windows under `featureRanges` and never wrote
+      // `featureCutoffs`) by the ABSENCE of the `featureCutoffs` key,
+      // so whenever either kind is non-default BOTH keys must be
+      // written — even `{}` — to mark the new semantics. Writing
+      // `featureRanges` alone made a range-only config indistinguishable
+      // from a pre-split clamp save, and the loader then re-applied the
+      // range values as cutoffs on the next start.
       const featureRanges = {};
       const featureCutoffs = {};
       let anyFeatureRange = false;
@@ -2045,8 +2050,10 @@ export class ConnectionPanel {
           anyFeatureCutoff = true;
         }
       }
-      if (anyFeatureRange) settings.featureRanges = featureRanges;
-      if (anyFeatureCutoff) settings.featureCutoffs = featureCutoffs;
+      if (anyFeatureRange || anyFeatureCutoff) {
+        settings.featureRanges = featureRanges;
+        settings.featureCutoffs = featureCutoffs;
+      }
       if (Object.keys(settings).length > 0) {
         // Key by index:name — stable across sessions (Intiface preserves device indices)
         // Allows two identical devices to have separate settings
@@ -2118,8 +2125,9 @@ export class ConnectionPanel {
         // Migration: saves written before the range/cutoff split stored
         // the CLAMP windows under `featureRanges` and never wrote
         // `featureCutoffs` — treat that shape as cutoffs. New saves
-        // write both keys with the current semantics (featureRanges =
-        // rescale, featureCutoffs = clamp).
+        // always write BOTH keys when either kind is non-default (see
+        // `_saveButtplugDeviceSettings`), so an absent `featureCutoffs`
+        // key reliably marks a pre-split save.
         const legacyClipsOnly = !saved.featureCutoffs && !!saved.featureRanges;
         if (saved.featureCutoffs && typeof saved.featureCutoffs === 'object') {
           for (const [key, fc] of Object.entries(saved.featureCutoffs)) {
