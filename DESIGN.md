@@ -1,6 +1,6 @@
 # FunSync Player 設計書
 
-- 対象: `funsync-player-main/`（バージョン 0.9.2）
+- 対象: `funsync-player/`（バージョン 0.9.2）
 - 作成日: 2026-10-21
 - ライセンス: GPL-3.0-or-later / 作者: DaveMakesWaves / appId: `com.funsync.player`
 
@@ -81,7 +81,7 @@ FunSync Player は、ローカル（および Web 上）の動画 — 特に VR 
 ## 3. ディレクトリ構成
 
 ```
-funsync-player-main/
+funsync-player/
 ├── package.json              # entry: electron/main.js
 ├── electron-builder.yml      # asar, extraResources(backend-dist→backend), ffmpeg 同梱
 ├── vitest.config.js          # jsdom, tests/unit/**, retry:2
