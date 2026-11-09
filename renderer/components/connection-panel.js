@@ -2260,7 +2260,7 @@ export class ConnectionPanel {
         input.type = 'number';
         input.min = '0';
         input.max = '100';
-        input.step = '1';
+        input.step = '10';
         input.value = String(value);
         input.className = 'connection-panel__feature-bound';
         input.dataset.bound = bound;
@@ -2279,10 +2279,11 @@ export class ConnectionPanel {
         if (mn >= mx) {
           // Mirror the device range/cutoff sliders: push whichever
           // side is not being edited so the window can never collapse.
-          if (document.activeElement === minInput) mn = mx - 1;
-          else mx = mn + 1;
-          if (mn < 0) { mn = 0; mx = Math.max(mx, 1); }
-          if (mx > 100) { mx = 100; mn = Math.min(mn, 99); }
+          // Push by the spinner step (10) so the result stays on-step.
+          if (document.activeElement === minInput) mn = mx - 10;
+          else mx = mn + 10;
+          if (mn < 0) { mn = 0; mx = Math.max(mx, 10); }
+          if (mx > 100) { mx = 100; mn = Math.min(mn, 90); }
           minInput.value = String(mn);
           maxInput.value = String(mx);
         }
