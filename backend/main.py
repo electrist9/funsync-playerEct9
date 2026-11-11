@@ -16,6 +16,7 @@ from routes.vr_api import router as vr_api_router
 from routes.remote import router as remote_router
 from routes.remote_sync import router as remote_sync_router
 from routes.locale import router as locale_router, set_user_data_dir
+from routes.generate import router as generate_router
 
 app = FastAPI(title="FunSync Backend", version="0.1.0")
 
@@ -35,6 +36,7 @@ app.include_router(vr_api_router, tags=["vr"])
 app.include_router(remote_router, prefix="/api/remote", tags=["remote"])
 app.include_router(remote_sync_router, prefix="/api/remote", tags=["remote-sync"])
 app.include_router(locale_router, prefix="/api/remote", tags=["locale"])
+app.include_router(generate_router, prefix="/api/generate", tags=["generate"])
 
 # Web remote SPA served at /remote/ — static files live in backend/web-remote/.
 # Resolve relative to this file so it works both in dev (python main.py) and
@@ -108,7 +110,8 @@ if __name__ == "__main__":
     parser.add_argument("--host", type=str, default="0.0.0.0")
     # Path to electron-conf's userData dir (contains config.json). Used
     # by the web-remote locale endpoint to mirror the desktop's chosen
-    # language. Optional — endpoint falls back to 'en' if not provided.
+    # language, and as the root of the generated-funscript store
+    # (<userData>/generated-scripts). Optional — both fall back if absent.
     parser.add_argument("--user-data-dir", type=str, default=None)
     args = parser.parse_args()
 

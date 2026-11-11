@@ -17,6 +17,7 @@
   <link rel="stylesheet" href="styles/up-next.css">
   <link rel="stylesheet" href="styles/vr-format-panel.css">
   <link rel="stylesheet" href="styles/queue-panel.css">
+  <link rel="stylesheet" href="styles/generate.css">
   <!-- Modern interface-style layer — MUST be last so its [data-style="modern"]
        rules win specificity ties. Inert unless <html data-style="modern">. -->
   <link rel="stylesheet" href="styles/modern.css">
@@ -197,6 +198,17 @@
               <span class="control-btn__label" data-i18n="player.editor">Editor</span>
             </button>
 
+            <!-- Generate — asks the local backend to analyse the video
+                 currently playing (audio beats or picture motion) and build a
+                 funscript. Kept next to Editor because both work on the
+                 script for this video; Generate creates one, Editor edits it.
+                 Hidden until a LOCAL video is loaded (the backend needs a
+                 file on disk, so remote streams cannot be analysed). -->
+            <button id="btn-generate" class="control-btn control-btn--labelled" data-i18n-aria-label="player.generate" data-i18n-title="player.generate" aria-label="Generate funscript" title="Generate funscript" hidden>
+              <i data-lucide="wand-sparkles"></i>
+              <span class="control-btn__label" data-i18n="player.generate">Generate</span>
+            </button>
+
             <span class="controls-cluster-gap" aria-hidden="true"></span>
 
             <!-- Devices button — was a `bluetooth` icon, but Handy uses
@@ -312,6 +324,16 @@
         <div id="player-sync-chip" class="player__sync-chip" role="status" aria-live="polite" hidden>
           <span class="player__sync-chip-dot" aria-hidden="true"></span>
           <span id="player-sync-chip-text" class="player__sync-chip-text"></span>
+        </div>
+        <!-- Generation status — mirrors the backend job so the user can keep
+             watching while the analysis runs (Nielsen #1). The mini-bar is
+             only shown while a job is running; the text carries the percent. -->
+        <div id="player-generate-chip" class="player__generate-chip" role="status" aria-live="polite" hidden>
+          <span class="player__generate-chip-dot" aria-hidden="true"></span>
+          <span id="player-generate-chip-text" class="player__generate-chip-text"></span>
+          <span id="player-generate-chip-bar" class="player__generate-chip-bar" aria-hidden="true" hidden>
+            <span id="player-generate-chip-bar-fill" class="player__generate-chip-bar-fill"></span>
+          </span>
         </div>
         <div id="video-category-dots" class="player__category-dots"></div>
         <!-- TEMP DISABLED (2026-07-30): Load-from-URL hidden until it works reliably.

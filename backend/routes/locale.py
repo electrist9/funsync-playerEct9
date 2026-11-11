@@ -16,17 +16,16 @@ import json
 import os
 from fastapi import APIRouter
 
+from services.paths import get_user_data_dir, set_user_data_dir
+
 router = APIRouter()
 
 # Set once at backend startup by main.py from the --user-data-dir argv.
+# The value now lives in services.paths, which is shared with the
+# generated-script store; this module re-exports the setter so existing
+# callers (main.py, tests/test_locale.py) keep working unchanged.
 # None until that wiring runs — the endpoint handles that case too.
-_user_data_dir: str | None = None
-
-
-def set_user_data_dir(path: str | None) -> None:
-    """Called from main.py at startup with the value of --user-data-dir."""
-    global _user_data_dir
-    _user_data_dir = path
+__all__ = ["router", "set_user_data_dir", "get_user_data_dir"]
 
 
 @router.get("/locale")
@@ -40,9 +39,10 @@ async def get_locale():
     'en' + dark.
     """
     result = {"locale": "en", "theme": "dark"}
-    if not _user_data_dir:
+    user_data_dir = get_user_data_dir()
+    if not user_data_dir:
         return result
-    config_path = os.path.join(_user_data_dir, "config.json")
+    config_path = os.path.join(user_data_dir, "config.json")
     try:
         with open(config_path, "r", encoding="utf-8") as f:
             data = json.load(f)

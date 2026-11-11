@@ -44,7 +44,18 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    # numpy (funscript generation engines) ships its own PyInstaller hook, so
+    # nothing extra is needed to bundle it — the engines import it lazily
+    # inside their worker thread, which keeps it out of backend startup and
+    # /health. These two subpackages are build-time tooling that numpy never
+    # imports at runtime; dropping them claws back a few MB of the ~30-40 MB
+    # numpy adds to the bundle. numpy.testing is deliberately NOT excluded:
+    # parts of numpy import it lazily, and a missing-module crash at runtime
+    # is worse than the size.
+    excludes=[
+        'numpy.distutils',
+        'numpy.f2py',
+    ],
     noarchive=False,
 )
 

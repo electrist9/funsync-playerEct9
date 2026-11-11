@@ -56,6 +56,16 @@ A local desktop video player with device synchronization for funscript playback.
 - Configurable speed limit to prevent impossible device moves
 - Per-setting persistence — configure once, applies to all playback
 
+### Auto-Generate Funscripts (Experimental)
+- Builds a funscript from the video you are watching, **entirely on your own machine** — the video is never uploaded and nothing leaves your computer
+- **Audio beats** — onset detection on the soundtrack with tempo estimation; best for rhythmic or music-driven content
+- **Picture motion** — block-motion analysis of the frames; best for POV and motion-driven content with no useful soundtrack
+- Quality presets: **Fast** (finest CPU trade-off, finishes in seconds), **Standard**, **High** (finer sampling, slower)
+- Advanced options: stroke style (alternating / sine / energy), device speed limit, detection sensitivity, stroke range
+- Results are kept **inside FunSync** — preview them in the player first, and nothing is written next to your video until you press **Save next to video**
+- Saving **never silently replaces a hand-made `.funscript`**: FunSync warns you first, and cancelling leaves your existing file exactly as it was
+- One generation at a time; a running job can be cancelled, and its progress stays visible in the player while you browse
+
 ### Device Integration
 - **The Handy** — HSSP cloud sync with automatic script upload, drift detection, 10-second cloud health check (catches BT-mode switches)
 - **Buttplug.io** — Connect to 700+ devices via Intiface Central (strokers, vibrators, rotators, e-stim)

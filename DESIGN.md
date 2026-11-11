@@ -259,16 +259,16 @@ Handy 接続キーの `safeStorage`（DPAPI）暗号化ユーティリティ。�
 ### 5.1 index.html（414 行）
 
 - **CSP**（L6）: `script-src 'self'`（インラインスクリプト禁止）、`connect-src` は localhost + handyfeeling.com + discuss.eroscripts.com 等。
-- スタイルシート 12 枚 + `modern.css` を最後（uiStyle:'modern' 時に上書き）。
+- スタイルシート 13 枚 + `modern.css` を最後（uiStyle:'modern' 時に上書き）。
 - 静的コンテナ: `#library-container`（既定）/ `#playlists-container` / `#categories-container` / `#player-container`（`#video`、`#miniplayer-bar`）。
 - エントリ: `js/process-shim.js` + `js/app.js`（type=module）。
-- 別ウィンドウ HTML: `audience-room.html` / `editor-popout.html` / `player-popout.html` / `splash.html`。
+- 別ウィンドウ HTML: `audience-room.html` / `editor-popout.html` / `player-popout.html` / `splash.html`。funscript 自動生成のボタンと進捗バッジは**メインウィンドウのみ**（ポップアウトは再生専用。生成はメインウィンドウで行い、進行は常時バッジで確認できる）。
 
 ### 5.2 app.js（10,316 行）— God-object オーケストレータ
 
 `class App`（L110）が**全マネージャと全コンポーネントを保持**する。
 
-- マネージャ: VideoPlayer, FunscriptEngine, HandyManager, ButtplugManager+ButtplugSync, TCodeManager+TCodeSync, AutoblowManager+AutoblowSync, VRBridge, RemoteBridge, AudienceBridge, SessionTracker, dataService
+- マネージャ: VideoPlayer, FunscriptEngine, HandyManager, ButtplugManager+ButtplugSync, TCodeManager+TCodeSync, AutoblowManager+AutoblowSync, VRBridge, RemoteBridge, AudienceBridge, SessionTracker, dataService, GeneratePanel（funscript 自動生成 UI。`getBackendPort` を **getter** で受け、ポート変更を拾い続ける。`_previewGeneratedScript` は `scriptEditor.setFunscriptPath(null)` を呼び、エディタの自動保存が手製サイドカーを置換しないようにする）
 - コンポーネント: library, playlists, categories, nav-bar, connection-panel, settings-panel, queue-panel, vr-format-panel, eroscripts-panel, script-editor …（L111–152）
 
 **ビュー遷移**（SPA ルーターなし）:
@@ -394,7 +394,7 @@ device-transform-stack.js ── 共通変換順: [1]Range Extender → [2]Inver
 ### 7.1 起動と構成（main.py、118 行）
 
 - FastAPI（title "FunSync Backend" v0.1.0）+ uvicorn。**既定ポート 5123、ホスト 0.0.0.0**（LAN 公開）。CORS `allow_origins=["*"]`（Electron レンダラと LAN クライアント向け）。
-- ルーター登録（L30–37）: `/scripts` `/thumbnails` `/metadata` `/api/media`（media）、vr_api（プレフィックスなし）、`/api/remote`（remote / remote_sync / locale）。
+- ルーター登録: `/scripts` `/thumbnails` `/metadata` `/api/media`（media）、vr_api（プレフィックスなし）、`/api/remote`（remote / remote_sync / locale）、`/api/generate`（generate — funscript 自動生成）。
 - 静的マウント（L42–45, L78–80）: `/remote` → `web-remote/`（html=True）、`/locales` → `renderer/locales/`。`sys._MEIPASS` 対応（PyInstaller）。
 - **no-cache ミドルウェア**（L55–61）: `/remote*` と `/locales/*` に `Cache-Control: no-cache`（アプリ更新後にスマホが古い index.html と新しい app.js を混在させる事故対策。ETag で 304 になるため LAN では実質無料）。
 - 根ルート: `/health`（生存確認）、`/`（VR サーバー識別テキスト）、`/network-info`（LAN IP）。
@@ -424,6 +424,12 @@ device-transform-stack.js ── 共通変換順: [1]Range Extender → [2]Inver
 | `GET /api/remote/sources|collections|playlists|categories` | グループ配信 |
 | `POST /api/remote/request-rescan` / `seek-timing` | 再スキャン要求 / シーク診断（sendBeacon） |
 | `GET /api/remote/locale` | デスクトップ config.json の言語/テーマ（PWA の表示一致） |
+| `POST /api/generate/audio` / `POST /api/generate/motion` | **funscript 自動生成ジョブ開始**（`video_path` 必須 / 範囲・スタイル・デバイス等は任意。未実行ファイル 404 `noVideo`、不正値 400 `badRange`、既存ジョブ中 409 `busy` + `job_id`） |
+| `GET /api/generate/{job_id}` / `POST /api/generate/{job_id}/cancel` | ジョブ進捗（`progress` 0–1、`summary`）と完了時の `script` / `threading.Event` によるキャンセル |
+| `GET /api/generate/store?video_path=` / `GET /api/generate/store/{script_id}` / `DELETE /api/generate/store/{script_id}` | 生成結果ストア（アプリ内保存。`<userData>/generated-scripts/index.json` + `<id>.funscript`、原子的書換 + ロック） |
+| `POST /api/generate/store/{script_id}/export` | **サイドカー書き出し（UI からの明示操作のみ）**。同じ名前の既存ファイルがあり `overwrite` なしなら 409 `exists` → UI が確認 → `{"overwrite": true}` で再送 |
+
+**生成 API の設計**: ジョブはモジュールレベル `_jobs` + `_active` を `threading.Lock` で守り**同時 1 件**。エンジンモジュール（audio_analysis / motion_analysis）はワーカースレッド内で import する（バックエンド起動コストを払わないため）。空結果は `summary.empty=true` + `script_id` なしで返し、ストアには書かない。エラーは `code` ∈ {noFfmpeg, noAudio, noVideo, badRange, cancelled, failed, busy, exists, notFound, writeFailed}。ログ・応答にファイルパスは載せず、動画ハッシュと件数のみ。
 
 **動画 ID**: `_path_to_id = md5(path)[:12]`（安定 ID）。
 
@@ -438,11 +444,17 @@ device-transform-stack.js ── 共通変換順: [1]Range Extender → [2]Inver
 
 | モジュール | 行数 | 責務 |
 |---|---|---|
-| ffmpeg.py | 750 | `_find_binary`（frozen → exe 隣 / dev → `ffmpeg/`・`ffmpeg-linux/` / PATH）、`run_silent`（CREATE_NO_WINDOW 0x08000000 — windowed exe で数百のコンソール窓が点滅する対策）、メタデータキャッシュ（(path,size,mtime) キー、5000 件、JSON 永続化。2026-08-03 実測: 420 本で起動 13 秒中約 7 秒浪費）、`get_metadata`（profile/pixFmt は Chromium が復号できない H.264 変種判別用）、`remux_to_mp4`（stream copy、動画 h264/hevc/av1・音声 aac/mp3 のみ copy）、`generate_single_thumbnail`（既定 seek 10%、黒イントロ回避。THUMBNAIL_TIMEOUT_SEC=25） |
+| ffmpeg.py | 750 | `_find_binary`（frozen → exe 隣 / dev → `ffmpeg/`・`ffmpeg-linux/` / PATH）、`run_silent`（CREATE_NO_WINDOW 0x08000000 — windowed exe で数百のコンソール窓が点滅する対策）、メタデータキャッシュ（(path,size,mtime) キー、5000 件、JSON 永続化。2026-08-03 実測: 420 本で起動 13 秒中約 7 秒浪費）、`get_metadata`（profile/pixFmt は Chromium が復号できない H.264 変種判別用）、`remux_to_mp4`（stream copy、動画 h264/hevc/av1・音声 aac/mp3 のみ copy）、`generate_single_thumbnail`（既定 seek 10%、黒イントロ回避。THUMBNAIL_TIMEOUT_SEC=25）、`run_silent_stream`（Popen で raw PCM / rawvideo をパイプ読み — 動画全体をメモリに載せない）、`probe_streams`（音声トラック有無の判定、(path,size,mtime) キャッシュ） |
 | funscript.py | 65 | `parse_funscript`（検証 + at 昇順）、`funscript_to_csv`（"at_ms,pos"、pos 0–100 クランプ） |
 | hls_proxy.py | 64 | `rewrite_manifest`（**純関数**）。m3u8 内 URI を `{base}/{token}/manifest|seg?u=` へ書換 |
 | network.py | 23 | `get_local_ip()`（UDP で 8.8.8.8 に connect — パケット送信なし、getsockname） |
 | resolver.py | 180 | yt-dlp **Python API**（サブプロセスではない）。`ResolveError(kind)` ∈ {unsupported, login, drm, geo, live, unavailable, error}。`_pick_format`: プログレッシブ MP4 → HLS マスター → トップレベル url。**ライブ配信は拒否**（「Live streams can't be synced」） |
+| audio_analysis.py | ~470 | 音声ビート解析（**numpy のみ**）。ffmpeg で 8kHz mono PCM をストリーム取得 → STFT スペクトルフラックス（FFT1024 / hop64 → 125fps、窓中央補正で時刻を半フレーム分進める）→ 1 秒ブロック単位の中央値 + 1.4826·MAD 閾値（下限は p95 の 2%）でピーク抽出 → 自己相関テンポ推定（50Hz 間引き + 放物線補間）+ 40ms グリッドスナップ → 無音区間（中央値 −24dB、1.5 秒以上）をアイドル窓として返す |
+| motion_analysis.py | ~485 | 映像モーション解析（**numpy のみ**）。ffmpeg で gray フレームを低解像度ストリーム取得。v1=中央重み付き平均絶対差分のピーク（方向を区別しない）、v2=8×8 ブロック SAD 探索（±3px）→ 変位場 → 発散（膨張信号）→ 中央射影 → 積分 → トレンド除去 → 正規化。p20 基準 + 動的レンジ（p95−p20）閾値。品質プリセット fast（v1 64×36@8）/ standard（v2 64×36@10）/ high（v2 96×54@12）。VR は中央クロップ |
+| funscript_build.py | ~447 | イベント/信号 → アクション列。スタイル alternating / sine / energy、アイドル区間は**最低位置へ退避**（中央 50 ではない）、最小間隔、デバイス速度制限（handy 400 / handy2 320 / handy2pro 360 / handy2pro_oc 640 units/s）、Douglas–Peucker 間引き、1 秒 10 アクション上限、`to_funscript` は `parse_funscript` で自己検証 |
+| generated_store.py | 236 | 生成結果のアプリ内ストア。`video_identity` = md5(`path:size:mtime`)[:12]、`<userData>/generated-scripts/index.json` + `<id>.funscript`（原子的書換 + `threading.Lock`）、`set_store()` はテスト用シーム |
+| generate_errors.py | 20 | `GenerateError(code)` ∈ {noFfmpeg, noAudio, noVideo, badRange, cancelled, failed} |
+| paths.py | 28 | `set_user_data_dir` / `get_user_data_dir` — `--user-data-dir` を services 間で共有（locale API と生成ストアが同じ場所を見る） |
 
 ### 7.5 web-remote/（スマホ PWA）
 
@@ -466,6 +478,7 @@ device-transform-stack.js ── 共通変換順: [1]Range Extender → [2]Inver
 | 認証 | EroScripts は `persist:eroscripts-login` パーティション + `_t` クッキー。safe-key.js（DPAPI）は未使用 |
 | 外部リンク | `open-external` は http/https のみ |
 | 更新 | autoDownload=false（ユーザー制御） |
+| funscript 自動生成 | 解析はローカル完結（`connect-src` の localhost 以外とは通信しない）。ログはジョブ ID / スクリプト ID / 動画ハッシュ / 件数 / 時間のみで**ファイルパス・ユーザー名を載せない**。生成結果はアプリ内ストアに保存され、サイドカー（`<動画名>.funscript`）への書き出しは明示操作 + 既存ファイルの確認ダイアログを経る |
 
 ---
 
@@ -473,10 +486,10 @@ device-transform-stack.js ── 共通変換順: [1]Range Extender → [2]Inver
 
 | 層 | 内容 |
 |---|---|
-| 単体（vitest ^4.1.4） | `tests/unit/` 約 188 ファイル。jsdom、`retry:2`（CI 不安定対策）、`pool: threads, maxWorkers 4`。`tests/setup.js`（282 行）が `globalThis.funsync`（preload IPC）をモック（getBackendPort→5123 等）、en.json を `_setBundlesForTests` で注入 |
+| 単体（vitest ^4.1.4） | `tests/unit/` 約 192 ファイル。jsdom、`retry:2`（CI 不安定対策）、`pool: threads, maxWorkers 4`。`tests/setup.js`（282 行）が `globalThis.funsync`（preload IPC）をモック（getBackendPort→5123 等）、en.json を `_setBundlesForTests` で注入 |
 | メタ/回帰テスト | `@vitest-environment node` docblock で**コードベース自体を検証**: locale-key-parity（8 ロケールのキー一致）、csp-compliance |
 | e2e（Playwright ^1.58.2） | God-object（app.js / library.js）は単体テストされず e2e 依存 |
-| バックエンド（pytest + pytest-asyncio + httpx） | `pytest.ini`、routes/services の純関数（rewrite_manifest 等）はテスト容易な設計 |
+| バックエンド（pytest + pytest-asyncio + httpx） | `pytest.ini`、routes/services の純関数（rewrite_manifest 等）はテスト容易な設計。自動生成系は 4 ファイル（`test_funscript_build` / `test_audio_analysis` / `test_motion_analysis` / `test_generate_routes`、計 95 テスト）。ffmpeg を呼ぶテストは `conftest.py` の `media_dir`（セッションスコープ、`os.makedirs` で作ったワークスペース直下ディレクトリ）を使う — `tmp_path` / `tempfile.mkdtemp` は Windows のファイル権限制約で ffmpeg サブプロセスが書けないため使えない |
 
 ---
 
@@ -532,3 +545,8 @@ tag `v*` で起動。win+linux matrix（`fail-fast:false`）、Node 22 + Python 
 - `verifyAndRecover` は `initStore()` より前、ポータブル IIFE は logger/store require より前
 - DeoVR 応答は Content-Length 必須（chunked でパーサ破綻）
 - `/api/media/register` と `/metadata` は threadpool 実行（イベントループを塞ぐと /health が止まる）
+- 自動生成: サイドカー `<動画名>.funscript` への書き込みは `POST /api/generate/store/{id}/export` の**み**。生成結果のプレビュー経路では必ず `scriptEditor.setFunscriptPath(null)` を呼ぶ（エディタの保存・自動保存が手製サイドカーを黙って置換するのを防ぐ）
+- 自動生成ジョブは同時 1 件（`_active` + 409 `busy`、UI は `job_id` を引き継いで実行中ジョブを引き受ける）。エンジンモジュールはワーカースレッド内で import する
+- 自動生成パネルの画面遷移: プレビュー成功でウィンドウは閉じてプレイヤーに戻る（失敗時は再試行できるよう開いたまま）。「もう一度生成」は開始画面を経ずに同じ設定で即再実行する。別動画の読み込み時は `loadVideo` が `generatePanel.reset()` を呼び、実行中ジョブをキャンセルして生成結果とバッジを破棄し開始画面に戻す（同一ファイルの再読み込みでは保持）
+- 生成系は **numpy のみ**（scipy / opencv / librosa は入れない）。音声も映像も ffmpeg パイプをストリーム読みしてブロック単位で統計を出す（メモリflat）
+- `renderer/index.html` に `data-lucide="..."` を追加したら、app.js の `createIcons({ icons: { ... } })` に **PascalCase のキー**を登録する（`lucide-icon-names` テストが検査。ポップアウトは `player-popout.js` 側に登録）

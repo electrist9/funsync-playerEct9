@@ -58,6 +58,24 @@ def run_silent(*args, **kwargs):
     return subprocess.run(*args, **kwargs)
 
 
+def run_silent_stream(*args, **kwargs):
+    """`subprocess.Popen` counterpart of run_silent.
+
+    Use for ffmpeg jobs whose output is consumed as a stream instead of a
+    finished file — raw PCM (`-f s16le -`) and raw frames
+    (`-f rawvideo -pix_fmt gray -`) for the funscript generation engines.
+    Those must not be buffered through run_silent: a 30-minute video's
+    PCM is ~58 MB and its frames tens of MB more, and the whole point of
+    streaming is that memory stays flat regardless of file length.
+
+    Only adds the Windows no-window creationflags; stdout/stderr wiring is
+    left to the caller so each call site states what it consumes.
+    """
+    if sys.platform == "win32":
+        kwargs.setdefault("creationflags", NO_WINDOW_CREATIONFLAGS)
+    return subprocess.Popen(*args, **kwargs)
+
+
 # Metadata cache. Keyed by (path, size, mtime) so file edits invalidate
 # naturally. The thumbnail-single endpoint calls get_metadata for EVERY
 # thumbnail to know the duration; without caching, that doubles the
@@ -287,6 +305,59 @@ def _parse_fps(rate_str: str) -> float:
         return round(int(num) / int(den), 2) if int(den) != 0 else 0
     except (ValueError, ZeroDivisionError):
         return 0
+
+
+_streams_cache: dict[str, dict[str, Any]] = {}
+
+
+def probe_streams(video_path: str) -> dict[str, Any]:
+    """ffprobe's own stream structure for a file: {"streams": [...], "format": {...}}.
+
+    get_metadata() flattens only what the library UI shows. The funscript
+    generation engines need stream-level detail that flattening throws away
+    — does the file have an audio track at all, and is the video an
+    equirectangular VR recording — so this returns ffprobe's raw view.
+    Cached in memory per (path, size, mtime) like the metadata cache; not
+    persisted, probes are cheap.
+    """
+    if not os.path.exists(video_path):
+        raise FileNotFoundError(f"Video not found: {video_path}")
+    stat = os.stat(video_path)
+    cache_key = f"{video_path}:{stat.st_size}:{stat.st_mtime}"
+    cached = _streams_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    try:
+        result = run_silent(
+            [
+                FFPROBE,
+                "-v", "quiet",
+                "-print_format", "json",
+                "-show_format",
+                "-show_streams",
+                video_path,
+            ],
+            capture_output=True,
+            text=True,
+            # See get_metadata(): ffmpeg/ffprobe write UTF-8; without an
+            # explicit encoding the reader thread uses the OS locale and
+            # dies on bytes cp1252 cannot map.
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+        )
+    except FileNotFoundError:
+        raise RuntimeError("ffprobe not found. Install ffmpeg to use metadata features.")
+
+    if result.returncode != 0:
+        raise RuntimeError(f"ffprobe failed: {result.stderr}")
+
+    data = json.loads(result.stdout)
+    if len(_streams_cache) > 500:
+        _streams_cache.clear()
+    _streams_cache[cache_key] = data
+    return data
 
 
 def _get_video_hash(video_path: str) -> str:

@@ -4,6 +4,7 @@ import { VideoPlayer, PLAYBACK_RATE_PRESETS } from './video-player.js';
 import { eventBus } from './event-bus.js';
 import { ProgressBar } from './progress-bar.js';
 import { FunscriptEngine, isAutoMatch, stripBOM } from './funscript-engine.js';
+import { GeneratePanel } from './generate-panel.js';
 import { extractEmbeddedAxes, buildCompanionFiles, companionPathMap } from './embedded-multi-axis.js';
 import { getAxisBySuffix } from './multi-axis.js';
 import { sourcesToProbe } from './source-state.js';
@@ -70,7 +71,7 @@ import {
   createIcons, icon, Play, Pause, Volume2, VolumeX, Volume1, FolderOpen, Bluetooth, Cable,
   EllipsisVertical, Keyboard, Gauge, ChevronDown, Goggles, Repeat1,
   Maximize, Maximize2, Minimize, ArrowLeft, Plus, PictureInPicture2, SkipBack, SkipForward,
-  Pencil, FileCheck, Captions, RotateCcw, Columns2, X, Activity, Thermometer,
+  Pencil, FileCheck, Captions, RotateCcw, Columns2, X, Activity, Thermometer, WandSparkles,
 } from './icons.js';
 import { startInit, span, mark, logSummary } from './startup-timer.js';
 import { installConsoleForwarding } from './logger.js';
@@ -243,6 +244,10 @@ class App {
         // the script timeline (pulse-line reads as a motion trace),
         // 'thermometer' for the heatmap strip.
         Activity, Thermometer,
+        // 'wand-sparkles' for the control-bar Auto-generate button
+        // (SCOPE-funscript-generation): a wand reads as "made for me"
+        // without implying magic beyond the local analysis it does.
+        WandSparkles,
       },
       attrs: { width: 20, height: 20, 'stroke-width': 1.75 },
     });
@@ -295,6 +300,19 @@ class App {
     // Initialize funscript engine
     this.funscriptEngine = new FunscriptEngine({
       backendPort: this.backendPort,
+    });
+
+    // Funscript auto-generation (local backend /api/generate/*). The panel
+    // owns the job lifecycle — polling, cancel, chip updates — so a running
+    // analysis keeps reporting progress even after its modal is closed.
+    // Only LOCAL videos can be analysed: the backend reads the file from disk.
+    this.generatePanel = new GeneratePanel({
+      getBackendPort: () => this.backendPort,
+      getVideo: () => (this._currentVideoPath
+        ? { path: this._currentVideoPath, name: this._currentVideoName }
+        : null),
+      onPreview: (script, meta) => this._previewGeneratedScript(script, meta),
+      onChip: (state) => this._renderGenerateChip(state),
     });
 
     // Windows Controls Overlay detection: when the native title bar is
@@ -1463,6 +1481,14 @@ class App {
         // toggle so an open editor never has a stray Up Next card on top.
         this._syncUpNextSuppression();
       });
+    }
+
+    // Generate button — opens the auto-generation panel for the video that
+    // is currently loaded. The panel itself re-checks that a LOCAL video is
+    // loaded (the backend analyses a file on disk, not a stream).
+    const btnGenerate = document.getElementById('btn-generate');
+    if (btnGenerate) {
+      btnGenerate.addEventListener('click', () => this.generatePanel?.open());
     }
 
     // Initialize subtitle badge icon — and wire its click to toggle
@@ -4632,6 +4658,9 @@ class App {
     }
 
     this._currentVideoName = file.name;
+    // Remembered so the generate panel can tell a genuinely new video from a
+    // reload of the same file (remux, re-open from the recent list).
+    const previousVideoPath = this._currentVideoPath || null;
     // Remote streams have no local path — keep _currentVideoPath null so
     // local-only paths (remux-on-error, recent files, library lookup) stay off.
     this._currentVideoPath = file._remote ? null : (file.path || null);
@@ -4641,6 +4670,15 @@ class App {
       this._resumeSuppressedPath = null;
     }
     this._currentIsRemote = !!file._remote;
+    // Generation works on a file the backend can open, so the button only
+    // appears for local videos. A generated script belongs to the video it was
+    // built from, so loading a different one — local or remote — discards the
+    // previous result: the panel returns to the start screen and the player
+    // chip clears. Reloading the same file keeps it.
+    this._updateGenerateButtonVisibility();
+    if ((this._currentVideoPath || null) !== previousVideoPath) {
+      this.generatePanel?.reset();
+    }
     this.videoPlayer.loadSource(videoUrl, file.name, loadOpts);
     this.progressBar.setVideoSource(videoUrl);
     this._updateCategoryDots();
@@ -4983,6 +5021,105 @@ class App {
       }
     } catch (err) {
       console.error('Failed to load funscript:', err.message);
+      showToast(t('toast.scriptLoadFailed', { error: err.message }), 'error');
+    }
+  }
+
+  /**
+   * Show/hide the Generate button. Generation reads the video from disk in
+   * the backend, so remote (yt-dlp) streams have nothing to analyse.
+   */
+  _updateGenerateButtonVisibility() {
+    const btn = document.getElementById('btn-generate');
+    if (!btn) return;
+    btn.hidden = !this._currentVideoPath;
+  }
+
+  /**
+   * Render the player's generation status chip. `state` is null to hide it,
+   * or `{ state, text, percent }` from GeneratePanel. Colour comes from
+   * data-state in CSS; the text carries the meaning (colour-blind safe).
+   */
+  _renderGenerateChip(state) {
+    const chip = document.getElementById('player-generate-chip');
+    if (!chip) return;
+    const text = document.getElementById('player-generate-chip-text');
+    const bar = document.getElementById('player-generate-chip-bar');
+    const fill = document.getElementById('player-generate-chip-bar-fill');
+    if (!state) {
+      chip.hidden = true;
+      chip.removeAttribute('data-state');
+      if (text) text.textContent = '';
+      if (bar) { bar.hidden = true; if (fill) fill.style.width = '0%'; }
+      return;
+    }
+    chip.hidden = false;
+    chip.setAttribute('data-state', state.state || 'running');
+    if (text) text.textContent = state.text || '';
+    if (bar) {
+      const running = state.state === 'running';
+      bar.hidden = !running;
+      if (fill && running) {
+        const pct = Math.max(0, Math.min(100, Math.round((state.percent || 0) * 100)));
+        fill.style.width = `${pct}%`;
+      }
+    }
+  }
+
+  /**
+   * Audition a generated script in the player WITHOUT writing anything to
+   * disk. Generated scripts live in the backend's generated-script store;
+   * creating a .funscript next to the video is a separate, explicit action
+   * (the panel's Save button → POST /store/{id}/export), which refuses to
+   * replace a hand-made sidecar without a confirmation.
+   */
+  async _previewGeneratedScript(script, meta = {}) {
+    if (!this._currentVideoName || !script) return;
+    const base = String(this._currentVideoName).replace(/\.[^/.]+$/, '');
+    const filename = `${base}.generated.funscript`;
+    try {
+      const info = await this.funscriptEngine.loadContent(JSON.stringify(script), filename);
+      // A generated script has no on-disk path. Leaving the editor pointed at
+      // the sidecar path would let editor autosave replace a hand-made
+      // .funscript behind the user's back — so clear it right after loading.
+      if (this.scriptEditor) this.scriptEditor.setFunscriptPath(null);
+      this._showFunscriptBadge(info);
+
+      if (this.handyHdspSync) {
+        this.handyHdspSync.setActions(this.funscriptEngine.getActions());
+        this.handyHdspSync.setCutoff(this._cutoffFromSettings('handy'));
+      }
+
+      if (isFinite(this.videoPlayer.duration) && this.videoPlayer.duration > 0) {
+        this.progressBar.renderHeatmap(
+          this.funscriptEngine.getActions(),
+          this.videoPlayer.duration,
+        );
+        this._feedInlineViz();
+        this.progressBar.setMarkers({
+          chapters: this.funscriptEngine.getChapters(),
+          bookmarks: this.funscriptEngine.getBookmarks(),
+        });
+      }
+
+      if (!this._customRoutingActive || this._isDeviceOnMainRoute('handy')) {
+        await this._uploadAndStartSync();
+      }
+      this._tryStartButtplugSync();
+      this._tryStartTCodeSync();
+      if (!this._customRoutingActive || this._isDeviceOnMainRoute('autoblow')) {
+        await this._tryStartAutoblowSync();
+      }
+      if (!this._customRoutingActive) this._startGapSkip();
+
+      // Privacy: job/script ids and counts only — never the video path.
+      console.log('Generated script previewed:', {
+        scriptId: meta.scriptId || null,
+        engine: meta.engine || null,
+        actionCount: info?.actionCount ?? null,
+      });
+    } catch (err) {
+      console.error('Failed to preview generated script:', err.message);
       showToast(t('toast.scriptLoadFailed', { error: err.message }), 'error');
     }
   }

@@ -1,0 +1,434 @@
+/* ==========================================================================
+   Generate — funscript auto-generation (modal form + player progress chip)
+   --------------------------------------------------------------------------
+   The modal body reuses the shared modal vocabulary from modal.css
+   (.modal-actions / .modal-btn); everything here is scoped to `.generate*`
+   so it never collides with the settings panel styles it visually echoes.
+   ========================================================================== */
+
+.generate {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.generate__intro {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+/* --- fields ------------------------------------------------------------- */
+
+.generate__field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.generate__field[hidden] {
+  display: none;
+}
+
+.generate__label {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  color: var(--text-secondary);
+}
+
+.generate__hint {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+/* --- radio cards (engine + preset) -------------------------------------- */
+
+.generate__cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.generate__cards--compact {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.generate__card {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--surface-overlay);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: border-color var(--transition-fast), background var(--transition-fast);
+}
+
+.generate__card:hover {
+  border-color: var(--border-strong);
+}
+
+.generate__card:has(input:checked) {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.generate__card:has(input:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.generate__card input[type="radio"] {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.generate__card-icon {
+  flex-shrink: 0;
+  color: var(--text-secondary);
+}
+
+.generate__card:has(input:checked) .generate__card-icon {
+  color: var(--accent);
+}
+
+.generate__card-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.generate__card-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.generate__card-hint {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
+
+/* --- collapsible details ------------------------------------------------ */
+
+.generate__details {
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--surface-overlay);
+}
+
+.generate__details-summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  list-style: none;
+}
+
+.generate__details-summary::-webkit-details-marker {
+  display: none;
+}
+
+.generate__details-summary::before {
+  content: "";
+  width: 0;
+  height: 0;
+  border-left: 5px solid currentColor;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  transition: transform var(--transition-fast);
+}
+
+.generate__details[open] > .generate__details-summary::before {
+  transform: rotate(90deg);
+}
+
+.generate__details[open] > .generate__details-summary {
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.generate__details > .generate__subfield {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.generate__details > .generate__subfield:last-child {
+  border-bottom: none;
+}
+
+.generate__subfield {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.generate__subfield[hidden] {
+  display: none;
+}
+
+.generate__select,
+.generate__input {
+  padding: 7px 9px;
+  background: var(--surface-base);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-family: var(--font-family);
+  font-size: 13px;
+}
+
+.generate__select:focus-visible,
+.generate__input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-color: var(--accent);
+}
+
+.generate__range-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.generate__range {
+  flex: 1;
+  accent-color: var(--accent);
+}
+
+.generate__range-value {
+  min-width: 34px;
+  text-align: right;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
+.generate__range-inputs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.generate__range-dash {
+  color: var(--text-muted);
+}
+
+.generate__number {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1;
+}
+
+.generate__number-label {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* --- progress ----------------------------------------------------------- */
+
+.generate__progress {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.generate__progress[hidden] {
+  display: none;
+}
+
+.generate__bar {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--progress-bg);
+  overflow: hidden;
+}
+
+.generate__bar-fill {
+  height: 100%;
+  width: 0%;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width 300ms ease;
+}
+
+.generate__progress-text {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+/* --- result ------------------------------------------------------------- */
+
+.generate__result {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--surface-overlay);
+}
+
+.generate__result[hidden] {
+  display: none;
+}
+
+.generate__result-summary {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.generate__result-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.generate__result-actions[hidden] {
+  display: none;
+}
+
+.generate__saved {
+  font-size: 12px;
+  color: var(--state-connected);
+}
+
+.generate__saved[hidden] {
+  display: none;
+}
+
+.generate__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 11px;
+  background: var(--surface-overlay-strong);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-family: var(--font-family);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.generate__btn:hover {
+  background: var(--surface-card);
+  border-color: var(--accent);
+}
+
+.generate__btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.generate__btn--primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.generate__btn--primary:hover {
+  background: var(--accent-hover);
+}
+
+/* ==========================================================================
+   Player progress chip
+   --------------------------------------------------------------------------
+   Lives in the player overlay, so it uses the theme-independent overlay
+   tokens like .player__sync-chip (player.css) rather than app surface
+   colours. State is carried on data-state; colour is a redundant cue.
+   ========================================================================== */
+
+.player__generate-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: var(--video-overlay-control-hover);
+  color: var(--video-overlay-text);
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.1px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: background 150ms;
+}
+
+.player__generate-chip[hidden] {
+  display: none;
+}
+
+.player__generate-chip-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--video-overlay-text-dim);
+  flex-shrink: 0;
+}
+
+.player__generate-chip[data-state="running"] .player__generate-chip-dot {
+  background: #ffb74d;
+  animation: generate-chip-pulse 1.4s ease-in-out infinite;
+}
+
+.player__generate-chip[data-state="done"] .player__generate-chip-dot {
+  background: #4caf50;
+  box-shadow: 0 0 6px rgba(76, 175, 80, 0.6);
+}
+
+.player__generate-chip[data-state="empty"] .player__generate-chip-dot,
+.player__generate-chip[data-state="error"] .player__generate-chip-dot {
+  background: #f44336;
+}
+
+/* Determinate mini-bar — only meaningful while a job is running. */
+.player__generate-chip-bar {
+  width: 46px;
+  height: 3px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.22);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.player__generate-chip-bar[hidden] {
+  display: none;
+}
+
+.player__generate-chip-bar-fill {
+  display: block;
+  height: 100%;
+  width: 0%;
+  border-radius: 999px;
+  background: #ffb74d;
+  transition: width 300ms ease;
+}
+
+@keyframes generate-chip-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .player__generate-chip[data-state="running"] .player__generate-chip-dot {
+    animation: none;
+  }
+}
