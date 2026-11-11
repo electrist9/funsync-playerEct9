@@ -217,6 +217,16 @@ function jsonResponse(status, payload) {
   return { ok: status >= 200 && status < 300, status, json: async () => payload };
 }
 
+/**
+ * Every store lookup answers "nothing stored yet", so a start goes straight to
+ * the generation request. `startResponse` is what the engine route returns.
+ */
+function nothingStored(startResponse) {
+  return (url) => Promise.resolve(
+    String(url).includes('/store') ? jsonResponse(200, { items: [] }) : startResponse,
+  );
+}
+
 function toastTexts(type) {
   const container = document.getElementById('toast-container');
   if (!container) return [];
@@ -244,7 +254,7 @@ describe('GeneratePanel start', () => {
   });
 
   it('posts to the loopback backend with the current form state', async () => {
-    fetchMock.mockResolvedValue(jsonResponse(200, { job_id: 'j1', status: 'queued' }));
+    fetchMock.mockImplementation(nothingStored(jsonResponse(200, { job_id: 'j1', status: 'queued' })));
     const panel = makePanel();
     panel.engine = 'motion';
     panel.preset = 'high';
@@ -253,8 +263,8 @@ describe('GeneratePanel start', () => {
 
     await panel._start();
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    const [url, init] = fetchMock.mock.calls[0];
+    expect(fetchMock).toHaveBeenCalledTimes(2); // store lookup, then the job
+    const [url, init] = fetchMock.mock.calls[1];
     expect(url).toBe('http://127.0.0.1:5123/api/generate/motion');
     expect(init.method).toBe('POST');
     expect(init.headers['content-type']).toBe('application/json');
@@ -271,12 +281,12 @@ describe('GeneratePanel start', () => {
   });
 
   it('sends the current video path because the backend reads the file itself', async () => {
-    fetchMock.mockResolvedValue(jsonResponse(200, { job_id: 'j1', status: 'queued' }));
+    fetchMock.mockImplementation(nothingStored(jsonResponse(200, { job_id: 'j1', status: 'queued' })));
     const panel = makePanel({ getVideo: () => ({ path: 'F:\\media\\a.mp4', name: 'a.mp4' }) });
 
     await panel._start();
 
-    const [, init] = fetchMock.mock.calls[0];
+    const [, init] = fetchMock.mock.calls[1];
     expect(JSON.parse(init.body).video_path).toBe('F:\\media\\a.mp4');
     panel.reset();
   });
@@ -328,6 +338,60 @@ describe('GeneratePanel start', () => {
     expect(panel._job).toBeNull();
     expect(toastTexts('error')).toContain('The selected options are invalid.');
   });
+
+  it('asks before a start replaces the script already stored for this video', async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse(200, {
+        items: [{ id: 's9', engine: 'audio', filename: 'v-audio.funscript' }],
+      }))
+      .mockResolvedValue(jsonResponse(200, { job_id: 'j2', status: 'queued' }));
+    const panel = makePanel();
+    const confirm = vi.spyOn(Modal, 'confirm').mockResolvedValue(true);
+
+    await panel._start();
+
+    expect(confirm).toHaveBeenCalledTimes(1);
+    const [title, body] = confirm.mock.calls[0];
+    expect(title).toBe('Replace the generated script?');
+    expect(body).toContain('v-audio.funscript');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[0][0])
+      .toBe('http://127.0.0.1:5123/api/generate/store?video_path=V');
+    expect(fetchMock.mock.calls[1][0]).toBe('http://127.0.0.1:5123/api/generate/audio');
+    expect(panel._job.job_id).toBe('j2');
+    panel.reset();
+  });
+
+  it('starts nothing when the overwrite prompt is declined', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, {
+      items: [{ id: 's9', engine: 'audio', filename: 'v-audio.funscript' }],
+    }));
+    const panel = makePanel();
+    vi.spyOn(Modal, 'confirm').mockResolvedValue(false);
+
+    await panel._start();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1); // only the store lookup
+    expect(panel._job).toBeNull();
+    expect(panel.busy).toBe(false);
+  });
+
+  it('starts straight away when only the other engine has a stored script', async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse(200, {
+        items: [{ id: 's8', engine: 'motion:standard', filename: 'v-motion.funscript' }],
+      }))
+      .mockResolvedValue(jsonResponse(200, { job_id: 'j2', status: 'queued' }));
+    const panel = makePanel();
+    const confirm = vi.spyOn(Modal, 'confirm').mockResolvedValue(true);
+
+    await panel._start();
+
+    expect(confirm).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[1][0]).toBe('http://127.0.0.1:5123/api/generate/audio');
+    panel.reset();
+  });
 });
 
 describe('GeneratePanel repeat and reset', () => {
@@ -362,7 +426,9 @@ describe('GeneratePanel repeat and reset', () => {
 
     await panel._again();
 
-    expect(chips[0]).toBeNull();
+    // The finished result stays on screen until the new job is accepted, so the
+    // first chip the panel reports is the running one.
+    expect(chips[0]?.state).toBe('running');
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(fetchMock.mock.calls[0][0])
       .toBe('http://127.0.0.1:5123/api/generate/store?video_path=V');

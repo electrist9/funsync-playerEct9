@@ -164,6 +164,12 @@ export class GeneratePanel {
       return;
     }
 
+    // A generation replaces the stored `<video>-audio.funscript` /
+    // `<video>-motion.funscript` for this video and engine family, so when one
+    // is already there the user confirms first: the previous script is lost.
+    // Nothing on screen changes until that answer comes back yes.
+    if (!(await this._confirmOverwrite())) return;
+
     // The backend opens the file itself, so it needs the absolute path of the
     // local video. startBodyFor() stays free of it (pure form state); the path
     // is attached here, at the one place that knows which video is loaded.
@@ -270,29 +276,27 @@ export class GeneratePanel {
   }
 
   /**
-   * Throw away the finished result and immediately run a fresh generation with
-   * the current settings — one click, no trip back through the start screen.
-   *
-   * A regeneration replaces the stored `<video>-audio.funscript` /
-   * `<video>-motion.funscript` for this video and engine, so when one is
-   * already there the user confirms first: the previous script is lost.
+   * Run a fresh generation with the current settings — one click, no trip back
+   * through the start screen. The overwrite confirm lives in `_start()`, so a
+   * declined prompt leaves the finished result exactly where it was.
    */
   async _again() {
-    const job = this._job;
-    if (job?.script_id) {
-      const stored = await this._storedFor(this.engine);
-      if (stored.length) {
-        const replace = await Modal.confirm(
-          t('generate.overwriteTitle'),
-          t('generate.overwriteBody', { filename: stored[0].filename || '' }),
-        );
-        if (!replace) return;
-      }
-    }
-    this._job = null;
-    this._emitChip(null);
-    this._render();
     return this._start();
+  }
+
+  /**
+   * Ask before a generation replaces the script already stored for this video
+   * and engine family. False means "do not start". A store that cannot be read
+   * answers "nothing stored", because the worst case should be a missing
+   * confirm, never a generation the user asked for being blocked.
+   */
+  async _confirmOverwrite() {
+    const stored = await this._storedFor(this.engine);
+    if (!stored.length) return true;
+    return Modal.confirm(
+      t('generate.overwriteTitle'),
+      t('generate.overwriteBody', { filename: stored[0].filename || '' }),
+    );
   }
 
   /**

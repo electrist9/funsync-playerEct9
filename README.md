@@ -64,7 +64,7 @@ A local desktop video player with device synchronization for funscript playback.
 - Advanced options: stroke style (alternating / sine / energy), device speed limit, detection sensitivity, stroke range
 - Results are kept **inside FunSync** — preview them in the player first, and nothing is written next to your video until you press **Save next to video**
 - Each stored script is named after the video, so you can always tell the two apart: `VideoName-audio.funscript` for an audio-beat run, `VideoName-motion.funscript` for a picture-motion run
-- **Generate again** asks for confirmation before it replaces the script already stored for that video, and it never touches the `.funscript` file beside the video
+- **Start** and **Generate again** both ask for confirmation before they replace the script already stored for that video, and neither touches the `.funscript` file beside the video
 - Saving **never silently replaces a hand-made `.funscript`**: FunSync warns you first, and cancelling leaves your existing file exactly as it was
 - One generation at a time; a running job can be cancelled, and its progress stays visible in the player while you browse
 
