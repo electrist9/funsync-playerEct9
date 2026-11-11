@@ -272,12 +272,48 @@ export class GeneratePanel {
   /**
    * Throw away the finished result and immediately run a fresh generation with
    * the current settings — one click, no trip back through the start screen.
+   *
+   * A regeneration replaces the stored `<video>-audio.funscript` /
+   * `<video>-motion.funscript` for this video and engine, so when one is
+   * already there the user confirms first: the previous script is lost.
    */
-  _again() {
+  async _again() {
+    const job = this._job;
+    if (job?.script_id) {
+      const stored = await this._storedFor(this.engine);
+      if (stored.length) {
+        const replace = await Modal.confirm(
+          t('generate.overwriteTitle'),
+          t('generate.overwriteBody', { filename: stored[0].filename || '' }),
+        );
+        if (!replace) return;
+      }
+    }
     this._job = null;
     this._emitChip(null);
     this._render();
     return this._start();
+  }
+
+  /**
+   * Scripts already stored for the loaded video and one engine family, newest
+   * first. Empty on any failure: the worst case is skipping the confirm, never
+   * blocking the generation the user asked for.
+   */
+  async _storedFor(engine) {
+    const port = this._port || this._getPort();
+    const video = this._getVideo();
+    if (!port || !video?.path) return [];
+    try {
+      const res = await fetch(this._url(`/store?video_path=${encodeURIComponent(video.path)}`));
+      if (!res.ok) return [];
+      const data = await res.json().catch(() => ({}));
+      return (Array.isArray(data?.items) ? data.items : [])
+        .filter((item) => String(item?.engine || '').split(':')[0] === engine);
+    } catch (err) {
+      console.warn('[generate] store lookup failed', String(err?.message || err));
+      return [];
+    }
   }
 
   // ---------------------------------------------------------------- preview
@@ -584,6 +620,14 @@ export class GeneratePanel {
       const isEmpty = job.status !== 'done' || job.summary?.empty;
       ui.resultActions.hidden = isEmpty;
       ui.resultNote.hidden = isEmpty || !job.script_id;
+      if (!ui.resultNote.hidden) {
+        // Naming the stored file tells the user what a second generation
+        // would replace; older backends omit it, so keep the generic note.
+        const filename = job.summary?.filename;
+        ui.resultNote.textContent = filename
+          ? t('generate.storedAs', { filename })
+          : t('generate.storedNote');
+      }
       ui.savedLine.hidden = !job.exported;
       if (job.exported) {
         ui.savedLine.textContent = t('generate.saved', { filename: job.exported });

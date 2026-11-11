@@ -350,16 +350,92 @@ describe('GeneratePanel repeat and reset', () => {
   });
 
   it('runs a fresh generation straight away instead of showing the start screen', async () => {
-    fetchMock.mockResolvedValue(jsonResponse(200, { job_id: 'j2', status: 'queued' }));
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse(200, {
+        items: [{ id: 's9', engine: 'audio', filename: 'v-audio.funscript' }],
+      }))
+      .mockResolvedValue(jsonResponse(200, { job_id: 'j2', status: 'queued' }));
     const chips = [];
     const panel = makePanel({ onChip: (state) => chips.push(state) });
     panel._job = { job_id: 'j1', engine: 'audio', status: 'done', summary: {}, script_id: 's9' };
+    const confirm = vi.spyOn(Modal, 'confirm').mockResolvedValue(true);
 
     await panel._again();
 
     expect(chips[0]).toBeNull();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock.mock.calls[0][0]).toBe('http://127.0.0.1:5123/api/generate/audio');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[0][0])
+      .toBe('http://127.0.0.1:5123/api/generate/store?video_path=V');
+    expect(fetchMock.mock.calls[1][0]).toBe('http://127.0.0.1:5123/api/generate/audio');
+    expect(panel._job.job_id).toBe('j2');
+    panel.reset();
+  });
+
+  it('asks before a regeneration replaces the script already stored for this video', async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse(200, {
+        items: [{ id: 's9', engine: 'audio', filename: 'v-audio.funscript' }],
+      }))
+      .mockResolvedValue(jsonResponse(200, { job_id: 'j2', status: 'queued' }));
+    const panel = makePanel();
+    panel._job = { job_id: 'j1', engine: 'audio', status: 'done', summary: {}, script_id: 's9' };
+    const confirm = vi.spyOn(Modal, 'confirm').mockResolvedValue(true);
+
+    await panel._again();
+
+    expect(confirm).toHaveBeenCalledTimes(1);
+    const [title, body] = confirm.mock.calls[0];
+    expect(title).toBe('Replace the generated script?');
+    expect(body).toContain('v-audio.funscript');
+    expect(fetchMock.mock.calls[1][0]).toBe('http://127.0.0.1:5123/api/generate/audio');
+    panel.reset();
+  });
+
+  it('leaves the previous result alone when the replace prompt is declined', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, {
+      items: [{ id: 's9', engine: 'audio', filename: 'v-audio.funscript' }],
+    }));
+    const panel = makePanel();
+    const previous = { job_id: 'j1', engine: 'audio', status: 'done', summary: {}, script_id: 's9' };
+    panel._job = previous;
+    vi.spyOn(Modal, 'confirm').mockResolvedValue(false);
+
+    await panel._again();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1); // only the store lookup
+    expect(panel._job).toBe(previous);
+    expect(panel.busy).toBe(false);
+  });
+
+  it('does not prompt when nothing is stored for the engine it is about to run', async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse(200, {
+        items: [{ id: 's8', engine: 'motion:standard', filename: 'v-motion.funscript' }],
+      }))
+      .mockResolvedValue(jsonResponse(200, { job_id: 'j2', status: 'queued' }));
+    const panel = makePanel();
+    panel._job = { job_id: 'j1', engine: 'audio', status: 'done', summary: {}, script_id: 's9' };
+    const confirm = vi.spyOn(Modal, 'confirm').mockResolvedValue(true);
+
+    await panel._again();
+
+    expect(confirm).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[1][0]).toBe('http://127.0.0.1:5123/api/generate/audio');
+    panel.reset();
+  });
+
+  it('still regenerates when the store cannot be read', async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse(500, { code: 'failed' }))
+      .mockResolvedValue(jsonResponse(200, { job_id: 'j2', status: 'queued' }));
+    const panel = makePanel();
+    panel._job = { job_id: 'j1', engine: 'audio', status: 'done', summary: {}, script_id: 's9' };
+    const confirm = vi.spyOn(Modal, 'confirm').mockResolvedValue(true);
+
+    await panel._again();
+
+    expect(confirm).not.toHaveBeenCalled();
     expect(panel._job.job_id).toBe('j2');
     panel.reset();
   });

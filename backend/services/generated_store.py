@@ -6,12 +6,20 @@ an experiment, and overwriting a hand-made sidecar with one is the worst
 possible failure mode. So generation writes here, and exporting to a
 sidecar is an explicit, separate action from the UI.
 
-Layout (provisional — the exact UX is still being specified, which is why
-everything goes through this interface rather than through paths):
+Layout:
 
     <userData>/generated-scripts/
-        index.json                 # catalogue of everything stored
-        <id>.funscript             # one JSON funscript per generation
+        index.json                        # catalogue of everything stored
+        <video name>-audio.funscript      # audio-driven generation
+        <video name>-motion.funscript     # picture-motion generation
+
+File names come from the video file's base name plus the engine family, so
+the folder stays readable and one video keeps at most one generated script
+per engine: regenerating replaces that file instead of piling up
+hash-named ones. The UI asks before a regeneration replaces an existing
+script. `id` stays an opaque hash and is what the API addresses records
+with — file names are for humans, and two videos sharing a base name in
+different folders are told apart by a short hash suffix on the file.
 
 `index.json` entries carry the video identity (path + the same
 path/size/mtime hash the thumbnail cache uses), the engine that produced
@@ -40,8 +48,60 @@ from typing import Any
 
 from services.paths import get_user_data_dir
 
-INDEX_VERSION = 1
+# Version 2 added the per-record `filename` and switched the files on disk
+# from `<id>.funscript` to `<video name>-<engine>.funscript`. Version 1
+# stores are discarded rather than migrated: the generated scripts are
+# reproducible experiments, and the user asked for a clean start.
+INDEX_VERSION = 2
 STORE_DIR_NAME = "generated-scripts"
+SCRIPT_SUFFIX = ".funscript"
+
+# Engine families a generated file can be named after. The engine name in a
+# record carries a variant (`motion:high`); the file name does not.
+ENGINE_FAMILIES = ("audio", "motion")
+
+# Characters a Windows file name cannot contain, plus control characters.
+ILLEGAL_NAME_CHARS = set('\\/:*?"<>|')
+MAX_STEM_LENGTH = 120
+
+
+def engine_family(engine: str) -> str:
+    """`audio` / `motion` for an engine name, whatever variant it carries.
+
+    Returns "" for anything else, so a record written by another version
+    simply never matches instead of raising inside the store.
+    """
+    family = str(engine or "").split(":", 1)[0].strip().lower()
+    return family if family in ENGINE_FAMILIES else ""
+
+
+def _safe_stem(base: str) -> str:
+    """Turn a video's base name into something usable as a file stem."""
+    cleaned = "".join(
+        "-" if ch in ILLEGAL_NAME_CHARS or ord(ch) < 32 else ch for ch in str(base)
+    ).strip(" .")
+    if not cleaned:
+        cleaned = "video"
+    if len(cleaned) > MAX_STEM_LENGTH:
+        # Long names would push the path past the Windows limit; keep a hash
+        # of the full name so two long-but-different names stay distinct.
+        digest = hashlib.md5(cleaned.encode()).hexdigest()[:8]
+        cleaned = f"{cleaned[:MAX_STEM_LENGTH - 9].strip(' .')}-{digest}"
+    return cleaned
+
+
+def generated_filename(video_path: str, engine: str) -> str:
+    """File name for a generated script: `<video name>-audio.funscript` or
+    `<video name>-motion.funscript`.
+
+    Only the base name of the video is used — the store never mirrors the
+    video's folder structure.
+    """
+    base = os.path.splitext(os.path.basename(str(video_path or "")))[0]
+    family = engine_family(engine)
+    if not family:
+        raise ValueError(f"Unknown generation engine: {engine!r}")
+    return f"{_safe_stem(base)}-{family}{SCRIPT_SUFFIX}"
 
 
 def video_identity(video_path: str) -> dict[str, Any]:
@@ -69,7 +129,11 @@ class GeneratedScriptStore:
 
     def save(self, *, engine: str, video: dict[str, Any], params: dict[str, Any],
              script: dict[str, Any], duration_ms: float) -> dict[str, Any]:
-        """Persist a generated script; returns the stored record (with `id`)."""
+        """Persist a generated script; returns the stored record (with `id`).
+
+        One script per (video, engine family): any previous one is replaced,
+        its file removed with it.
+        """
         raise NotImplementedError
 
     def get(self, script_id: str) -> dict[str, Any] | None:
@@ -99,19 +163,23 @@ class FileGeneratedScriptStore(GeneratedScriptStore):
     def __init__(self, root_dir: str):
         self.root_dir = root_dir
         self._lock = threading.Lock()
+        self._legacy_swept = False
 
     # -- paths ---------------------------------------------------------------
 
     def _index_path(self) -> str:
         return os.path.join(self.root_dir, "index.json")
 
-    def _script_path(self, script_id: str) -> str:
-        # ids are generated here (hex), but guard anyway: this path is built
-        # from a URL parameter.
-        safe = "".join(ch for ch in str(script_id) if ch.isalnum() or ch in "-_")
-        if not safe:
-            raise ValueError("Invalid script id")
-        return os.path.join(self.root_dir, f"{safe}.funscript")
+    def _script_path(self, filename: str) -> str:
+        # File names come from the index, which we wrote, but they are built
+        # from a user's video name: keep them inside the store directory.
+        safe = os.path.basename(str(filename).strip())
+        safe = "".join(
+            "-" if ch in ILLEGAL_NAME_CHARS or ord(ch) < 32 else ch for ch in safe
+        )
+        if not safe.strip(" .") or not safe.endswith(SCRIPT_SUFFIX):
+            raise ValueError("Invalid script file name")
+        return os.path.join(self.root_dir, safe)
 
     def _ensure_dir(self) -> None:
         os.makedirs(self.root_dir, exist_ok=True)
@@ -124,11 +192,50 @@ class FileGeneratedScriptStore(GeneratedScriptStore):
                 payload = json.load(f)
         except (OSError, json.JSONDecodeError, ValueError):
             return []
-        if isinstance(payload, dict) and payload.get("version") == INDEX_VERSION:
-            entries = payload.get("entries")
-            if isinstance(entries, list):
-                return [e for e in entries if isinstance(e, dict) and e.get("id")]
+        if not isinstance(payload, dict):
+            return []
+        entries = payload.get("entries")
+        entries = (
+            [e for e in entries if isinstance(e, dict) and e.get("id")]
+            if isinstance(entries, list) else []
+        )
+        if payload.get("version") == INDEX_VERSION:
+            return [e for e in entries if e.get("filename")]
+        # Older index (version 1) named files after the record id. Those
+        # scripts are thrown away, not migrated — see the module docstring.
+        if not self._legacy_swept:
+            self._legacy_swept = True
+            for entry in entries:
+                self._remove_file_locked(entry)
         return []
+
+    def _remove_file_locked(self, entry: dict[str, Any]) -> None:
+        """Best-effort delete of the file an entry points at."""
+        name = entry.get("filename") or f"{entry.get('id')}{SCRIPT_SUFFIX}"
+        try:
+            os.remove(self._script_path(name))
+        except (OSError, ValueError):
+            pass
+
+    def _unique_filename_locked(self, entries: list[dict[str, Any]], filename: str,
+                                video_hash: Any) -> str:
+        """A file name no other record is using.
+
+        Two videos with the same base name in different folders would want
+        the same generated file, so the second one is tagged with its video
+        identity hash and a counter covers the (rare) clash after that.
+        """
+        taken = {e.get("filename") for e in entries}
+        if filename not in taken:
+            return filename
+        stem = filename[: -len(SCRIPT_SUFFIX)]
+        tagged = f"{stem}-{str(video_hash or '')[:6]}{SCRIPT_SUFFIX}"
+        if tagged not in taken:
+            return tagged
+        counter = 2
+        while f"{stem}-{counter}{SCRIPT_SUFFIX}" in taken:
+            counter += 1
+        return f"{stem}-{counter}{SCRIPT_SUFFIX}"
 
     def _write_index_locked(self, entries: list[dict[str, Any]]) -> None:
         self._ensure_dir()
@@ -146,13 +253,16 @@ class FileGeneratedScriptStore(GeneratedScriptStore):
         created_at = time.time()
         seed = f"{video.get('video_hash')}:{engine}:{created_at}:{os.getpid()}"
         script_id = hashlib.md5(seed.encode()).hexdigest()[:12]
+        family = engine_family(engine)
+        video_hash = video.get("video_hash")
 
         actions = script.get("actions", [])
         record = {
             "id": script_id,
             "engine": engine,
+            "filename": "",
             "video_path": video.get("video_path"),
-            "video_hash": video.get("video_hash"),
+            "video_hash": video_hash,
             "params": params,
             "created_at": created_at,
             "duration_ms": int(round(duration_ms)),
@@ -163,9 +273,23 @@ class FileGeneratedScriptStore(GeneratedScriptStore):
             ],
         }
         with self._lock:
-            with open(self._script_path(script_id), "w", encoding="utf-8") as f:
-                json.dump(script, f, ensure_ascii=False)
             entries = self._read_index_locked()
+            # One script per (video, engine family): the new one replaces the
+            # previous one, including its file on disk.
+            stale = [
+                e for e in entries
+                if e.get("video_hash") == video_hash and engine_family(e.get("engine")) == family
+            ]
+            for entry in stale:
+                entries.remove(entry)
+            filename = self._unique_filename_locked(
+                entries, generated_filename(video.get("video_path"), engine), video_hash,
+            )
+            record["filename"] = filename
+            for entry in stale:
+                self._remove_file_locked(entry)
+            with open(self._script_path(filename), "w", encoding="utf-8") as f:
+                json.dump(script, f, ensure_ascii=False)
             entries.append(record)
             self._write_index_locked(entries)
         return record
@@ -178,10 +302,16 @@ class FileGeneratedScriptStore(GeneratedScriptStore):
         return None
 
     def get_script(self, script_id: str) -> dict[str, Any] | None:
-        try:
-            path = self._script_path(script_id)
-        except ValueError:
-            return None
+        with self._lock:
+            record = next(
+                (e for e in self._read_index_locked() if e.get("id") == script_id), None
+            )
+            if record is None:
+                return None
+            try:
+                path = self._script_path(record["filename"])
+            except (ValueError, KeyError, TypeError):
+                return None
         try:
             with open(path, encoding="utf-8") as f:
                 return json.load(f)
@@ -202,13 +332,12 @@ class FileGeneratedScriptStore(GeneratedScriptStore):
         with self._lock:
             entries = self._read_index_locked()
             remaining = [e for e in entries if e.get("id") != script_id]
-            if len(remaining) == len(entries):
+            removed = [e for e in entries if e.get("id") == script_id]
+            if not removed:
                 return False
             self._write_index_locked(remaining)
-            try:
-                os.remove(self._script_path(script_id))
-            except OSError:
-                pass
+            for entry in removed:
+                self._remove_file_locked(entry)
         return True
 
 

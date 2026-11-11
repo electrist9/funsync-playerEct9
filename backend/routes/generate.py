@@ -328,6 +328,9 @@ def _save(job: _Job, script: dict[str, Any]) -> None:
         )
         job.script_id = record["id"]
         job.summary["video_hash"] = record["video_hash"]
+        # The file name inside the generated-scripts folder (never a path),
+        # so the UI can tell the user which script it just wrote.
+        job.summary["filename"] = record["filename"]
     except OSError as exc:
         job.save_error = f"{type(exc).__name__}"
 
