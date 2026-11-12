@@ -1209,7 +1209,15 @@
       "resumeProgressLabel": "在播放列表中显示进度",
       "resumeProgressHint": "在播放列表的卡片和列表行上以进度条显示观看位置。仅适用于播放列表，主媒体库不会显示。",
       "hideDupesLabel": "隐藏重复名称",
-      "hideDupesHint": "当多个视频文件名完全相同时只显示一个条目，例如同一文件位于两个来源文件夹中。会保留带脚本的那一份。"
+      "hideDupesHint": "当多个视频文件名完全相同时只显示一个条目，例如同一文件位于两个来源文件夹中。会保留带脚本的那一份。",
+      "autoVariantModeLabel": "自动检测脚本变体",
+      "autoVariantModeStrict": "严格（推荐）",
+      "autoVariantModeGeneric": "通用",
+      "autoVariantModeOff": "关闭",
+      "autoVariantModeHint": "决定 Title-soft.funscript 这类文件名如何成为 Title 的变体。严格模式只把真实标题中不可能出现的分隔符当作变体边界，并且只识别内置标签（soft、intense、loop 等）。通用模式还接受空格分隔以及其他非噪声标签。关闭时只保留原来的 (Soft) 和 Title.soft 模式。",
+      "variantKeywordsLabel": "额外的变体标签",
+      "variantKeywordsPlaceholder": "例如 slowmo, handson",
+      "variantKeywordsHint": "以逗号分隔的标签，会添加到严格模式的标签列表中；它们适用于 - 和 _ 分隔符，内置标签不会被移除。"
     },
     "data": {
       "backupHeader": "备份与恢复",

@@ -88,6 +88,7 @@ import { engageHandyFinisher, releaseHandyFinisher } from './orgasm-handy-engage
 import { resolveOrgasmPlan, parseFinisherActions, collectOrgasmScriptPaths, describeOrgasmEntry } from './orgasm-plan.js';
 import { openOrgasmConfigModal } from '../components/orgasm-config-modal.js';
 import { pickVariantIndexOnLoad } from './variant-select.js';
+import { variantScanDirs, variantFoldersUnreachable } from './variant-scan-scope.js';
 import { InlineViz } from '../components/inline-viz.js';
 import { shuffle as shuffleArray, reshuffleAvoidingRepeat, balancedShuffle, reshuffleBalancedAvoidingRepeat } from './shuffle.js';
 import { partitionByWatched } from './playlist-progress.js';
@@ -434,6 +435,12 @@ class App {
         if (this._currentView() === 'library') {
           this.library.show(this._getViewEl('library'));
         }
+      },
+      // Auto-variant detection is computed inside the scan, so a mode or
+      // keyword change needs a rescan to take effect. library.refresh() is
+      // idempotent (an in-flight scan no-ops) and re-renders the grid.
+      onAutoVariantChanged: () => {
+        if (this.library?.refresh) this.library.refresh();
       },
       // Orgasm Switch (hold X) — configure / clear / display the global
       // config (single script, multi-axis bundle, or custom routing —
@@ -5666,7 +5673,9 @@ class App {
         durationMs,
       }));
     }
-    const list = (this._allVariantsWithManual || []).map((v) => ({ label: v.label, path: v.path }));
+    // `label` stays the identity used for switching; `displayLabel` is the
+    // §7 disambiguated name (duplicate labels get a source/folder suffix).
+    const list = (this._allVariantsWithManual || []).map((v) => ({ label: v.label, path: v.path, displayLabel: v.displayLabel }));
     const activeLabel = list[this._activeVariantIndex || 0]?.label || '';
     relay(PLAYERWIN.makeMessage(PLAYERWIN.VARIANTS, { list, activeLabel }));
   }
@@ -8725,7 +8734,7 @@ class App {
       // we'd wipe the chevron SVG inserted by createIcons().
       const labelEl = document.getElementById('variant-btn-label');
       if (labelEl) {
-        labelEl.textContent = active ? active.label : t('variants.defaultLabel');
+        labelEl.textContent = active ? (active.displayLabel || active.label) : t('variants.defaultLabel');
       }
     } else {
       selector.hidden = true;
@@ -8735,28 +8744,42 @@ class App {
   }
 
   /**
-   * Re-scan the CURRENT video's own folder for script variants and refresh
-   * `_currentVariants` if the set changed. Auto-detected variants are
+   * Re-scan the folders that can hold the CURRENT video's script variants and
+   * refresh `_currentVariants` if the set changed. Auto-detected variants are
    * otherwise captured once at library-scan time and cached for the whole
    * session — so a variant dropped in later, or a source drive that came
    * back online after being disconnected, wouldn't show until an app
    * restart / full library refresh. Called on dropdown open (background,
-   * non-blocking). Reuses the exact `scan-directory` variant parsing
-   * scoped to a single folder — no duplicated filename logic.
+   * non-blocking). Reuses the exact `scan-directory` variant parsing — no
+   * duplicated filename logic.
+   *
+   * The scope is the video's own folder PLUS every folder the cached variant
+   * set lives in (see variant-scan-scope.js). Scanning only the video's
+   * folder broke the separate-funscript-folder layout: guard1 pairs those
+   * scripts through the global fallback, so the video's folder holds no
+   * scripts, the rescan reported zero variants, and the fresh-vs-cached
+   * comparison wiped the set the library scan had found — the dropdown
+   * collapsed to "Default" and auto-detected variants looked undetected.
    *
    * @returns {Promise<boolean>} true if the variant set changed.
    */
   async _refreshCurrentVariantsFromDisk() {
     const videoPath = this._currentVideoPath;
     if (!videoPath || !window.funsync?.scanDirectory) return false;
-    const dir = videoPath.replace(/[\\/][^\\/]*$/, '');
-    if (!dir || dir === videoPath) return false;
+    const cur = this._currentVariants || [];
+    const dirs = variantScanDirs(videoPath, cur);
+    if (dirs.length === 0) return false;
     try {
-      const result = await window.funsync.scanDirectory(dir, this.library?._sourceMap || {});
+      const result = await window.funsync.scanDirectory(
+        dirs.length === 1 ? dirs[0] : dirs,
+        this.library?._sourceMap || {},
+      );
       const match = result?.videos?.find((v) => v.path === videoPath);
       if (!match) return false; // folder unreadable (offline) — keep cache
+      // A variant folder that failed to scan is unreachable, not empty —
+      // pruning its scripts would silently drop live variants. Keep cache.
+      if (variantFoldersUnreachable(cur, result?.failedPaths)) return false;
       const fresh = match.variants || [];
-      const cur = this._currentVariants || [];
       const changed = fresh.length !== cur.length
         || fresh.some((v, i) => v.path !== cur[i]?.path);
       if (changed) {
@@ -8834,7 +8857,7 @@ class App {
     });
     if (idx > 0) await this._switchVariant(idx);
     if (randomOn) {
-      const label = variants[idx]?.label || t('library.variantDefault');
+      const label = variants[idx]?.displayLabel || variants[idx]?.label || t('library.variantDefault');
       showToast(t('toast.randomVariant', { name: label }), 'info', 2500);
     }
   }
@@ -8851,15 +8874,24 @@ class App {
     const preferredLabel = variants.length > 1
       ? this._getPreferredVariantLabel(this._currentVideoPath)
       : null;
+    // The check-mark follows the ACTIVE FILE, not a bare index.
+    // `_updateVariantSelector` re-homes `_activeVariantIndex` from
+    // `_activeVariantPath`, but the dropdown is also re-rendered straight from
+    // a cached list (and after the on-open disk refresh, which can hand back a
+    // differently ordered list). Resolving the row here keeps the marker on the
+    // right file whatever the order is.
+    const activePath = this._activeVariantPath || '';
+    const foundIndex = activePath ? variants.findIndex((v) => v.path === activePath) : -1;
+    const markerIndex = foundIndex >= 0 ? foundIndex : this._activeVariantIndex;
     for (let i = 0; i < variants.length; i++) {
       const v = variants[i];
       const item = document.createElement('button');
       item.className = 'variant-selector__item';
-      if (i === this._activeVariantIndex) item.classList.add('variant-selector__item--active');
+      if (i === markerIndex) item.classList.add('variant-selector__item--active');
 
       const label = document.createElement('span');
       label.className = 'variant-selector__item-label';
-      label.textContent = v.label;
+      label.textContent = v.displayLabel || v.label;
       item.appendChild(label);
 
       // Pin-as-default star. Lives inside the (flex) item; clicking it
@@ -8881,7 +8913,7 @@ class App {
           const newLabel = isPreferred ? null : v.label;
           this._setPreferredVariantLabel(this._currentVideoPath, newLabel);
           showToast(
-            newLabel ? t('variants.defaultSet', { label: v.label }) : t('variants.defaultCleared'),
+            newLabel ? t('variants.defaultSet', { label: v.displayLabel || v.label }) : t('variants.defaultCleared'),
             'info', 2500,
           );
           this._showVariantDropdown(); // re-render so star states refresh
@@ -9258,6 +9290,14 @@ class App {
     if (index === this._activeVariantIndex) return;
 
     const variant = variants[index];
+    // Same FILE, stale index: a re-scan can hand back the list in a different
+    // order, so the stored index may no longer point at the row the user is
+    // clicking. Re-home the index instead of reloading the script that is
+    // already playing.
+    if (variant && variant.path && this._activeVariantPath && variant.path === this._activeVariantPath) {
+      this._activeVariantIndex = index;
+      return;
+    }
     this._activeVariantIndex = index;
     this._activeVariantPath = variant.path || null;
 
@@ -9401,7 +9441,7 @@ class App {
         }
       }
 
-      showToast(t('toast.nowPlayingVariant', { label: variant.label }), 'info', 2000);
+      showToast(t('toast.nowPlayingVariant', { label: variant.displayLabel || variant.label }), 'info', 2000);
     } catch (err) {
       console.warn('[Variants] Switch failed:', err.message);
       // Clear the loading state so the user isn't stranded on a paused

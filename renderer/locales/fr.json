@@ -1209,7 +1209,15 @@
       "resumeProgressLabel": "Progression dans les listes",
       "resumeProgressHint": "Affiche votre progression sous forme de barre sur les vignettes et lignes des listes. Listes de lecture uniquement — la bibliothèque principale reste vierge.",
       "hideDupesLabel": "Masquer les doublons",
-      "hideDupesHint": "Affiche une seule entrée lorsque plusieurs vidéos portent le même nom de fichier, par exemple le même fichier dans deux dossiers source. La copie avec script est conservée."
+      "hideDupesHint": "Affiche une seule entrée lorsque plusieurs vidéos portent le même nom de fichier, par exemple le même fichier dans deux dossiers source. La copie avec script est conservée.",
+      "autoVariantModeLabel": "Détecter automatiquement les variantes de script",
+      "autoVariantModeStrict": "Stricte (recommandé)",
+      "autoVariantModeGeneric": "Générique",
+      "autoVariantModeOff": "Désactivée",
+      "autoVariantModeHint": "Définit comment des noms comme Title-soft.funscript deviennent des variantes de Title. Stricte n'utilise que les séparateurs impossibles dans un vrai titre et ne reconnaît que les étiquettes intégrées (soft, intense, loop…). Générique accepte en plus la séparation par espace et d'autres étiquettes sans bruit. Désactivée garde uniquement les motifs d'avant : (Soft) et Title.soft.",
+      "variantKeywordsLabel": "Étiquettes de variante supplémentaires",
+      "variantKeywordsPlaceholder": "par ex. slowmo, handson",
+      "variantKeywordsHint": "Étiquettes séparées par des virgules qui complètent la liste du mode strict. Elles s'appliquent aux séparateurs - et _ ; les étiquettes intégrées ne sont jamais retirées."
     },
     "data": {
       "backupHeader": "Sauvegarde et restauration",

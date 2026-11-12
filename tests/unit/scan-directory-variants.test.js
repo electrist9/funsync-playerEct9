@@ -3,12 +3,12 @@
  * No DOM required — skips jsdom construction. See notes/CLAUDE.md
  * "Test environments" before changing this or adding DOM here.
  */
-// Pins the funscript variant-classification logic in
-// electron/main.js::scan-directory. The classifier is currently inline
-// in main.js (CJS + Electron deps make direct import hostile); this
-// file mirrors the algorithm 1:1 so behavioural regressions surface
-// here. If you change the classifier in main.js, mirror the change
-// here AND verify the assertions still hold.
+// Pins the funscript classification + sibling post-pass that
+// electron/main.js::scan-directory applies. The classifier itself now lives
+// in electron/funscript-variants.js and is imported directly here; the
+// post-pass still runs inline in the scan handler, so it is mirrored 1:1
+// below. If you change the post-pass in main.js, mirror the change here AND
+// verify the assertions still hold.
 //
 // Specific regression this pins: dotted filenames like S01.E03.funscript
 // or Title.2024.funscript were being misclassified as variants of a
@@ -19,12 +19,7 @@
 
 import { describe, it, expect } from 'vitest';
 
-const AXIS_SUFFIXES = new Set([
-  'surge', 'sway', 'twist', 'roll', 'pitch', 'vib', 'lube', 'pump', 'suction', 'valve',
-]);
-
-const normalizeName = (name) =>
-  name.toLowerCase().replace(/[_.\-]/g, ' ').replace(/\s+/g, ' ').trim();
+import { normalizeName, classifyFunscriptName } from '../../electron/funscript-variants.js';
 
 // Mirror of `funscriptList` build + post-pass from main.js scan-directory.
 // `videoFilenames` are the video files present in the same `dir` (so the
@@ -45,44 +40,14 @@ function classify(funscriptFilenames, dir = '/lib', videoFilenames = []) {
   const funscriptList = [];
   for (const filename of funscriptFilenames) {
     const nameNoExt = filename.replace(/\.funscript$/i, '');
-    const dotIdx = nameNoExt.lastIndexOf('.');
-    const dotSuffix = dotIdx >= 0 ? nameNoExt.slice(dotIdx + 1).toLowerCase() : null;
-    const isAxis = dotSuffix && AXIS_SUFFIXES.has(dotSuffix);
-    const parenMatch = nameNoExt.match(/^(.+?)\s*\(([^)]+)\)\s*$/);
-
-    let videoBase, variantLabel;
-    let isAmbiguousDotVariant = false;
-    if (isAxis) {
-      videoBase = normalizeName(nameNoExt.slice(0, dotIdx));
-      variantLabel = null;
-    } else if (parenMatch) {
-      const fullBase = normalizeName(nameNoExt);
-      if (videoBaseLocal.has(dir + '\0' + fullBase) || videoBaseGlobal.has(fullBase)) {
-        videoBase = fullBase;
-        variantLabel = null;
-      } else {
-        videoBase = normalizeName(parenMatch[1]);
-        variantLabel = parenMatch[2].trim();
-      }
-    } else if (dotSuffix && dotIdx > 0) {
-      videoBase = normalizeName(nameNoExt.slice(0, dotIdx));
-      variantLabel = dotSuffix;
-      isAmbiguousDotVariant = true;
-    } else {
-      videoBase = normalizeName(nameNoExt);
-      variantLabel = null;
-    }
-
-    funscriptList.push({
-      name: filename,
+    const cls = classifyFunscriptName(nameNoExt, {
       dir,
-      videoBase,
-      variantLabel,
-      isAxis,
-      axisSuffix: isAxis ? dotSuffix : null,
-      isAmbiguousDotVariant,
-      fullNormalisedBase: normalizeName(nameNoExt),
+      videoBaseLocal,
+      videoBaseGlobal,
+      mode: 'strict',
+      keywords: [],
     });
+    funscriptList.push({ name: filename, dir, ...cls });
   }
 
   // Post-pass: demote ambiguous dot-variants if no real sibling exists.

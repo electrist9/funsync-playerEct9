@@ -76,6 +76,18 @@ const DEFAULTS = {
       sources: [],
       associations: {},
       manualVariants: {},
+      // Auto funscript variant detection (docs/SPEC-auto-variant-detection.md).
+      // 'strict' (default) only treats separators that cannot occur inside a
+      // real title as a variant boundary, and only built-in-whitelist labels
+      // for the separators that can; 'generic' additionally allows
+      // space-separated labels and any non-noise label; 'off' restores the
+      // pre-feature behaviour exactly. Read by the scan-directory handler —
+      // nothing is persisted per video, so changing this recomputes the
+      // library on the next scan and reverting it is a real rollback.
+      autoVariantMode: 'strict',
+      // Extra strict-mode labels, MERGED with the built-in whitelist (it can
+      // never be replaced from here). Case-insensitive, whole-label match.
+      variantKeywords: [],
       // Per-path manual VR-classification override. Value is `'vr'` or
       // `'flat'`; absent means use the auto-detection heuristic.
       // Tri-state covers both flipping a missed VR file → VR and

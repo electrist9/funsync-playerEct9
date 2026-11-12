@@ -4780,7 +4780,7 @@ export class Library {
           vRow.className = 'library__assoc-variant-row';
           const vName = document.createElement('span');
           vName.className = 'library__assoc-variant-name';
-          vName.textContent = v.label;
+          vName.textContent = v.displayLabel || v.label;
           vName.title = v.name || v.path;
           vRow.appendChild(vName);
 

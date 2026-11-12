@@ -1209,7 +1209,15 @@
       "resumeProgressLabel": "Fortschritt in Playlists",
       "resumeProgressHint": "Zeigt als Balken auf Playlist-Karten und -Zeilen, wie weit du gekommen bist. Nur bei Playlist-Wiedergabe — die Hauptbibliothek bleibt unmarkiert.",
       "hideDupesLabel": "Doppelte Namen ausblenden",
-      "hideDupesHint": "Zeigt nur einen Eintrag, wenn mehrere Videos denselben Dateinamen haben, etwa dieselbe Datei in zwei Quellordnern. Die Kopie mit Skript bleibt erhalten."
+      "hideDupesHint": "Zeigt nur einen Eintrag, wenn mehrere Videos denselben Dateinamen haben, etwa dieselbe Datei in zwei Quellordnern. Die Kopie mit Skript bleibt erhalten.",
+      "autoVariantModeLabel": "Skript-Varianten automatisch erkennen",
+      "autoVariantModeStrict": "Streng (empfohlen)",
+      "autoVariantModeGeneric": "Allgemein",
+      "autoVariantModeOff": "Aus",
+      "autoVariantModeHint": "Legt fest, wie Dateinamen wie Title-soft.funscript als Variante von Title erkannt werden. Streng nutzt nur Trennzeichen, die nicht in einem echten Titel vorkommen können, und erkennt nur die eingebauten Bezeichnungen (soft, intense, loop …). Allgemein akzeptiert zusätzlich Trennung per Leerzeichen und andere Bezeichnungen ohne Störwörter. Aus erkennt nur die bisherigen Muster (Soft) und Title.soft.",
+      "variantKeywordsLabel": "Zusätzliche Bezeichnungen für Varianten",
+      "variantKeywordsPlaceholder": "z. B. slowmo, handson",
+      "variantKeywordsHint": "Durch Komma getrennte Bezeichnungen, die die Liste im strengen Modus ergänzen. Sie gelten für die Trennzeichen - und _; eingebaute Bezeichnungen werden nie entfernt."
     },
     "data": {
       "backupHeader": "Backup & Wiederherstellung",

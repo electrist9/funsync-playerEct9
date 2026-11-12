@@ -60,6 +60,16 @@ const { EroScriptsAPI } = require('./eroscripts-api');
 const editorPopout = require('./editor-popout-window');
 const audiencePopout = require('./audience-popout-window');
 const playerPopout = require('./player-popout-window');
+// Auto funscript variant detection (docs/SPEC-auto-variant-detection.md).
+// Shared with the unit tests, which import the module directly.
+const {
+  AXIS_SUFFIXES,
+  normalizeName,
+  classifyFunscriptName,
+  disambiguateVariantLabels,
+  resolveAutoVariantMode,
+  sortVariantsForDisplay,
+} = require('./funscript-variants');
 
 const eroScripts = new EroScriptsAPI();
 
@@ -1111,7 +1121,15 @@ ipcMain.handle('scan-directory', async (_event, dirPathOrPaths, sourceMap) => {
   const VIDEO_EXTS = ['.mp4', '.m4v', '.mkv', '.webm', '.avi', '.mov', '.mp3', '.wav', '.ogg', '.flac', '.m4a'];
   const FUNSCRIPT_EXT = '.funscript';
   const SUBTITLE_EXTS = ['.srt', '.vtt'];
-  const AXIS_SUFFIXES = new Set(['surge','sway','twist','roll','pitch','vib','lube','pump','suction','valve']);
+  // AXIS_SUFFIXES comes from ./funscript-variants so the classifier and the
+  // scan can never disagree about which suffixes are multi-axis parts.
+
+  // Auto-variant detection settings (docs/SPEC-auto-variant-detection.md).
+  // Read per scan, never persisted per video: the whole classification is
+  // recomputed on every scan, so changing the mode or the keyword list needs
+  // no migration and rolling the setting back restores the old library.
+  const autoVariantMode = resolveAutoVariantMode(store.getSetting('library.autoVariantMode'));
+  const autoVariantKeywords = store.getSetting('library.variantKeywords');
 
   // Canonicalise a path for cross-source dedup: forward slashes, lowercased
   // drive letter. Matches renderer/js/path-utils.js::canonicalPath so the
@@ -1153,8 +1171,8 @@ ipcMain.handle('scan-directory', async (_event, dirPathOrPaths, sourceMap) => {
     log.info(`[Library] Scanned ${entries.length} entries in ${Date.now() - scanStart}ms from ${dirPaths.length} source(s)`);
   }
 
-  // Normalize a basename for matching: lowercase, replace separators with spaces, collapse
-  const normalizeName = (name) => name.toLowerCase().replace(/[_.\-]/g, ' ').replace(/\s+/g, ' ').trim();
+  // `normalizeName` and `AXIS_SUFFIXES` come from ./funscript-variants so the
+  // scan and the classifier share one definition of "same title".
 
   // Helper: get the full path for a recursive dirent
   const entryPath = (entry) => {
@@ -1201,49 +1219,18 @@ ipcMain.handle('scan-directory', async (_event, dirPathOrPaths, sourceMap) => {
     const nameNoExt = path.basename(entry.name, ext);
     const fullPath = entryPath(entry);
 
-    // Check for axis suffix: "video.vib" -> suffix "vib"
-    const dotIdx = nameNoExt.lastIndexOf('.');
-    const dotSuffix = dotIdx >= 0 ? nameNoExt.slice(dotIdx + 1).toLowerCase() : null;
-    const isAxis = dotSuffix && AXIS_SUFFIXES.has(dotSuffix);
-
-    // Check for parenthesized variant: "video (Soft)" -> label "Soft"
-    const parenMatch = nameNoExt.match(/^(.+?)\s*\(([^)]+)\)\s*$/);
-
-    let videoBase, variantLabel;
-    let isAmbiguousDotVariant = false;
-    if (isAxis) {
-      videoBase = normalizeName(nameNoExt.slice(0, dotIdx));
-      variantLabel = null; // axis, not a variant
-    } else if (parenMatch) {
-      const fullBase = normalizeName(nameNoExt);
-      const fsDir = entryDir(entry);
-      if (videoBaseLocal.has(fsDir + '\0' + fullBase) || videoBaseGlobal.has(fullBase)) {
-        // A video whose real title includes the parenthetical exists
-        // (e.g. "Title (Nude).mp4"). The parens are part of the title,
-        // not a variant suffix — treat this funscript as that video's
-        // primary so the video isn't left script-less and hidden.
-        videoBase = fullBase;
-        variantLabel = null;
-      } else {
-        // Parenthesized variant — `"Title (Soft).funscript"` with only
-        // "Title.mp4" present. Unambiguous user intent; treat as variant.
-        videoBase = normalizeName(parenMatch[1]);
-        variantLabel = parenMatch[2].trim();
-      }
-    } else if (dotSuffix && dotIdx > 0) {
-      // AMBIGUOUS — could be a real variant ("video.intense.funscript")
-      // OR just a filename that happens to contain a dot ("S01.E03.funscript",
-      // "Title.2024.funscript"). We can't tell from the name in isolation.
-      // Classify provisionally as a variant and let the post-pass below
-      // demote it to primary if no sibling funscript exists with the
-      // dot-stripped base (i.e., nothing for it to be a "variant of").
-      videoBase = normalizeName(nameNoExt.slice(0, dotIdx));
-      variantLabel = dotSuffix;
-      isAmbiguousDotVariant = true;
-    } else {
-      videoBase = normalizeName(nameNoExt);
-      variantLabel = null; // default/primary
-    }
+    // Classify the funscript: axis part, variant of a base title, or the
+    // primary script of its own title. All the rules live in
+    // ./funscript-variants (docs/SPEC-auto-variant-detection.md) so the
+    // behaviour is unit-testable without Electron.
+    const cls = classifyFunscriptName(nameNoExt, {
+      dir: entryDir(entry),
+      videoBaseLocal,
+      videoBaseGlobal,
+      mode: autoVariantMode,
+      keywords: Array.isArray(autoVariantKeywords) ? autoVariantKeywords : [],
+    });
+    const { videoBase, variantLabel, isAxis, isAmbiguousDotVariant } = cls;
 
     funscriptList.push({
       name: entry.name,
@@ -1252,14 +1239,17 @@ ipcMain.handle('scan-directory', async (_event, dirPathOrPaths, sourceMap) => {
       videoBase,
       variantLabel,
       isAxis,
-      axisSuffix: isAxis ? dotSuffix : null,
+      axisSuffix: cls.axisSuffix,
       // Set for funscripts whose variant-ness was inferred from a dot
       // in the filename. Post-pass below demotes to primary when no
       // matching primary sibling exists.
       isAmbiguousDotVariant,
+      // True when the variant label came from an auto-detected separator
+      // (spec §6). Informational only — nothing is persisted per video.
+      autoDetected: cls.autoDetected === true,
       // Cache the full-name normalisation for the demotion path so we
       // don't recompute it after the maps are built.
-      fullNormalisedBase: normalizeName(nameNoExt),
+      fullNormalisedBase: cls.fullNormalisedBase,
       _used: false,
     });
   }
@@ -1336,6 +1326,19 @@ ipcMain.handle('scan-directory', async (_event, dirPathOrPaths, sourceMap) => {
     }
   }
 
+  // Resolve a source name from sourceMap (match longest prefix). Shared by
+  // videos and their variants so §7 disambiguation tags duplicate labels with
+  // the same origin the video card shows.
+  const sourceNameFor = (p) => {
+    let resolved = '';
+    for (const [srcPath, srcName] of Object.entries(_sourceMap)) {
+      if (p.startsWith(srcPath) && srcPath.length > resolved.length) {
+        resolved = srcName;
+      }
+    }
+    return resolved;
+  };
+
   // Build video list with funscript + subtitle + variant pairing
   const videos = [];
   await yieldTick();
@@ -1366,31 +1369,39 @@ ipcMain.handle('scan-directory', async (_event, dirPathOrPaths, sourceMap) => {
       if (fs.videoBase !== baseName || fs.isAxis || fs.dir !== dir) continue;
       fs._used = true;
       seenVariantPaths.add(fs.path);
-      variants.push({ label: fs.variantLabel || 'Default', path: fs.path, name: fs.name });
+      variants.push({ label: fs.variantLabel || 'Default', path: fs.path, name: fs.name, _autoDetected: true });
     }
     // Pass 2: global (other directories) — only if not already found locally
     if (variants.length === 0) {
       for (const fs of funscriptList) {
         if (fs.videoBase !== baseName || fs.isAxis || seenVariantPaths.has(fs.path)) continue;
         fs._used = true;
-        variants.push({ label: fs.variantLabel || 'Default', path: fs.path, name: fs.name });
+        variants.push({ label: fs.variantLabel || 'Default', path: fs.path, name: fs.name, _autoDetected: true });
       }
     }
-    // Sort: Default first, then alphabetical
-    variants.sort((a, b) => {
-      if (a.label === 'Default') return -1;
-      if (b.label === 'Default') return 1;
-      return a.label.localeCompare(b.label);
-    });
+    // Sort: Default first, then label, then path. The comparator has to be a
+    // total order — see sortVariantsForDisplay() for what the old inline
+    // version did to two "Default" variants.
+    sortVariantsForDisplay(variants);
 
     // Resolve source name from sourceMap (match longest prefix)
     const fullPath = entryPath(entry);
-    let sourceName = '';
-    for (const [srcPath, srcName] of Object.entries(_sourceMap)) {
-      if (fullPath.startsWith(srcPath) && srcPath.length > sourceName.length) {
-        sourceName = srcName;
-      }
-    }
+    const sourceName = sourceNameFor(fullPath);
+
+    // Spec §7: two variants can end up with the same label ("Soft" from two
+    // sources, "Soft" vs "soft" in one folder, two "Default" scripts). Tag
+    // them with the source name — or the nearest folder name when the source
+    // cannot tell them apart — in `displayLabel` ONLY. `label` stays as-is:
+    // it is the persistence key for library.preferredVariants, the star
+    // toggle and the phone bridge.
+    //
+    // The tag comes from the source the SCRIPT lives in, not the source the
+    // video lives in: with cross-directory funscript sources (FunScriptDancer,
+    // FunscriptFlow, …) that is the only thing which tells two same-named
+    // scripts apart. Falls back to the video's source for a script outside
+    // every configured root.
+    for (const v of variants) v.sourceName = sourceNameFor(v.path) || sourceName;
+    disambiguateVariantLabels(variants);
 
     videos.push({
       name: entry.name,
@@ -1415,6 +1426,16 @@ ipcMain.handle('scan-directory', async (_event, dirPathOrPaths, sourceMap) => {
       // in my folder", which matches mtime for fresh-dropped files.
       dateAdded: 0,
     });
+  }
+
+  // Field diagnosis: a "variants weren't detected" report can only be told
+  // apart from a scan that genuinely found none if the scan says what it
+  // found. Cheap summary, and it only fires when auto-detection produced
+  // anything.
+  const variantVideos = videos.reduce((n, v) => n + (v.variants.length > 1 ? 1 : 0), 0);
+  if (variantVideos > 0) {
+    const totalVariants = videos.reduce((n, v) => n + v.variants.length, 0);
+    log.info(`[Library] Auto-detected ${totalVariants} funscript variant(s) across ${variantVideos} video(s) (mode: ${autoVariantMode})`);
   }
 
   // Batched stat pass to fill `dateAdded`. Runs all stats in parallel
@@ -1469,11 +1490,17 @@ ipcMain.handle('scan-directory', async (_event, dirPathOrPaths, sourceMap) => {
         const s = fuzzyScore(videoBase, fsBase);
         if (s >= 98 && !seenPaths.has(fs.path)) {
           seenPaths.add(fs.path);
-          fuzzyVariants.push({ label: fs.variantLabel || 'Default', path: fs.path, name: fs.name });
+          fuzzyVariants.push({ label: fs.variantLabel || 'Default', path: fs.path, name: fs.name, _autoDetected: true });
         }
       }
       if (fuzzyVariants.length > 1) {
-        fuzzyVariants.sort((a, b) => a.label === 'Default' ? -1 : b.label === 'Default' ? 1 : a.label.localeCompare(b.label));
+        // Same comparator and same per-script source tag as the exact-match
+        // branch above: two scripts sharing a base name across funscript
+        // sources must not swap rows on every scan.
+        sortVariantsForDisplay(fuzzyVariants);
+        const fuzzySource = sourceNameFor(video.path);
+        for (const v of fuzzyVariants) v.sourceName = sourceNameFor(v.path) || fuzzySource;
+        disambiguateVariantLabels(fuzzyVariants);
         video.variants = fuzzyVariants;
       }
     }

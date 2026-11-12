@@ -426,13 +426,16 @@ function renderVariants(list, activeLabel) {
   const variants = Array.isArray(list) ? list : [];
   if (variants.length < 2) { selector.hidden = true; return; }
   selector.hidden = false;
-  if (label) label.textContent = activeLabel || variants[0]?.label || '';
+  // `label` identifies the variant, `displayLabel` is what the user reads
+  // (duplicate labels are disambiguated with a source/folder suffix).
+  const activeVariant = variants.find((v) => (v.label || '') === activeLabel) || variants[0];
+  if (label) label.textContent = activeVariant ? (activeVariant.displayLabel || activeVariant.label || '') : (activeLabel || '');
   dropdown.replaceChildren();
   variants.forEach((v) => {
     const item = document.createElement('button');
     item.className = 'variant-selector__item';
     if ((v.label || '') === activeLabel) item.classList.add('is-active');
-    item.textContent = v.label || '';
+    item.textContent = v.displayLabel || v.label || '';
     item.addEventListener('click', (e) => {
       e.stopPropagation();
       dropdown.hidden = true;

@@ -1182,7 +1182,15 @@
       "resumeProgressLabel": "Resume progress in playlists",
       "resumeProgressHint": "Show how far through each video you got, as a bar on playlist cards and rows. Playlist playback only — the main library is left unmarked.",
       "hideDupesLabel": "Hide duplicate names",
-      "hideDupesHint": "Show only one entry when several videos share an identical filename, such as the same file in two source folders. The copy with a script is kept."
+      "hideDupesHint": "Show only one entry when several videos share an identical filename, such as the same file in two source folders. The copy with a script is kept.",
+      "autoVariantModeLabel": "Auto-detect script variations",
+      "autoVariantModeStrict": "Strict (recommended)",
+      "autoVariantModeGeneric": "Generic",
+      "autoVariantModeOff": "Off",
+      "autoVariantModeHint": "How filenames like Title-soft.funscript become variations of Title. Strict only uses separators that cannot appear inside a real title, and only recognises the built-in labels (soft, intense, loop, …). Generic also accepts space-separated labels and other labels that are not noise. Off keeps only the patterns used before: (Soft) and Title.soft.",
+      "variantKeywordsLabel": "Extra variation labels",
+      "variantKeywordsPlaceholder": "e.g. slowmo, handson",
+      "variantKeywordsHint": "Comma-separated labels added to the strict list. They apply to the - and _ separators; the built-in labels are never removed."
     },
     "data": {
       "backupHeader": "Backup & Recovery",

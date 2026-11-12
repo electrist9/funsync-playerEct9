@@ -1209,7 +1209,15 @@
       "resumeProgressLabel": "プレイリストに再生位置を表示",
       "resumeProgressHint": "プレイリストのカードと行にバーで再生位置を表示します。プレイリスト再生のみ。メインライブラリには表示されません。",
       "hideDupesLabel": "重複した名前を隠す",
-      "hideDupesHint": "複数の動画が同じファイル名の場合、1件だけ表示します（同じファイルが2つのソースフォルダーにある場合など）。スクリプトのあるコピーが残ります。"
+      "hideDupesHint": "複数の動画が同じファイル名の場合、1件だけ表示します（同じファイルが2つのソースフォルダーにある場合など）。スクリプトのあるコピーが残ります。",
+      "autoVariantModeLabel": "スクリプトのバリエーションを自動検出",
+      "autoVariantModeStrict": "厳密（推奨）",
+      "autoVariantModeGeneric": "汎用",
+      "autoVariantModeOff": "オフ",
+      "autoVariantModeHint": "Title-soft.funscript のようなファイル名を Title のバリエーションとして扱う方法を決めます。厳密では、実際のタイトルに現れ得ない区切りだけをバリエーションの境界とし、認識するラベルは内蔵の一覧（soft、intense、loop など）に限ります。汎用ではスペース区切りや、ノイズではない他のラベルも受け付けます。オフでは従来どおり (Soft) と Title.soft のパターンだけを認識します。",
+      "variantKeywordsLabel": "追加のバリエーションラベル",
+      "variantKeywordsPlaceholder": "例: slowmo, handson",
+      "variantKeywordsHint": "カンマ区切りで厳密モードのラベル一覧に追加します。- と _ の区切りで機能し、内蔵のラベルが削除されることはありません。"
     },
     "data": {
       "backupHeader": "バックアップと復元",

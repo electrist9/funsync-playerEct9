@@ -41,7 +41,10 @@ export function normalize(filename) {
  * Deliberately a fixed list rather than a frequency heuristic: it behaves
  * identically for a library of 5 files and 5,000, and it is inspectable.
  */
-const NOISE_TOKENS = new Set([
+// Exported so the CommonJS mirror in electron/funscript-variants.js can be
+// pinned against it (tests/unit/funscript-variant-noise-parity.test.js); the
+// sandboxed renderer cannot require that file, so the list lives in both places.
+export const NOISE_TOKENS = new Set([
   // source / container / codec
   'web', 'webdl', 'webrip', 'bluray', 'brrip', 'bdrip', 'dvdrip', 'hdtv', 'dl',
   'x264', 'x265', 'h264', 'h265', 'hevc', 'avc', 'xvid', 'divx', 'av1',

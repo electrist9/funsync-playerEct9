@@ -35,6 +35,7 @@ const SETTINGS_DEFAULTS = {
   'player.minStrokeMs': 60,
   'library.movingPreviews': true,
   'library.folderPreviews': true,
+  'library.autoVariantMode': 'strict',
   'player.miniPlayer': true,
 };
 
@@ -54,6 +55,7 @@ export class SettingsPanel {
     onRangeExtenderChanged,
     onInlineVizOpacityChanged,
     onLibraryDisplayChanged,
+    onAutoVariantChanged,
     onPickOrgasmScript,
     onClearOrgasmScript,
     getOrgasmScriptName,
@@ -86,6 +88,9 @@ export class SettingsPanel {
     this.onRangeExtenderChanged = onRangeExtenderChanged || null;
     this.onInlineVizOpacityChanged = onInlineVizOpacityChanged || null;
     this.onLibraryDisplayChanged = onLibraryDisplayChanged || null;
+    // Auto-variant detection happens during the scan, so a mode/keyword
+    // change only takes effect after a rescan — app.js owns that.
+    this.onAutoVariantChanged = onAutoVariantChanged || null;
     this.onPickOrgasmScript = onPickOrgasmScript || null;
     this.onClearOrgasmScript = onClearOrgasmScript || null;
     this.getOrgasmScriptName = getOrgasmScriptName || null;
@@ -1882,6 +1887,20 @@ export class SettingsPanel {
         <input type="checkbox" id="sp-hide-dupes" class="settings-panel__input settings-panel__input--checkbox" ${this._settings.get('library.hideDuplicateNames') === true ? 'checked' : ''} aria-describedby="sp-hide-dupes-hint">
       </div>
       <div class="settings-panel__hint" id="sp-hide-dupes-hint">${t('settingsPanel.appearance.hideDupesHint')}</div>
+      <div class="settings-panel__field">
+        <label class="settings-panel__field-label" for="sp-auto-variant-mode">${t('settingsPanel.appearance.autoVariantModeLabel')}</label>
+        <select id="sp-auto-variant-mode" class="settings-panel__input settings-panel__input--select" aria-describedby="sp-auto-variant-mode-hint">
+          <option value="strict">${t('settingsPanel.appearance.autoVariantModeStrict')}</option>
+          <option value="generic">${t('settingsPanel.appearance.autoVariantModeGeneric')}</option>
+          <option value="off">${t('settingsPanel.appearance.autoVariantModeOff')}</option>
+        </select>
+      </div>
+      <div class="settings-panel__hint" id="sp-auto-variant-mode-hint">${t('settingsPanel.appearance.autoVariantModeHint')}</div>
+      <div class="settings-panel__field">
+        <label class="settings-panel__field-label" for="sp-variant-keywords">${t('settingsPanel.appearance.variantKeywordsLabel')}</label>
+        <input type="text" id="sp-variant-keywords" class="settings-panel__input" placeholder="${t('settingsPanel.appearance.variantKeywordsPlaceholder')}" aria-describedby="sp-variant-keywords-hint">
+      </div>
+      <div class="settings-panel__hint" id="sp-variant-keywords-hint">${t('settingsPanel.appearance.variantKeywordsHint')}</div>
     `;
     librarySection.querySelector('#sp-moving-previews')
       .addEventListener('change', (e) => {
@@ -1910,6 +1929,36 @@ export class SettingsPanel {
         // the grid has to re-filter, not merely re-render.
         if (this.onLibraryDisplayChanged) this.onLibraryDisplayChanged(!!e.target.checked);
       });
+    // Auto funscript variant detection (docs/SPEC-auto-variant-detection.md).
+    // The scan reads both values fresh each time, so nothing is persisted per
+    // video — switching the mode back genuinely restores the old library.
+    const autoVariantModeEl = librarySection.querySelector('#sp-auto-variant-mode');
+    if (autoVariantModeEl) {
+      const savedMode = this._settings.get('library.autoVariantMode')
+        || SETTINGS_DEFAULTS['library.autoVariantMode'];
+      autoVariantModeEl.value = savedMode;
+      autoVariantModeEl.addEventListener('change', () => {
+        this._settings.set('library.autoVariantMode', autoVariantModeEl.value);
+        if (this.onAutoVariantChanged) this.onAutoVariantChanged(autoVariantModeEl.value);
+      });
+    }
+    const variantKeywordsEl = librarySection.querySelector('#sp-variant-keywords');
+    if (variantKeywordsEl) {
+      const savedKeywords = this._settings.get('library.variantKeywords');
+      variantKeywordsEl.value = Array.isArray(savedKeywords) ? savedKeywords.join(', ') : '';
+      variantKeywordsEl.addEventListener('change', () => {
+        // Comma-separated list, normalised the same way the classifier
+        // compares it (trimmed, lower-cased, de-duplicated).
+        const keywords = [];
+        for (const part of variantKeywordsEl.value.split(',')) {
+          const keyword = part.trim().toLowerCase();
+          if (keyword && !keywords.includes(keyword)) keywords.push(keyword);
+        }
+        variantKeywordsEl.value = keywords.join(', ');
+        this._settings.set('library.variantKeywords', keywords);
+        if (this.onAutoVariantChanged) this.onAutoVariantChanged();
+      });
+    }
     panel.appendChild(librarySection);
 
     return panel;

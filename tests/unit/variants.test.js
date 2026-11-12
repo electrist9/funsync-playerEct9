@@ -3,40 +3,44 @@
  * No DOM required — skips jsdom construction. See notes/CLAUDE.md
  * "Test environments" before changing this or adding DOM here.
  */
-// Unit tests for Script Variant Detection and Management
+// Unit tests for Script Variant Detection and Management.
+// The classification itself lives in electron/funscript-variants.js and is
+// covered in depth by tests/unit/auto-variant-detection.test.js; this file
+// keeps the original behaviour pins and the grouping / switching logic, and
+// now drives them through the real classifier instead of a copy of it.
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { classifyFunscriptName, sortVariantsForDisplay } from '../../electron/funscript-variants.js';
 
 describe('Variant Detection (scan-directory logic)', () => {
-  // Simulate the variant detection logic from main.js scan-directory
-  const AXIS_SUFFIXES = new Set(['surge','sway','twist','roll','pitch','vib','lube','pump','suction','valve']);
+  const DIR = '/lib';
+  const VIDEO_EXTS = ['.mp4', '.m4v', '.mkv', '.webm', '.avi', '.mov', '.mp3', '.wav', '.ogg', '.flac', '.m4a'];
 
-  function classifyFunscript(filename) {
-    const lower = filename.toLowerCase();
-    if (!lower.endsWith('.funscript')) return null;
-
+  // Thin wrapper: filename in, classification out. `videos` lets a test say
+  // which videos sit next to the script (the scanner builds these two sets).
+  function classifyFunscript(filename, videos = []) {
+    if (!filename.toLowerCase().endsWith('.funscript')) return null;
     const nameNoExt = filename.slice(0, -'.funscript'.length);
-    const dotIdx = nameNoExt.lastIndexOf('.');
-    const dotSuffix = dotIdx >= 0 ? nameNoExt.slice(dotIdx + 1).toLowerCase() : null;
-    const isAxis = !!(dotSuffix && AXIS_SUFFIXES.has(dotSuffix));
 
-    const parenMatch = nameNoExt.match(/^(.+?)\s*\(([^)]+)\)\s*$/);
-
-    let videoBase, variantLabel;
-    if (isAxis) {
-      videoBase = nameNoExt.slice(0, dotIdx).toLowerCase().replace(/[_.\-]/g, ' ').replace(/\s+/g, ' ').trim();
-      variantLabel = null;
-    } else if (parenMatch) {
-      videoBase = parenMatch[1].toLowerCase().replace(/[_.\-]/g, ' ').replace(/\s+/g, ' ').trim();
-      variantLabel = parenMatch[2].trim();
-    } else if (dotSuffix && dotIdx > 0) {
-      videoBase = nameNoExt.slice(0, dotIdx).toLowerCase().replace(/[_.\-]/g, ' ').replace(/\s+/g, ' ').trim();
-      variantLabel = dotSuffix;
-    } else {
-      videoBase = nameNoExt.toLowerCase().replace(/[_.\-]/g, ' ').replace(/\s+/g, ' ').trim();
-      variantLabel = null;
+    const videoBaseLocal = new Set();
+    const videoBaseGlobal = new Set();
+    for (const vname of videos) {
+      const dotPos = vname.lastIndexOf('.');
+      const vext = dotPos >= 0 ? vname.slice(dotPos).toLowerCase() : '';
+      if (!VIDEO_EXTS.includes(vext)) continue;
+      const vbase = vname.slice(0, dotPos).toLowerCase().replace(/[_.\-]/g, ' ').replace(/\s+/g, ' ').trim();
+      videoBaseLocal.add(DIR + '\0' + vbase);
+      videoBaseGlobal.add(vbase);
     }
 
-    return { videoBase, variantLabel, isAxis, axisSuffix: isAxis ? dotSuffix : null };
+    return classifyFunscriptName(nameNoExt, {
+      dir: DIR,
+      videoBaseLocal,
+      videoBaseGlobal,
+      mode: 'strict',
+      keywords: [],
+    });
   }
 
   describe('Default (no suffix)', () => {
@@ -131,10 +135,12 @@ describe('Variant Detection (scan-directory logic)', () => {
       expect(classifyFunscript('video.txt')).toBeNull();
     });
 
-    it('handles dots in video name', () => {
+    it('treats a numeric dot segment as part of the title, not a label', () => {
       const result = classifyFunscript('video.2024.01.funscript');
-      // Last dot segment "01" is not an axis, so it's a variant
-      expect(result.variantLabel).toBe('01');
+      // "01" is a bare number, so spec §5 keeps it in the title instead of
+      // reading it as a variant label.
+      expect(result.variantLabel).toBeNull();
+      expect(result.videoBase).toBe('video 2024 01');
     });
 
     it('handles empty filename', () => {
@@ -162,16 +168,14 @@ describe('Variant Detection (scan-directory logic)', () => {
     });
 
     it('sorts variants with Default first', () => {
+      // Real function, not a copy of the comparator: the inline copy let the
+      // broken version pass (see sortVariantsForDisplay for the story).
       const variants = [
-        { label: 'Intense' },
-        { label: 'Default' },
-        { label: 'Soft' },
+        { label: 'Intense', path: '/v.intense.funscript' },
+        { label: 'Default', path: '/v.funscript' },
+        { label: 'Soft', path: '/v.soft.funscript' },
       ];
-      variants.sort((a, b) => {
-        if (a.label === 'Default') return -1;
-        if (b.label === 'Default') return 1;
-        return a.label.localeCompare(b.label);
-      });
+      sortVariantsForDisplay(variants);
 
       expect(variants[0].label).toBe('Default');
       expect(variants[1].label).toBe('Intense');
@@ -272,5 +276,55 @@ describe('Manual Variants', () => {
     const parenMatch = nameNoExt.match(/\(([^)]+)\)/);
     const label = parenMatch ? parenMatch[1].trim() : nameNoExt;
     expect(label).toBe('HARDER video script');
+  });
+});
+
+describe('Scan + dropdown wiring — selection follows the file, not the row', () => {
+  // Pins the fix for "variant selection becomes non-deterministic when two
+  // funscripts share a filename across sources": the scan must sort with the
+  // shared total-order comparator, tag each variant with its OWN source, and
+  // the renderer must resolve the active row from the active path.
+  const read = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8');
+
+  const main = read('../../electron/main.js');
+  const app = read('../../renderer/js/app.js');
+
+  const dropdown = app.slice(
+    app.indexOf('_showVariantDropdown() {'),
+    app.indexOf('// Add variation button'),
+  );
+  const switchBody = app.slice(
+    app.indexOf('async _switchVariant(index) {'),
+    app.indexOf('// Cloud-sync re-uploads'),
+  );
+
+  it('main.js sorts variants with the shared deterministic comparator', () => {
+    expect(main).toContain('sortVariantsForDisplay(variants);');
+    // The old inline comparator: not a total order, flipped a pair of
+    // 'Default' variants on every scan. It existed twice (exact match and
+    // fuzzy match), so pin that both call sites are gone.
+    expect(main).not.toContain("if (a.label === 'Default') return -1;");
+    expect(main).not.toContain("a.label === 'Default' ? -1");
+  });
+
+  it('main.js tags each variant with the source its own file lives in', () => {
+    expect(main).toContain('v.sourceName = sourceNameFor(v.path) || sourceName;');
+    // Tagging every variant with the VIDEO's source made cross-source
+    // duplicates indistinguishable, so §7 fell back to a folder tag both
+    // scripts shared and the labels became position-derived.
+    expect(main).not.toContain('for (const v of variants) v.sourceName = sourceName;');
+  });
+
+  it('the dropdown marks the row whose path is the active variant', () => {
+    expect(dropdown).not.toBe('');
+    expect(dropdown).toContain('variants.findIndex((v) => v.path === activePath)');
+    expect(dropdown).toContain('if (i === markerIndex) item.classList.add');
+    expect(dropdown).not.toContain('if (i === this._activeVariantIndex) item.classList.add');
+  });
+
+  it('_switchVariant re-homes a stale index instead of reloading the same script', () => {
+    expect(switchBody).not.toBe('');
+    expect(switchBody).toContain('variant.path === this._activeVariantPath');
+    expect(switchBody).toContain('this._activeVariantIndex = index;');
   });
 });
