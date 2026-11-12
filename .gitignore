@@ -21,6 +21,10 @@ backend/*.pyc
 
 # Runtime caches
 thumbs/
+# ffmpeg.py / generated_store.py put this under tempfile.gettempdir(), which
+# falls back to the backend's CWD when TEMP/TMP are unavailable — that leaves
+# backend/funsync_thumbs/ in the tree instead of %TEMP%.
+backend/funsync_thumbs/
 scripts_cache/
 .funsync/
 
