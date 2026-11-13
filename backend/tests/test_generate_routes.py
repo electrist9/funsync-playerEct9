@@ -331,6 +331,25 @@ class TestExportToSidecar:
             written = json.load(handle)
         assert written["actions"] == payload["script"]["actions"]
 
+    def test_deleting_the_stored_copy_leaves_the_sidecar_alone(
+        self, client, export_video
+    ):
+        """The store holds the app's copy; the file beside the video is the user's."""
+        script_id, _ = _generated_id(client, export_video)
+        assert client.post(f"/api/generate/store/{script_id}/export").status_code == 200
+
+        sidecar = os.path.splitext(export_video)[0] + ".funscript"
+        with open(sidecar, "r", encoding="utf-8") as handle:
+            exported = json.load(handle)
+
+        response = client.delete(f"/api/generate/store/{script_id}")
+        assert response.status_code == 200, response.text
+        assert response.json() == {"ok": True}
+
+        with open(sidecar, "r", encoding="utf-8") as handle:
+            assert json.load(handle) == exported
+        assert client.get(f"/api/generate/store/{script_id}").status_code == 404
+
     def test_unknown_script_is_404(self, client):
         response = client.post("/api/generate/store/nosuchid/export")
         assert response.status_code == 404

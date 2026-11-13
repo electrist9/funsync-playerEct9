@@ -23,7 +23,7 @@
 import { Modal } from '../components/modal.js';
 import { t } from './i18n.js';
 import { showToast } from './toast.js';
-import { icon, AudioWaveform, Activity, WandSparkles, Download } from './icons.js';
+import { icon, AudioWaveform, Activity, WandSparkles, Download, Trash2 } from './icons.js';
 
 const POLL_MS = 600;
 const TERMINAL_STATUSES = ['done', 'error', 'cancelled'];
@@ -86,6 +86,12 @@ export class GeneratePanel {
     this._chipTimer = null;
     this._ui = null;       // live modal refs (null while the modal is closed)
     this._isOpen = false;
+    // Stored scripts for the loaded video, newest first, as last fetched. The
+    // token drops responses that arrive after a newer lookup (or after the
+    // modal was closed, where `_ui` is null anyway).
+    this._stored = [];
+    this._storedToken = 0;
+    this._deleting = false;
 
     // Form state, remembered for the rest of the session.
     this.engine = 'audio';
@@ -116,6 +122,9 @@ export class GeneratePanel {
       onRender: (body, close) => {
         this._close = close;
         this._build(body);
+        // Show what this video already has stored, so the user can delete it
+        // from here instead of regenerating over it.
+        this._refreshStored();
       },
     }).then(() => {
       this._isOpen = false;
@@ -136,6 +145,8 @@ export class GeneratePanel {
     if (job && !TERMINAL_STATUSES.includes(job.status)) this._cancel();
     this._job = null;
     this._port = null;
+    this._stored = [];
+    this._storedToken += 1;
     this._emitChip(null);
     this._render();
   }
@@ -270,6 +281,9 @@ export class GeneratePanel {
           jobId: next.job_id, code: next.error_code || 'failed',
         });
       }
+      // A saved script is now in the store, so the "already generated" list
+      // under the form has to catch up with it.
+      if (next.script_id) this._refreshStored();
     } else {
       this._schedulePoll();
     }
@@ -296,6 +310,7 @@ export class GeneratePanel {
     return Modal.confirm(
       t('generate.overwriteTitle'),
       t('generate.overwriteBody', { filename: stored[0].filename || '' }),
+      { confirmLabel: t('generate.overwriteConfirm') },
     );
   }
 
@@ -305,6 +320,15 @@ export class GeneratePanel {
    * blocking the generation the user asked for.
    */
   async _storedFor(engine) {
+    return (await this._storedScripts()).filter((item) => engineFamilyOf(item) === engine);
+  }
+
+  /**
+   * Every script stored for the loaded video — both engine families, newest
+   * first. The backend matches on the (path, size, mtime) hash, so this is at
+   * most one row per family. Empty on any failure.
+   */
+  async _storedScripts() {
     const port = this._port || this._getPort();
     const video = this._getVideo();
     if (!port || !video?.path) return [];
@@ -312,11 +336,111 @@ export class GeneratePanel {
       const res = await fetch(this._url(`/store?video_path=${encodeURIComponent(video.path)}`));
       if (!res.ok) return [];
       const data = await res.json().catch(() => ({}));
-      return (Array.isArray(data?.items) ? data.items : [])
-        .filter((item) => String(item?.engine || '').split(':')[0] === engine);
+      return Array.isArray(data?.items) ? data.items : [];
     } catch (err) {
       console.warn('[generate] store lookup failed', String(err?.message || err));
       return [];
+    }
+  }
+
+  // ------------------------------------------------------------ stored scripts
+
+  /**
+   * Re-read the stored list for the open modal. Responses that arrive after a
+   * newer lookup, or after the modal was closed, are dropped.
+   */
+  async _refreshStored() {
+    const token = ++this._storedToken;
+    const items = await this._storedScripts();
+    if (token !== this._storedToken || !this._ui) return;
+    this._stored = items;
+    this._renderStored();
+  }
+
+  _renderStored() {
+    const ui = this._ui;
+    if (!ui) return;
+    const rows = storedRowsFor(this._stored);
+    ui.stored.hidden = !rows.length;
+    ui.storedList.replaceChildren(...rows.map((row) => this._storedRow(row)));
+  }
+
+  /**
+   * One stored script: which engine made it, how many actions it holds, the
+   * file name inside the store, and a delete button. The stored record's
+   * `video_path` is deliberately never shown — it is the user's private path.
+   */
+  _storedRow(row) {
+    const item = el('div', 'generate__stored-item');
+
+    const glyph = el('span', `generate__stored-icon generate__stored-icon--${row.engine}`);
+    glyph.appendChild(icon(row.engine === 'motion' ? Activity : AudioWaveform,
+      { width: 15, height: 15, 'stroke-width': 1.9 }));
+    item.appendChild(glyph);
+
+    const text = el('div', 'generate__stored-text');
+    text.appendChild(el('span', 'generate__stored-title',
+      t(row.engine === 'motion' ? 'generate.engineMotion' : 'generate.engineAudio')));
+    // The file name inside the generated-scripts folder, so the user can tell
+    // which stored script this row is. Never the video path.
+    const meta = [t('generate.resultSummary', { count: row.count })];
+    if (row.filename) meta.push(row.filename);
+    text.appendChild(el('span', 'generate__stored-meta', meta.join(' · ')));
+    item.appendChild(text);
+
+    const del = el('button', 'generate__stored-del');
+    del.type = 'button';
+    del.title = t('common.delete');
+    del.setAttribute('aria-label', t('common.delete'));
+    del.appendChild(icon(Trash2, { width: 14, height: 14 }));
+    del.addEventListener('click', () => this._deleteStored(row.id, row.filename));
+    item.appendChild(del);
+    return item;
+  }
+
+  /**
+   * Delete one stored script. This only ever removes the app-internal copy in
+   * the generated-scripts folder: the `.funscript` beside the video is a
+   * separate file the user owns, and the confirm says so.
+   *
+   * Deleting the script the finished result is showing drops that result: its
+   * "Save next to video" would otherwise address a record the backend no
+   * longer has, and the start screen is where the user goes from here.
+   */
+  async _deleteStored(scriptId, filename) {
+    if (!scriptId || this._deleting) return;
+    const name = typeof filename === 'string' ? filename : '';
+    const ok = await Modal.confirm(
+      t('generate.deleteTitle'),
+      name ? t('generate.deleteBody', { filename: name }) : t('generate.deleteBodyUnknown'),
+    );
+    if (!ok) return;
+    this._deleting = true;
+    try {
+      const res = await fetch(this._url(`/store/${encodeURIComponent(scriptId)}`), { method: 'DELETE' });
+      if (res.status === 404) {
+        // Already gone (another window deleted it): say so and re-sync the list.
+        showToast(t('generate.error.storedGone'), 'error');
+        await this._refreshStored();
+        return;
+      }
+      if (!res.ok) {
+        showToast(this._errorText(await res.json().catch(() => ({}))), 'error');
+        return;
+      }
+      console.log('[generate] script deleted', { scriptId });
+      showToast(t('generate.deleted', { filename: name || '' }), 'info');
+      if (this._job?.script_id === scriptId) {
+        this._job = null;
+        this._emitChip(null);
+      }
+      await this._refreshStored();
+      this._render();
+    } catch (err) {
+      console.warn('[generate] delete request failed', String(err?.message || err));
+      showToast(t('generate.error.offline'), 'error');
+    } finally {
+      this._deleting = false;
     }
   }
 
@@ -357,7 +481,13 @@ export class GeneratePanel {
       const code = data?.detail?.code ?? data?.code;
 
       if (res.status === 409 && code === 'exists') {
-        const replace = await Modal.confirm(t('generate.existsTitle'), t('generate.existsBody'));
+        // Replacing a hand-made sidecar, not deleting it: the button has to say
+        // "Replace", not the default "Delete".
+        const replace = await Modal.confirm(
+          t('generate.existsTitle'),
+          t('generate.existsBody'),
+          { confirmLabel: t('generate.overwriteConfirm') },
+        );
         if (!replace) return;
         res = await this._postExport(true);
         data = await res.json().catch(() => ({}));
@@ -410,6 +540,16 @@ export class GeneratePanel {
     const root = el('div', 'generate');
 
     root.appendChild(el('p', 'generate__intro', t('generate.intro')));
+
+    // --- already generated for this video ---------------------------------
+    // Filled in by `_refreshStored()` once the store answers; hidden while
+    // there is nothing to delete.
+    const stored = el('div', 'generate__stored');
+    stored.hidden = true;
+    stored.appendChild(el('span', 'generate__stored-heading', t('generate.storedHeading')));
+    const storedList = el('div', 'generate__stored-list');
+    stored.appendChild(storedList);
+    root.appendChild(stored);
 
     // --- analysis method -------------------------------------------------
     const engineField = el('div', 'generate__field');
@@ -563,9 +703,12 @@ export class GeneratePanel {
     const previewBtn = button('generate__btn', t('generate.preview'), () => this._preview(), WandSparkles);
     const saveBtn = button('generate__btn generate__btn--primary', t('generate.saveToFile'), () => this._export(), Download);
     const againBtn = button('generate__btn', t('generate.again'), () => this._again());
+    const deleteBtn = button('generate__btn generate__btn--danger', t('generate.deleteStored'),
+      () => this._deleteStored(this._job?.script_id, this._job?.summary?.filename), Trash2);
     resultActions.appendChild(previewBtn);
     resultActions.appendChild(saveBtn);
     resultActions.appendChild(againBtn);
+    resultActions.appendChild(deleteBtn);
     result.appendChild(resultActions);
     const savedLine = el('div', 'generate__saved');
     savedLine.hidden = true;
@@ -586,7 +729,8 @@ export class GeneratePanel {
     body.appendChild(root);
     this._ui = {
       root, presetField, sensField, progress, bar, fill, progressText,
-      result, resultSummary, resultNote, resultActions, savedLine,
+      result, resultSummary, resultNote, resultActions, savedLine, deleteBtn,
+      stored, storedList,
       startBtn, cancelBtn,
     };
     this._render();
@@ -623,6 +767,9 @@ export class GeneratePanel {
       ui.resultSummary.textContent = this._summaryText(job);
       const isEmpty = job.status !== 'done' || job.summary?.empty;
       ui.resultActions.hidden = isEmpty;
+      // Deleting addresses the stored record, so it needs the id the save gave
+      // us; a failed save or an empty result has nothing to delete.
+      ui.deleteBtn.hidden = isEmpty || !job.script_id;
       ui.resultNote.hidden = isEmpty || !job.script_id;
       if (!ui.resultNote.hidden) {
         // Naming the stored file tells the user what a second generation
@@ -637,6 +784,8 @@ export class GeneratePanel {
         ui.savedLine.textContent = t('generate.saved', { filename: job.exported });
       }
     }
+
+    this._renderStored();
   }
 
   _summaryText(job) {
@@ -693,6 +842,36 @@ function numberInput(value, ariaLabel, onChange) {
 /** Backend URL for a generate route. Always loopback: nothing leaves the machine. */
 export function generateApiUrl(port, path) {
   return `http://127.0.0.1:${port}/api/generate${path}`;
+}
+
+/** Engine family ('audio' | 'motion') a stored record belongs to, '' when unknown. */
+export function engineFamilyOf(record) {
+  const family = String(record?.engine || '').split(':')[0];
+  return ENGINES.includes(family) ? family : '';
+}
+
+/**
+ * Stored records shaped for the "already generated" list, in the store's
+ * newest-first order and with the private `video_path` dropped. Records without
+ * an id or from an unknown engine are skipped: they cannot be deleted, and we
+ * have no label for them.
+ */
+export function storedRowsFor(items) {
+  if (!Array.isArray(items)) return [];
+  const rows = [];
+  for (const item of items) {
+    const id = typeof item?.id === 'string' ? item.id : '';
+    const engine = engineFamilyOf(item);
+    if (!id || !engine) continue;
+    const count = Number(item?.action_count);
+    rows.push({
+      id,
+      engine,
+      filename: typeof item?.filename === 'string' ? item.filename : '',
+      count: Number.isFinite(count) ? count : 0,
+    });
+  }
+  return rows;
 }
 
 /** Map a backend/renderer error payload to a localised message (never echoes detail). */

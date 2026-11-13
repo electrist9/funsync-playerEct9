@@ -219,6 +219,13 @@
     "storedAs": "Guardado dentro de FunSync con el nombre {filename}. No se escribe nada junto a tu video salvo que elijas «Guardar junto al video».",
     "overwriteTitle": "¿Reemplazar el script generado?",
     "overwriteBody": "Este video ya tiene un script generado guardado como {filename}. Generarlo de nuevo lo reemplazará y el anterior se perderá. El archivo .funscript junto al video no se modifica.",
+    "storedHeading": "Ya generado para este video",
+    "deleteStored": "Eliminar script guardado",
+    "deleteTitle": "¿Eliminar el script generado?",
+    "deleteBody": "{filename} está guardado dentro de FunSync. Al eliminarlo desaparece de FunSync; el archivo .funscript junto al video no se modifica.",
+    "deleteBodyUnknown": "El script que generó esta tarea está guardado dentro de FunSync. Al eliminarlo desaparece de FunSync; el archivo .funscript junto al video no se modifica.",
+    "deleted": "{filename} eliminado de FunSync",
+    "overwriteConfirm": "Reemplazar",
     "resultSummary": "{count} acciones",
     "tempoInfo": "~{bpm} BPM",
     "existsTitle": "Ya existe un funscript",
@@ -237,6 +244,7 @@
       "busy": "Ya se está generando otro script.",
       "exists": "Ya existe un archivo .funscript junto a este video.",
       "notFound": "No se encontró la tarea de generación.",
+      "storedGone": "Este script ya se ha eliminado.",
       "writeFailed": "No se pudo escribir el archivo.",
       "offline": "No se puede conectar con el servicio local."
     }

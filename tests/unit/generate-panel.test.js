@@ -20,6 +20,8 @@ import {
   percentFor,
   chipStateFor,
   summaryTextFor,
+  engineFamilyOf,
+  storedRowsFor,
 } from '../../renderer/js/generate-panel.js';
 import { Modal } from '../../renderer/components/modal.js';
 
@@ -198,6 +200,49 @@ describe('summaryTextFor', () => {
     expect(summaryTextFor({ status: 'cancelled', engine: 'audio', summary: {} })).toBe('Cancelled');
     expect(summaryTextFor({ status: 'error', engine: 'audio', error_code: 'noAudio' }))
       .toBe('This video has no audio track.');
+  });
+});
+
+describe('engineFamilyOf', () => {
+  it('maps the stored engine string to the family it belongs to', () => {
+    expect(engineFamilyOf({ engine: 'audio' })).toBe('audio');
+    expect(engineFamilyOf({ engine: 'motion:standard' })).toBe('motion');
+    expect(engineFamilyOf({ engine: 'motion' })).toBe('motion');
+  });
+
+  it('has no family for anything the panel cannot label', () => {
+    expect(engineFamilyOf({ engine: 'video' })).toBe('');
+    expect(engineFamilyOf({})).toBe('');
+    expect(engineFamilyOf(null)).toBe('');
+  });
+});
+
+describe('storedRowsFor', () => {
+  it('keeps the rows the user can act on, in the store order', () => {
+    const rows = storedRowsFor([
+      { id: 's1', engine: 'audio', filename: 'v-audio.funscript', action_count: 42 },
+      { id: 's2', engine: 'motion:standard', filename: 'v-motion.funscript', action_count: 7 },
+    ]);
+    expect(rows).toEqual([
+      { id: 's1', engine: 'audio', filename: 'v-audio.funscript', count: 42 },
+      { id: 's2', engine: 'motion', filename: 'v-motion.funscript', count: 7 },
+    ]);
+  });
+
+  it('drops records that cannot be deleted or labelled', () => {
+    const rows = storedRowsFor([
+      { engine: 'audio', filename: 'orphan.funscript', action_count: 3 }, // no id: nothing to delete
+      { id: 's3', engine: 'video', filename: 'x.funscript' },             // unknown engine
+      null,
+    ]);
+    expect(rows).toEqual([]);
+  });
+
+  it('tolerates a missing list and missing fields', () => {
+    expect(storedRowsFor(undefined)).toEqual([]);
+    expect(storedRowsFor('nope')).toEqual([]);
+    expect(storedRowsFor([{ id: 's1', engine: 'audio' }]))
+      .toEqual([{ id: 's1', engine: 'audio', filename: '', count: 0 }]);
   });
 });
 
@@ -591,6 +636,7 @@ describe('GeneratePanel export', () => {
     expect(confirm).toHaveBeenCalledWith(
       'A funscript already exists',
       'There is already a .funscript file next to this video. Saving will replace it, and your existing file will be lost.',
+      { confirmLabel: 'Replace' },
     );
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ overwrite: false });
@@ -683,6 +729,290 @@ describe('GeneratePanel preview', () => {
       expect(panel._close).toHaveBeenCalledWith(null);
     } finally {
       document.getElementById('toast-container')?.remove();
+    }
+  });
+});
+
+// -------------------------------------------------- the stored-script list
+
+/**
+ * Let every promise the panel started settle. The fetch mocks resolve
+ * immediately, so a handful of microtask turns is enough; no timers involved.
+ */
+async function settle(turns = 30) {
+  for (let i = 0; i < turns; i += 1) await Promise.resolve();
+}
+
+describe('GeneratePanel stored scripts', () => {
+  let fetchMock;
+
+  const VIDEO = { path: 'F:\\media\\v.mp4', name: 'v.mp4' };
+  const AUDIO = {
+    id: 's1', engine: 'audio', filename: 'v-audio.funscript', action_count: 42,
+    video_path: VIDEO.path,
+  };
+  const MOTION = {
+    id: 's2', engine: 'motion:standard', filename: 'v-motion.funscript', action_count: 7,
+    video_path: VIDEO.path,
+  };
+
+  beforeEach(() => {
+    if (!document.getElementById('toast-container')) {
+      const holder = document.createElement('div');
+      holder.id = 'toast-container';
+      document.body.appendChild(holder);
+    }
+    fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    document.getElementById('toast-container')?.remove();
+    // Never leave a modal behind for the next test.
+    document.querySelectorAll('.modal-overlay').forEach((node) => node.remove());
+  });
+
+  /**
+   * Open the panel against a store holding `items`; a DELETE really removes the
+   * record, so the list the panel re-reads afterwards matches what a backend
+   * would answer.
+   */
+  async function openAgainst(items, overrides = {}) {
+    const stored = [...items];
+    fetchMock.mockImplementation((url, init) => {
+      if (String(init?.method) === 'DELETE') {
+        const id = decodeURIComponent(String(url).split('/').pop());
+        const at = stored.findIndex((item) => item.id === id);
+        if (at >= 0) stored.splice(at, 1);
+        return Promise.resolve(jsonResponse(200, { ok: true }));
+      }
+      return Promise.resolve(jsonResponse(200, { items: stored }));
+    });
+    const panel = makePanel({ getVideo: () => VIDEO, ...overrides });
+    panel.open();
+    await settle();
+    return panel;
+  }
+
+  const storedRows = () => Array.from(document.querySelectorAll('.generate__stored-item'));
+  const storedSection = () => document.querySelector('.generate__stored');
+  const storeLookupUrl = 'http://127.0.0.1:5123/api/generate/store?video_path=F%3A%5Cmedia%5Cv.mp4';
+
+  async function closePanel(panel) {
+    panel._close?.(null);
+    await settle(6);
+  }
+
+  it('lists what this video already has stored, with a delete button per row', async () => {
+    const panel = await openAgainst([AUDIO, MOTION]);
+    try {
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock.mock.calls[0][0]).toBe(storeLookupUrl);
+
+      const section = storedSection();
+      expect(section.hidden).toBe(false);
+      expect(section.querySelector('.generate__stored-heading').textContent)
+        .toBe('Already generated for this video');
+
+      expect(storedRows()).toHaveLength(2);
+      expect(storedRows()[0].textContent).toContain('Audio beats');
+      expect(storedRows()[0].textContent).toContain('42 actions');
+      expect(storedRows()[0].textContent).toContain('v-audio.funscript');
+      expect(storedRows()[1].textContent).toContain('Picture motion');
+      expect(storedRows()[1].textContent).toContain('v-motion.funscript');
+
+      // The record carries the user's own path; the row must never show it.
+      expect(section.textContent).not.toContain('F:\\media');
+
+      const del = section.querySelectorAll('.generate__stored-del');
+      expect(del).toHaveLength(2);
+      expect(del[0].title).toBe('Delete');
+    } finally {
+      await closePanel(panel);
+    }
+  });
+
+  it('hides the list when nothing is stored for this video', async () => {
+    const panel = await openAgainst([]);
+    try {
+      expect(storedSection().hidden).toBe(true);
+      expect(storedRows()).toHaveLength(0);
+    } finally {
+      await closePanel(panel);
+    }
+  });
+
+  it('hides the list when the store cannot be read, and still generates', async () => {
+    fetchMock.mockResolvedValue(jsonResponse(500, { code: 'failed' }));
+    const panel = makePanel({ getVideo: () => VIDEO });
+    panel.open();
+    await settle();
+    try {
+      expect(storedSection().hidden).toBe(true);
+      // A broken store lookup must never block the generation the user asked for.
+      fetchMock.mockResolvedValue(jsonResponse(200, { job_id: 'j1', status: 'queued' }));
+      await panel._start();
+      expect(panel._job.job_id).toBe('j1');
+    } finally {
+      panel.reset();
+      await closePanel(panel);
+    }
+  });
+
+  it('asks, then deletes only the stored record and refreshes the list', async () => {
+    const panel = await openAgainst([AUDIO, MOTION]);
+    try {
+      const confirm = vi.spyOn(Modal, 'confirm').mockResolvedValue(true);
+      storedRows()[0].querySelector('.generate__stored-del').click();
+      await settle();
+
+      expect(confirm).toHaveBeenCalledTimes(1);
+      const [title, body] = confirm.mock.calls[0];
+      expect(title).toBe('Delete the generated script?');
+      expect(body).toContain('v-audio.funscript');
+      expect(body).toContain('.funscript file next to the video is not touched');
+
+      // Lookup, delete, lookup again — and the delete names the record id, not a path.
+      expect(fetchMock.mock.calls.map((call) => [call[0], call[1]?.method])).toEqual([
+        [storeLookupUrl, undefined],
+        ['http://127.0.0.1:5123/api/generate/store/s1', 'DELETE'],
+        [storeLookupUrl, undefined],
+      ]);
+      expect(toastTexts('info')).toContain('Removed v-audio.funscript from FunSync');
+      expect(toastTexts('error')).toHaveLength(0);
+
+      expect(storedRows()).toHaveLength(1);
+      expect(storedRows()[0].textContent).toContain('v-motion.funscript');
+    } finally {
+      await closePanel(panel);
+    }
+  });
+
+  it('sends nothing when the delete prompt is declined', async () => {
+    const panel = await openAgainst([AUDIO]);
+    try {
+      const confirm = vi.spyOn(Modal, 'confirm').mockResolvedValue(false);
+      storedRows()[0].querySelector('.generate__stored-del').click();
+      await settle();
+
+      expect(confirm).toHaveBeenCalledTimes(1);
+      expect(fetchMock).toHaveBeenCalledTimes(1); // only the lookup that filled the list
+      expect(storedRows()).toHaveLength(1);
+      expect(toastTexts('info')).toHaveLength(0);
+    } finally {
+      await closePanel(panel);
+    }
+  });
+
+  it('drops the finished result when the script it shows is deleted', async () => {
+    const chips = [];
+    const panel = await openAgainst([AUDIO], { onChip: (state) => chips.push(state) });
+    try {
+      panel._job = {
+        job_id: 'j1', engine: 'audio', status: 'done', progress: 1,
+        summary: { action_count: 42, filename: 'v-audio.funscript' },
+        script_id: 's1', script: { version: '1.0', actions: [{ at: 0, pos: 10 }] },
+      };
+      panel._render();
+
+      const result = document.querySelector('.generate__result');
+      expect(result.hidden).toBe(false);
+      const deleteBtn = document.querySelector('.generate__btn--danger');
+      expect(deleteBtn.hidden).toBe(false);
+      expect(deleteBtn.textContent).toContain('Delete stored script');
+
+      vi.spyOn(Modal, 'confirm').mockResolvedValue(true);
+      deleteBtn.click();
+      await settle();
+
+      // The record is gone, so the result that pointed at it goes back to the
+      // start screen instead of offering to export a script that no longer exists.
+      expect(panel._job).toBeNull();
+      expect(chips[chips.length - 1]).toBeNull();
+      expect(result.hidden).toBe(true);
+      expect(storedSection().hidden).toBe(true);
+      expect(toastTexts('info')).toContain('Removed v-audio.funscript from FunSync');
+    } finally {
+      await closePanel(panel);
+    }
+  });
+
+  it('hides the delete button when the finished result has nothing stored', async () => {
+    const panel = await openAgainst([]);
+    try {
+      panel._job = {
+        job_id: 'j1', engine: 'audio', status: 'done', progress: 1,
+        summary: { action_count: 0, empty: true }, script_id: null, script: null,
+      };
+      panel._render();
+      expect(document.querySelector('.generate__btn--danger').hidden).toBe(true);
+    } finally {
+      await closePanel(panel);
+    }
+  });
+
+  it('says so when the script was already removed elsewhere', async () => {
+    const panel = await openAgainst([AUDIO]);
+    try {
+      vi.spyOn(Modal, 'confirm').mockResolvedValue(true);
+      fetchMock.mockImplementation((url, init) => (
+        String(init?.method) === 'DELETE'
+          ? Promise.resolve(jsonResponse(404, { code: 'notFound' }))
+          : Promise.resolve(jsonResponse(200, { items: [AUDIO] }))
+      ));
+
+      storedRows()[0].querySelector('.generate__stored-del').click();
+      await settle();
+
+      expect(toastTexts('error')).toContain('This script has already been removed.');
+      expect(toastTexts('info')).toHaveLength(0);
+      // The list is re-read so the row catches up with the backend either way.
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+      expect(fetchMock.mock.calls[2][0]).toBe(storeLookupUrl);
+    } finally {
+      await closePanel(panel);
+    }
+  });
+
+  it('shows the script a finished job just saved without reopening the dialog', async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse(200, { items: [] }))
+      .mockResolvedValue(jsonResponse(200, { items: [AUDIO] }));
+    const panel = makePanel({ getVideo: () => VIDEO });
+    panel.open();
+    await settle();
+    try {
+      expect(storedSection().hidden).toBe(true);
+
+      panel._applyUpdate({
+        job_id: 'j1', engine: 'audio', status: 'done', progress: 1,
+        summary: { action_count: 42, filename: 'v-audio.funscript' },
+        script_id: 's1',
+      });
+      await settle();
+
+      expect(storedSection().hidden).toBe(false);
+      expect(storedRows()).toHaveLength(1);
+      expect(storedRows()[0].textContent).toContain('v-audio.funscript');
+    } finally {
+      panel.reset();
+      await closePanel(panel);
+    }
+  });
+
+  it('forgets the stored list when the video changes', async () => {
+    const panel = await openAgainst([AUDIO, MOTION]);
+    try {
+      expect(storedRows()).toHaveLength(2);
+      panel.reset();
+      await settle();
+      expect(panel._stored).toEqual([]);
+      expect(storedSection().hidden).toBe(true);
+      expect(storedRows()).toHaveLength(0);
+    } finally {
+      await closePanel(panel);
     }
   });
 });

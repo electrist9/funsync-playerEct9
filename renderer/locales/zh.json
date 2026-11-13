@@ -219,6 +219,13 @@
     "storedAs": "已以 {filename} 保存在 FunSync 内部。除非你选择“保存到视频旁边”，否则不会在视频旁写入文件。",
     "overwriteTitle": "替换已生成的脚本？",
     "overwriteBody": "此视频已有以 {filename} 保存的生成脚本。重新生成会替换它，之前的脚本将丢失。视频旁边的 .funscript 文件不会被改动。",
+    "storedHeading": "此视频已生成过",
+    "deleteStored": "删除已保存的脚本",
+    "deleteTitle": "删除生成的脚本？",
+    "deleteBody": "{filename} 保存在 FunSync 内部。删除只会把它从 FunSync 移除，视频旁边的 .funscript 文件不受影响。",
+    "deleteBodyUnknown": "此操作生成的脚本保存在 FunSync 内部。删除只会把它从 FunSync 移除，视频旁边的 .funscript 文件不受影响。",
+    "deleted": "已从 FunSync 删除 {filename}",
+    "overwriteConfirm": "替换",
     "resultSummary": "{count} 个动作",
     "tempoInfo": "约 {bpm} BPM",
     "existsTitle": "已存在 funscript",
@@ -237,6 +244,7 @@
       "busy": "已有另一个生成任务在运行。",
       "exists": "这个视频旁已有 .funscript 文件。",
       "notFound": "找不到生成任务。",
+      "storedGone": "此脚本已被删除。",
       "writeFailed": "无法写入文件。",
       "offline": "无法连接本地后端。"
     }

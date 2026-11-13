@@ -219,6 +219,13 @@
     "storedAs": "{filename}(으)로 FunSync 안에 보관됩니다. “영상과 같은 폴더에 저장”을 선택하기 전에는 영상 옆에 파일이 만들어지지 않습니다.",
     "overwriteTitle": "생성된 스크립트를 교체할까요?",
     "overwriteBody": "이 영상에서는 이미 {filename}(으)로 생성된 스크립트가 있습니다. 다시 생성하면 교체되고 이전 스크립트는 사라집니다. 영상 옆의 .funscript 파일은 변경되지 않습니다.",
+    "storedHeading": "이 영상에서 이미 생성됨",
+    "deleteStored": "저장된 스크립트 삭제",
+    "deleteTitle": "생성된 스크립트를 삭제할까요?",
+    "deleteBody": "{filename}은(는) FunSync 내부에 저장되어 있습니다. 삭제하면 FunSync에서 사라지지만, 영상 옆의 .funscript 파일은 그대로 남습니다.",
+    "deleteBodyUnknown": "이 작업이 생성한 스크립트는 FunSync 내부에 저장되어 있습니다. 삭제하면 FunSync에서 사라지지만, 영상 옆의 .funscript 파일은 그대로 남습니다.",
+    "deleted": "{filename}을(를) FunSync에서 삭제했습니다",
+    "overwriteConfirm": "교체",
     "resultSummary": "액션 {count}개",
     "tempoInfo": "약 {bpm} BPM",
     "existsTitle": "펀스크립트가 이미 있습니다",
@@ -237,6 +244,7 @@
       "busy": "다른 생성 작업이 이미 실행 중입니다.",
       "exists": "이 영상 옆에 이미 .funscript 파일이 있습니다.",
       "notFound": "생성 작업을 찾을 수 없습니다.",
+      "storedGone": "이 스크립트는 이미 삭제되었습니다.",
       "writeFailed": "파일을 쓸 수 없습니다.",
       "offline": "로컬 백엔드에 연결할 수 없습니다."
     }

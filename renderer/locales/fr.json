@@ -219,6 +219,13 @@
     "storedAs": "Enregistré dans FunSync sous le nom {filename}. Rien n’est écrit à côté de ta vidéo tant que tu ne choisis pas « Enregistrer à côté de la vidéo ».",
     "overwriteTitle": "Remplacer le script généré ?",
     "overwriteBody": "Cette vidéo a déjà un script généré, enregistré sous le nom {filename}. Le regénérer le remplacera et l’ancien sera perdu. Le fichier .funscript à côté de la vidéo n’est pas modifié.",
+    "storedHeading": "Déjà généré pour cette vidéo",
+    "deleteStored": "Supprimer le script enregistré",
+    "deleteTitle": "Supprimer le script généré ?",
+    "deleteBody": "{filename} est enregistré dans FunSync. La suppression le retire de FunSync ; le fichier .funscript à côté de la vidéo n’est pas modifié.",
+    "deleteBodyUnknown": "Le script généré par cette tâche est enregistré dans FunSync. La suppression le retire de FunSync ; le fichier .funscript à côté de la vidéo n’est pas modifié.",
+    "deleted": "{filename} supprimé de FunSync",
+    "overwriteConfirm": "Remplacer",
     "resultSummary": "{count} actions",
     "tempoInfo": "~{bpm} BPM",
     "existsTitle": "Un funscript existe déjà",
@@ -237,6 +244,7 @@
       "busy": "Une autre génération est déjà en cours.",
       "exists": "Un fichier .funscript existe déjà à côté de cette vidéo.",
       "notFound": "La tâche de génération est introuvable.",
+      "storedGone": "Ce script a déjà été supprimé.",
       "writeFailed": "Impossible d’écrire le fichier.",
       "offline": "Le service local est injoignable."
     }

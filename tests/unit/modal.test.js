@@ -138,6 +138,25 @@ describe('Modal', () => {
       const result = await promise;
       expect(result).toBe(false);
     });
+
+    it('labels the accept button "Delete" unless told otherwise', async () => {
+      const promise = Modal.confirm('Delete?', 'Are you sure?');
+      expect(document.querySelector('.modal-btn--danger').textContent).toBe('Delete');
+      document.querySelector('.modal-btn--danger').click();
+      expect(await promise).toBe(true);
+    });
+
+    it('says what a destructive-but-not-deleting action does', async () => {
+      const promise = Modal.confirm('Replace it?', 'Your file will be lost.', {
+        confirmLabel: 'Replace',
+      });
+      const accept = document.querySelector('.modal-btn--danger');
+      expect(accept.textContent).toBe('Replace');
+      // Still the destructive styling: the label changes, the weight does not.
+      expect(accept.className).toContain('modal-btn--danger');
+      accept.click();
+      expect(await promise).toBe(true);
+    });
   });
 
   describe('selectFromList', () => {

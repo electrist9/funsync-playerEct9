@@ -219,6 +219,13 @@
     "storedAs": "Saved inside FunSync as {filename}. Nothing is written next to your video unless you choose Save next to video.",
     "overwriteTitle": "Replace the generated script?",
     "overwriteBody": "This video already has a generated script stored as {filename}. Generating again replaces it, and the previous script will be lost. The .funscript file next to the video is not touched.",
+    "storedHeading": "Already generated for this video",
+    "deleteStored": "Delete stored script",
+    "deleteTitle": "Delete the generated script?",
+    "deleteBody": "{filename} is stored inside FunSync. Deleting removes it from FunSync; the .funscript file next to the video is not touched.",
+    "deleteBodyUnknown": "The script this job generated is stored inside FunSync. Deleting removes it from FunSync; the .funscript file next to the video is not touched.",
+    "deleted": "Removed {filename} from FunSync",
+    "overwriteConfirm": "Replace",
     "resultSummary": "{count} actions",
     "tempoInfo": "~{bpm} BPM",
     "existsTitle": "A funscript already exists",
@@ -237,6 +244,7 @@
       "busy": "Another generation is already running.",
       "exists": "A .funscript file already exists next to this video.",
       "notFound": "The generation job could not be found.",
+      "storedGone": "This script has already been removed.",
       "writeFailed": "The file could not be written.",
       "offline": "The local backend is not reachable."
     }

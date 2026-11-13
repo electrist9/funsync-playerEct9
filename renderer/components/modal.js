@@ -233,12 +233,17 @@ export class Modal {
   }
 
   /**
-   * Confirmation dialog.
+   * Confirmation dialog. The accept button is destructive by default and reads
+   * "Delete"; pass `options.confirmLabel` when the action is destructive but
+   * not a deletion (replacing a stored script, overwriting a file), so the
+   * button says what it actually does.
+   *
    * @param {string} title
    * @param {string} message
+   * @param {{confirmLabel?: string}} [options]
    * @returns {Promise<boolean>}
    */
-  static confirm(title, message) {
+  static confirm(title, message, options = {}) {
     return Modal.open({
       title,
       onRender(body, close) {
@@ -257,7 +262,7 @@ export class Modal {
 
         const confirmBtn = document.createElement('button');
         confirmBtn.className = 'modal-btn modal-btn--danger';
-        confirmBtn.textContent = t('common.delete');
+        confirmBtn.textContent = options.confirmLabel || t('common.delete');
         confirmBtn.addEventListener('click', () => close(true));
 
         actions.appendChild(cancelBtn);

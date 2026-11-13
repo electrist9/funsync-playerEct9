@@ -219,6 +219,13 @@
     "storedAs": "Das Ergebnis bleibt in FunSync, gespeichert als {filename}. Neben dem Video wird erst geschrieben, wenn du „Neben Video speichern“ wählst.",
     "overwriteTitle": "Generiertes Script ersetzen?",
     "overwriteBody": "Für dieses Video wurde bereits ein Script als {filename} erzeugt. Erneutes Generieren ersetzt es, und das bisherige Script geht verloren. Die .funscript-Datei neben dem Video bleibt unberührt.",
+    "storedHeading": "Für dieses Video bereits generiert",
+    "deleteStored": "Gespeichertes Script löschen",
+    "deleteTitle": "Generiertes Script löschen?",
+    "deleteBody": "{filename} ist in FunSync gespeichert. Löschen entfernt es aus FunSync; die .funscript-Datei neben dem Video bleibt unberührt.",
+    "deleteBodyUnknown": "Das von diesem Auftrag erzeugte Script ist in FunSync gespeichert. Löschen entfernt es aus FunSync; die .funscript-Datei neben dem Video bleibt unberührt.",
+    "deleted": "{filename} aus FunSync entfernt",
+    "overwriteConfirm": "Ersetzen",
     "resultSummary": "{count} Aktionen",
     "tempoInfo": "ca. {bpm} BPM",
     "existsTitle": "Ein Funscript existiert bereits",
@@ -237,6 +244,7 @@
       "busy": "Es läuft bereits eine andere Erstellung.",
       "exists": "Neben diesem Video existiert bereits eine .funscript-Datei.",
       "notFound": "Der Auftrag wurde nicht gefunden.",
+      "storedGone": "Dieses Script wurde bereits entfernt.",
       "writeFailed": "Die Datei konnte nicht geschrieben werden.",
       "offline": "Der lokale Hintergrunddienst ist nicht erreichbar."
     }

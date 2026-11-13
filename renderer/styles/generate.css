@@ -270,6 +270,103 @@
   color: var(--text-secondary);
 }
 
+/* --- already generated for this video ------------------------------------- */
+
+.generate__stored {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--surface-overlay);
+}
+
+.generate__stored[hidden] {
+  display: none;
+}
+
+.generate__stored-heading {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.generate__stored-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.generate__stored-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.generate__stored-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  background: var(--surface-card);
+  color: var(--accent);
+}
+
+.generate__stored-text {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: 2px;
+}
+
+.generate__stored-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+/* The stored file name can be long, so it wraps instead of pushing the delete
+   button out of the dialog. The video path is never rendered here. */
+.generate__stored-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.generate__stored-del {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 26px;
+  height: 26px;
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.generate__stored-del:hover {
+  background: var(--state-danger, #c0392b);
+  border-color: var(--state-danger, #c0392b);
+  color: #fff;
+}
+
+.generate__stored-del:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 /* --- result ------------------------------------------------------------- */
 
 .generate__result {
@@ -346,6 +443,18 @@
 
 .generate__btn--primary:hover {
   background: var(--accent-hover);
+}
+
+/* Deleting a stored script is destructive, so it reads as the red action in
+   the result row without being the primary one. */
+.generate__btn--danger {
+  color: var(--state-danger, #c0392b);
+}
+
+.generate__btn--danger:hover {
+  background: var(--state-danger, #c0392b);
+  border-color: var(--state-danger, #c0392b);
+  color: #fff;
 }
 
 /* ==========================================================================

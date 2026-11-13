@@ -219,6 +219,13 @@
     "storedAs": "ファイル名は {filename} です。保存されるのは FunSync の内部だけで、「動画と同じ場所に保存」を選ぶまで動画の隣にファイルが書き込まれることはありません。",
     "overwriteTitle": "生成済みのスクリプトを置き換えますか？",
     "overwriteBody": "この動画では {filename} が既に生成済みです。再生成すると置き換えられ、前のスクリプトは失われます。動画の隣の .funscript ファイルは変更されません。",
+    "storedHeading": "この動画で生成済み",
+    "deleteStored": "保存を削除",
+    "deleteTitle": "生成済みスクリプトを削除しますか？",
+    "deleteBody": "{filename} は FunSync の内部に保存されています。削除すると FunSync からは失われますが、動画の隣の .funscript ファイルはそのまま残ります。",
+    "deleteBodyUnknown": "この操作で生成されたスクリプトは FunSync の内部に保存されています。削除すると FunSync からは失われますが、動画の隣の .funscript ファイルはそのまま残ります。",
+    "deleted": "{filename} を FunSync から削除しました",
+    "overwriteConfirm": "置き換える",
     "resultSummary": "{count} 個のアクション",
     "tempoInfo": "約 {bpm} BPM",
     "existsTitle": "ファンスクリプトが既にあります",
@@ -237,6 +244,7 @@
       "busy": "既に別の生成が実行中です。",
       "exists": "この動画の隣に既に .funscript ファイルがあります。",
       "notFound": "生成ジョブが見つかりません。",
+      "storedGone": "このスクリプトは既に削除されています。",
       "writeFailed": "ファイルを書き込めませんでした。",
       "offline": "ローカルのバックエンドに接続できません。"
     }
