@@ -523,7 +523,7 @@
       "addVariation": "+ Add Variation...",
       "removeVariation": "Remove this variation (file kept on disk)",
       "autoVariantTag": "auto",
-      "autoVariantTitle": "Auto-detected from a file in the same folder. Rename or remove the file to clear it.",
+      "autoVariantTitle": "Auto-detected from a funscript file in your library. Rename or remove the file to clear it.",
       "useButtplugVib": "Use Buttplug.io for vibrations",
       "axisMain": "Main (Stroke)",
       "routeMain": "★ Main (supports variations)",
@@ -668,7 +668,11 @@
     "setDefault": "Set as default for this video",
     "unsetDefault": "Remove as default for this video",
     "defaultSet": "\"{label}\" set as default for this video",
-    "defaultCleared": "Default variant cleared"
+    "defaultCleared": "Default variant cleared",
+    "autoTag": "auto",
+    "manualTag": "manual",
+    "autoTagTitle": "Auto-detected from a funscript file in your library. Rename or move the file to remove it.",
+    "manualTagTitle": "Added by hand with \"Add variation...\". Use \"Manage variations...\" to rename or remove it."
   },
   "syncChip": {
     "noDevices": "No devices",

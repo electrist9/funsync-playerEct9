@@ -523,7 +523,7 @@
       "addVariation": "+ Variante hinzufügen…",
       "removeVariation": "Diese Variante entfernen (Datei bleibt auf dem Datenträger)",
       "autoVariantTag": "auto",
-      "autoVariantTitle": "Automatisch aus einer Datei im selben Ordner erkannt. Datei umbenennen oder entfernen, um sie zu löschen.",
+      "autoVariantTitle": "Automatisch aus einer Funscript-Datei in der Bibliothek erkannt. Datei umbenennen oder entfernen, um sie zu löschen.",
       "useButtplugVib": "Buttplug.io für Vibration verwenden",
       "axisMain": "Haupt (Stroke)",
       "routeMain": "★ Haupt (unterstützt Varianten)",
@@ -819,7 +819,11 @@
     "setDefault": "Als Standard für dieses Video festlegen",
     "unsetDefault": "Als Standard für dieses Video entfernen",
     "defaultSet": "„{label}“ als Standard für dieses Video festgelegt",
-    "defaultCleared": "Standardvariante zurückgesetzt"
+    "defaultCleared": "Standardvariante zurückgesetzt",
+    "autoTag": "auto",
+    "manualTag": "manuell",
+    "autoTagTitle": "Automatisch aus einer Funscript-Datei in der Bibliothek erkannt. Zum Entfernen Datei umbenennen oder verschieben.",
+    "manualTagTitle": "Manuell über „Variante hinzufügen…“ registriert. Umbenennen oder Entfernen geht über „Varianten verwalten…“."
   },
   "syncChip": {
     "noDevices": "Keine Geräte",

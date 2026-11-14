@@ -434,8 +434,27 @@ function renderVariants(list, activeLabel) {
   variants.forEach((v) => {
     const item = document.createElement('button');
     item.className = 'variant-selector__item';
-    if ((v.label || '') === activeLabel) item.classList.add('is-active');
-    item.textContent = v.displayLabel || v.label || '';
+    // Same class the inline player uses (and the only one player.css styles) —
+    // `is-active` here was never defined, so the selected row wasn't marked.
+    if ((v.label || '') === activeLabel) item.classList.add('variant-selector__item--active');
+
+    const name = document.createElement('span');
+    name.className = 'variant-selector__item-label';
+    name.textContent = v.displayLabel || v.label || '';
+    item.appendChild(name);
+
+    // Provenance chip, from the `origin` field main attaches to each row.
+    // Unknown origin → no chip, rather than a wrong one.
+    const origin = v.origin === 'auto' || v.origin === 'manual' ? v.origin : '';
+    if (origin) {
+      const tag = document.createElement('span');
+      tag.className = `variant-selector__tag variant-selector__tag--${origin}`;
+      tag.textContent = t(origin === 'auto' ? 'variants.autoTag' : 'variants.manualTag');
+      const detail = t(origin === 'auto' ? 'variants.autoTagTitle' : 'variants.manualTagTitle');
+      tag.title = v.path ? `${detail}\n${v.path}` : detail;
+      item.appendChild(tag);
+    }
+
     item.addEventListener('click', (e) => {
       e.stopPropagation();
       dropdown.hidden = true;

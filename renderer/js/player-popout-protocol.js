@@ -41,7 +41,7 @@ export const CAPTURE_FRAME = 'capture-frame'; // { type, requestId }
 // variant selector (the data lives in main with the devices).
 export const HEATMAP       = 'heatmap';       // { type, actions, durationMs }
 export const CHAPTERS      = 'chapters';       // { type, chapters, bookmarks, durationMs }
-export const VARIANTS      = 'variants';       // { type, list:[{label,path,displayLabel}], activeLabel }
+export const VARIANTS      = 'variants';       // { type, list:[{label,path,displayLabel,origin}], activeLabel } — origin: 'auto'|'manual'|''
 export const QUEUE_STATE   = 'queue-state';    // { type, hasPrev, hasNext, label }
 // Up Next overlay, mirrored into the pop-out so the countdown card shows
 // where the video actually is. `action` selects the sub-event; the engine

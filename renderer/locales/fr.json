@@ -523,7 +523,7 @@
       "addVariation": "+ Ajouter une variante…",
       "removeVariation": "Supprimer cette variante (le fichier reste sur le disque)",
       "autoVariantTag": "auto",
-      "autoVariantTitle": "Détecté automatiquement depuis un fichier dans le même dossier. Renomme ou supprime le fichier pour l'effacer.",
+      "autoVariantTitle": "Détecté automatiquement depuis un fichier funscript de votre bibliothèque. Renomme ou supprime le fichier pour l'effacer.",
       "useButtplugVib": "Utiliser Buttplug.io pour les vibrations",
       "axisMain": "Principal (Stroke)",
       "routeMain": "★ Principal (variantes prises en charge)",
@@ -951,7 +951,11 @@
     "setDefault": "Définir par défaut pour cette vidéo",
     "unsetDefault": "Retirer le choix par défaut pour cette vidéo",
     "defaultSet": "« {label} » défini par défaut pour cette vidéo",
-    "defaultCleared": "Variante par défaut effacée"
+    "defaultCleared": "Variante par défaut effacée",
+    "autoTag": "auto",
+    "manualTag": "manuel",
+    "autoTagTitle": "Détecté automatiquement depuis un fichier funscript de votre bibliothèque. Renommez ou déplacez le fichier pour le retirer.",
+    "manualTagTitle": "Ajouté à la main avec « Ajouter une variante… ». Utilisez « Gérer les variantes… » pour le renommer ou le retirer."
   },
   "syncChip": {
     "noDevices": "Aucun appareil",

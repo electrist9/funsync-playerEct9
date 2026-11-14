@@ -11,7 +11,7 @@
 // (index 0). Pure + injectable RNG so the whole matrix is testable.
 
 import { describe, it, expect } from 'vitest';
-import { pickVariantIndexOnLoad } from '../../renderer/js/variant-select.js';
+import { pickVariantIndexOnLoad, variantOrigin } from '../../renderer/js/variant-select.js';
 
 const VARIANTS = [
   { label: 'Default' },
@@ -58,5 +58,39 @@ describe('pickVariantIndexOnLoad', () => {
   it('clamps a hostile rng into range', () => {
     expect(pickVariantIndexOnLoad(VARIANTS, { randomOn: true, rng: () => 1.5 })).toBe(2);
     expect(pickVariantIndexOnLoad(VARIANTS, { randomOn: true, rng: () => -1 })).toBe(0);
+  });
+});
+
+describe('variantOrigin', () => {
+  // Provenance for the dropdown chip: the flags already exist in the data
+  // (`_autoDetected` from the scan, `_isManual` from the manual-variant merge),
+  // nothing here is persisted. Unknown origin must come back '' so the UI shows
+  // no chip rather than a wrong one.
+  it('reads the scan flag as auto', () => {
+    expect(variantOrigin({ label: 'Soft', path: 'X:\\a\\video (Soft).funscript', _autoDetected: true })).toBe('auto');
+  });
+
+  it('reads the merge flag as manual', () => {
+    expect(variantOrigin({ label: 'Custom', path: 'X:\\b\\custom.funscript', _isManual: true })).toBe('manual');
+  });
+
+  it('manual wins if a row somehow carries both flags', () => {
+    // The merge dedupes by path and keeps the auto row, so this should not
+    // happen — but the tie-break must not depend on property order.
+    expect(variantOrigin({ label: 'Both', _autoDetected: true, _isManual: true })).toBe('manual');
+  });
+
+  it('returns an empty string when the origin is unknown', () => {
+    // The synthetic "current script" row, and rows that never went through the
+    // scan, carry neither flag — no chip is better than a wrong chip.
+    expect(variantOrigin({ label: 'Default', path: 'X:\\a\\video.funscript' })).toBe('');
+    expect(variantOrigin({})).toBe('');
+    expect(variantOrigin(null)).toBe('');
+    expect(variantOrigin(undefined)).toBe('');
+  });
+
+  it('ignores falsy flags rather than treating them as provenance', () => {
+    expect(variantOrigin({ label: 'Default', _autoDetected: false, _isManual: false })).toBe('');
+    expect(variantOrigin({ label: 'Default', _autoDetected: undefined, _isManual: 0 })).toBe('');
   });
 });

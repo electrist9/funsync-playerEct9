@@ -1688,6 +1688,28 @@ html.has-wco .player__top-bar :is(button, input, select, a, [role="button"], [ta
   white-space: nowrap;
 }
 
+/* Provenance chip: was this row auto-detected from the file names, or added
+   by hand? Mirrors .library__assoc-variant-tag in the library card so both
+   lists read the same way. The surface stays --surface-overlay (not
+   --accent-soft) even for the manual variant, because the active row is
+   already accent-tinted and an accent-tinted chip would vanish into it —
+   manual is marked by accent text instead. */
+.variant-selector__tag {
+  flex: 0 0 auto;
+  font-size: 10px;
+  line-height: 1.4;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--text-dim, var(--text-secondary));
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: var(--surface-overlay);
+}
+
+.variant-selector__tag--manual {
+  color: var(--accent);
+}
+
 /* Pin-as-default star at the trailing edge of each variant row. */
 .variant-selector__star {
   flex: 0 0 auto;

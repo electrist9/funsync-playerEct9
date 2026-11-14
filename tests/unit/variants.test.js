@@ -328,3 +328,85 @@ describe('Scan + dropdown wiring — selection follows the file, not the row', (
     expect(switchBody).toContain('this._activeVariantIndex = index;');
   });
 });
+
+describe('Variant provenance — auto-detected vs added by hand is visible', () => {
+  // The two kinds of row used to look identical in the player dropdown, so the
+  // only way to learn which was which was to try removing one (manual rows can
+  // be removed, auto rows come back on the next scan). Provenance is derived at
+  // render time from flags that already exist — no new persistence.
+  const read = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8');
+
+  const app = read('../../renderer/js/app.js');
+  const popout = read('../../renderer/player-popout.js');
+  const css = read('../../renderer/styles/player.css');
+
+  const merge = app.slice(
+    app.indexOf('_updateVariantSelector() {'),
+    app.indexOf('// Resolve active index from stored path'),
+  );
+  const dropdown = app.slice(
+    app.indexOf('_showVariantDropdown() {'),
+    app.indexOf('// Add variation button'),
+  );
+  const stream = app.slice(
+    app.indexOf('_streamPlayerWindowData() {'),
+    app.indexOf('_relayUpNext(fields)'),
+  );
+  const popoutRows = popout.slice(
+    popout.indexOf('function renderVariants('),
+    popout.indexOf('// --- Up Next card'),
+  );
+
+  it('tags manual rows at the merge — as a copy, never into settings', () => {
+    expect(merge).not.toBe('');
+    expect(merge).toContain('.map(v => ({ ...v, _isManual: true }))');
+    // The untagged merge: `manual` is a live reference into
+    // settings.library.manualVariants, so annotating it in place would persist
+    // `_isManual` into config.json and into backups.
+    expect(merge).not.toContain('const deduped = manual.filter(v => !seenPaths.has(v.path));');
+  });
+
+  it('the inline dropdown renders a provenance chip on each row', () => {
+    expect(dropdown).not.toBe('');
+    expect(dropdown).toContain('const origin = variantOrigin(v);');
+    expect(dropdown).toContain('variant-selector__tag variant-selector__tag--${origin}');
+    expect(dropdown).toContain("'variants.autoTag'");
+    expect(dropdown).toContain("'variants.manualTag'");
+    // The tooltip carries the path, which is what separates two same-named
+    // scripts from different sources.
+    expect(dropdown).toContain('variants.autoTagTitle');
+    expect(dropdown).toContain('variants.manualTagTitle');
+  });
+
+  it('the pop-out payload carries origin and its dropdown renders the same chip', () => {
+    expect(stream).toContain('origin: variantOrigin(v)');
+    expect(popoutRows).not.toBe('');
+    // Unknown origin (anything but the two known values) gets no chip.
+    expect(popoutRows).toContain("v.origin === 'auto' || v.origin === 'manual'");
+    expect(popoutRows).toContain('variant-selector__tag variant-selector__tag--${origin}');
+    expect(popoutRows).toContain("'variants.autoTag'");
+    // `is-active` had no rule in player.css, so the selected row was never
+    // marked in the pop-out. Both dropdowns now share the styled class.
+    expect(popoutRows).toContain("item.classList.add('variant-selector__item--active')");
+    expect(popoutRows).not.toContain("item.classList.add('is-active')");
+  });
+
+  it('the chip is styled once, in the stylesheet both dropdowns load', () => {
+    expect(css).toMatch(/\.variant-selector__tag\s*\{/);
+    expect(css).toMatch(/\.variant-selector__tag--manual\s*\{/);
+    // The label keeps flex:1, so a long name ellipsizes instead of pushing the
+    // chip out of the 320px dropdown.
+    expect(css).toMatch(/\.variant-selector__item-label\s*\{[^}]*flex:\s*1/);
+  });
+
+  it('every locale ships the chip labels and their tooltips', () => {
+    // locale-key-parity.test.js proves the keys exist in all eight; this pins
+    // that the new ones are actually filled in, not empty strings.
+    for (const locale of ['de', 'en', 'es', 'fr', 'ja', 'ko', 'ru', 'zh']) {
+      const json = JSON.parse(read(`../../renderer/locales/${locale}.json`));
+      for (const key of ['autoTag', 'manualTag', 'autoTagTitle', 'manualTagTitle']) {
+        expect(json.variants[key], `${locale}.json variants.${key}`).toBeTruthy();
+      }
+    }
+  });
+});

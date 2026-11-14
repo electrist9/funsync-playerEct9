@@ -523,7 +523,7 @@
       "addVariation": "+ Añadir variación…",
       "removeVariation": "Eliminar esta variación (el archivo permanece en disco)",
       "autoVariantTag": "auto",
-      "autoVariantTitle": "Detectado automáticamente desde un archivo en la misma carpeta. Renombra o elimina el archivo para borrarlo.",
+      "autoVariantTitle": "Detectado automáticamente desde un archivo funscript de tu biblioteca. Renombra o elimina el archivo para borrarlo.",
       "useButtplugVib": "Usar Buttplug.io para vibraciones",
       "axisMain": "Principal (Stroke)",
       "routeMain": "★ Principal (soporta variaciones)",
@@ -951,7 +951,11 @@
     "setDefault": "Establecer como predeterminado para este vídeo",
     "unsetDefault": "Quitar como predeterminado para este vídeo",
     "defaultSet": "«{label}» establecido como predeterminado para este vídeo",
-    "defaultCleared": "Variante predeterminada borrada"
+    "defaultCleared": "Variante predeterminada borrada",
+    "autoTag": "auto",
+    "manualTag": "manual",
+    "autoTagTitle": "Detectado automáticamente desde un archivo funscript de tu biblioteca. Renombra o mueve el archivo para quitarlo.",
+    "manualTagTitle": "Añadido a mano con «Añadir variación…». Usa «Gestionar variaciones…» para renombrarlo o quitarlo."
   },
   "syncChip": {
     "noDevices": "Sin dispositivos",

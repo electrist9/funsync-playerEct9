@@ -523,7 +523,7 @@
       "addVariation": "+ 添加变体…",
       "removeVariation": "移除此变体 (文件仍保留在磁盘上)",
       "autoVariantTag": "自动",
-      "autoVariantTitle": "从同一文件夹中的文件自动检测。重命名或删除该文件以清除。",
+      "autoVariantTitle": "从资料库中的 funscript 文件自动检测。重命名或删除该文件以清除。",
       "useButtplugVib": "使用 Buttplug.io 处理振动",
       "axisMain": "主轴 (行程)",
       "routeMain": "★ 主轴 (支持变体)",
@@ -951,7 +951,11 @@
     "setDefault": "设为此视频的默认",
     "unsetDefault": "取消此视频的默认",
     "defaultSet": "已将“{label}”设为此视频的默认",
-    "defaultCleared": "已清除默认变体"
+    "defaultCleared": "已清除默认变体",
+    "autoTag": "自动",
+    "manualTag": "手动",
+    "autoTagTitle": "自动检测：从资料库中的 funscript 文件识别。要移除它，请重命名或移动该文件。",
+    "manualTagTitle": "手动添加：通过“添加变体…”登记的条目。可在“管理变体…”中重命名或删除。"
   },
   "syncChip": {
     "noDevices": "无设备",

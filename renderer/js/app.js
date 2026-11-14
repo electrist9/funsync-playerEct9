@@ -87,7 +87,7 @@ import { OrgasmSwitch } from './orgasm-switch.js';
 import { engageHandyFinisher, releaseHandyFinisher } from './orgasm-handy-engage.js';
 import { resolveOrgasmPlan, parseFinisherActions, collectOrgasmScriptPaths, describeOrgasmEntry } from './orgasm-plan.js';
 import { openOrgasmConfigModal } from '../components/orgasm-config-modal.js';
-import { pickVariantIndexOnLoad } from './variant-select.js';
+import { pickVariantIndexOnLoad, variantOrigin } from './variant-select.js';
 import { variantScanDirs, variantFoldersUnreachable } from './variant-scan-scope.js';
 import { InlineViz } from '../components/inline-viz.js';
 import { shuffle as shuffleArray, reshuffleAvoidingRepeat, balancedShuffle, reshuffleBalancedAvoidingRepeat } from './shuffle.js';
@@ -5675,7 +5675,11 @@ class App {
     }
     // `label` stays the identity used for switching; `displayLabel` is the
     // §7 disambiguated name (duplicate labels get a source/folder suffix).
-    const list = (this._allVariantsWithManual || []).map((v) => ({ label: v.label, path: v.path, displayLabel: v.displayLabel }));
+    // `origin` tells the pop-out whether the row was auto-detected or added by
+    // hand, so its dropdown can carry the same provenance chip as this one.
+    const list = (this._allVariantsWithManual || []).map((v) => ({
+      label: v.label, path: v.path, displayLabel: v.displayLabel, origin: variantOrigin(v),
+    }));
     const activeLabel = list[this._activeVariantIndex || 0]?.label || '';
     relay(PLAYERWIN.makeMessage(PLAYERWIN.VARIANTS, { list, activeLabel }));
   }
@@ -8714,7 +8718,13 @@ class App {
     }
     // Merge base + manual, deduplicating by path (manual variants may overlap with auto-detected)
     const seenPaths = new Set(baseVariants.map(v => v.path));
-    const deduped = manual.filter(v => !seenPaths.has(v.path));
+    // Tag the manual rows so the dropdown can say where each row came from.
+    // Copy, don't annotate in place: `manual` is a live reference into
+    // settings.library.manualVariants, and `_isManual` is a render-time fact —
+    // writing it there would persist it into config.json (and into backups).
+    const deduped = manual
+      .filter(v => !seenPaths.has(v.path))
+      .map(v => ({ ...v, _isManual: true }));
     const allVariants = [...baseVariants, ...deduped];
 
     // Resolve active index from stored path (array may have been rebuilt)
@@ -8893,6 +8903,24 @@ class App {
       label.className = 'variant-selector__item-label';
       label.textContent = v.displayLabel || v.label;
       item.appendChild(label);
+
+      // Provenance chip — auto-detected from the file names, or registered by
+      // hand through "Add variation…". Without it the two kinds of row look
+      // identical, and the only way to tell them apart was to try removing one.
+      // Mirrors the library card's variant list (library.js) so both UIs read
+      // the same way. Rows with an unknown origin get no chip at all: a missing
+      // marker is honest, a wrong one is worse than none.
+      const origin = variantOrigin(v);
+      if (origin) {
+        const tag = document.createElement('span');
+        tag.className = `variant-selector__tag variant-selector__tag--${origin}`;
+        tag.textContent = t(origin === 'auto' ? 'variants.autoTag' : 'variants.manualTag');
+        const detail = t(origin === 'auto' ? 'variants.autoTagTitle' : 'variants.manualTagTitle');
+        // The path is the part that actually disambiguates two same-named
+        // scripts, so it goes in the tooltip alongside the explanation.
+        tag.title = v.path ? `${detail}\n${v.sourceName ? `${v.sourceName}\n` : ''}${v.path}` : detail;
+        item.appendChild(tag);
+      }
 
       // Pin-as-default star. Lives inside the (flex) item; clicking it
       // toggles this video's remembered default WITHOUT switching to the

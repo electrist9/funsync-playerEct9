@@ -523,7 +523,7 @@
       "addVariation": "+ バリエーションを追加…",
       "removeVariation": "このバリエーションを削除 (ファイルはディスクに残ります)",
       "autoVariantTag": "自動",
-      "autoVariantTitle": "同じフォルダ内のファイルから自動検出されました。クリアするにはファイルを名前変更または削除してください。",
+      "autoVariantTitle": "ライブラリ内の funscript ファイルから自動検出されました。クリアするにはファイルを名前変更または削除してください。",
       "useButtplugVib": "振動に Buttplug.io を使用",
       "axisMain": "メイン (ストローク)",
       "routeMain": "★ メイン (バリエーション対応)",
@@ -951,7 +951,11 @@
     "setDefault": "この動画のデフォルトに設定",
     "unsetDefault": "この動画のデフォルトを解除",
     "defaultSet": "「{label}」をこの動画のデフォルトに設定しました",
-    "defaultCleared": "デフォルトのバリエーションをクリアしました"
+    "defaultCleared": "デフォルトのバリエーションをクリアしました",
+    "autoTag": "自動",
+    "manualTag": "手動",
+    "autoTagTitle": "自動検出：ライブラリ内の funscript ファイルから認識しました。外すにはファイル名を変更するか、ファイルを移動してください。",
+    "manualTagTitle": "手動追加：「バリエーションを追加…」で登録したものです。「バリエーションを管理…」で名前変更・削除ができます。"
   },
   "syncChip": {
     "noDevices": "デバイスなし",
