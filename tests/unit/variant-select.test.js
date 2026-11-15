@@ -63,9 +63,10 @@ describe('pickVariantIndexOnLoad', () => {
 
 describe('variantOrigin', () => {
   // Provenance for the dropdown chip: the flags already exist in the data
-  // (`_autoDetected` from the scan, `_isManual` from the manual-variant merge),
-  // nothing here is persisted. Unknown origin must come back '' so the UI shows
-  // no chip rather than a wrong one.
+  // (`_autoDetected` from the scan, `_isManual` from the manual-variant merge,
+  // `_generatedFamily` from the generate dialog's store), nothing here is
+  // persisted. Unknown origin must come back '' so the UI shows no chip rather
+  // than a wrong one.
   it('reads the scan flag as auto', () => {
     expect(variantOrigin({ label: 'Soft', path: 'X:\\a\\video (Soft).funscript', _autoDetected: true })).toBe('auto');
   });
@@ -74,10 +75,30 @@ describe('variantOrigin', () => {
     expect(variantOrigin({ label: 'Custom', path: 'X:\\b\\custom.funscript', _isManual: true })).toBe('manual');
   });
 
+  it('reads the engine family of a generated script as its own origin', () => {
+    // A plain "auto" would hide the one thing the user is looking at: which
+    // analysis produced this file.
+    expect(variantOrigin({ label: 'Generated audio', path: 'X:\\store\\clip-audio.funscript', _generatedFamily: 'audio' })).toBe('audio');
+    expect(variantOrigin({ label: 'Generated motion', path: 'X:\\store\\clip-motion.funscript', _generatedFamily: 'motion' })).toBe('motion');
+  });
+
+  it('a generated row is never reported as auto', () => {
+    // The store file is not in the library, so the auto tooltip ("rename or
+    // move the file") would point at something the user cannot do.
+    expect(variantOrigin({ _generatedFamily: 'audio', _autoDetected: true })).toBe('audio');
+  });
+
+  it('ignores an engine family this player has no chip for', () => {
+    expect(variantOrigin({ label: 'Depth', _generatedFamily: 'depth' })).toBe('');
+  });
+
   it('manual wins if a row somehow carries both flags', () => {
     // The merge dedupes by path and keeps the auto row, so this should not
     // happen — but the tie-break must not depend on property order.
     expect(variantOrigin({ label: 'Both', _autoDetected: true, _isManual: true })).toBe('manual');
+    // A generated script someone registered by hand is their call: the manual
+    // flag comes from the code that knows the row is hand-registered.
+    expect(variantOrigin({ _generatedFamily: 'motion', _isManual: true })).toBe('manual');
   });
 
   it('returns an empty string when the origin is unknown', () => {

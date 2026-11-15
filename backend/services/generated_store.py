@@ -156,6 +156,16 @@ class GeneratedScriptStore:
         """Remove a record and its file. True if it existed."""
         raise NotImplementedError
 
+    def script_path(self, record: dict[str, Any]) -> str | None:
+        """Absolute path of a record's file, or None when this store keeps its
+        scripts somewhere a path cannot address.
+
+        The index itself only ever holds the file name — the folder follows
+        `--user-data-dir`, so only the store knows where it is. Callers that
+        hand the path to someone else must check the file still exists.
+        """
+        return None
+
 
 class FileGeneratedScriptStore(GeneratedScriptStore):
     """JSON-on-disk store. One file per script plus an index."""
@@ -316,6 +326,15 @@ class FileGeneratedScriptStore(GeneratedScriptStore):
             with open(path, encoding="utf-8") as f:
                 return json.load(f)
         except (OSError, json.JSONDecodeError, ValueError):
+            return None
+
+    def script_path(self, record: dict[str, Any]) -> str | None:
+        """Absolute path of a record's file, or None if the record's file name
+        cannot be resolved (a hand-edited index, say). No existence check —
+        `get_script` reads through the same path."""
+        try:
+            return self._script_path(record["filename"])
+        except (ValueError, KeyError, TypeError):
             return None
 
     def list_for_video(self, video_hash: str) -> list[dict[str, Any]]:

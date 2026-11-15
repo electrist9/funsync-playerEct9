@@ -260,6 +260,35 @@ class TestStoreRoutes:
                             params={"video_path": "Z:/nope/missing.mp4"}).json()
         assert listed["items"] == []
 
+    def test_listed_items_carry_the_path_of_their_file(self, client, clicks_wav):
+        """The player offers stored scripts as script variations, and a
+        variation is addressed by path — only the store knows where its folder
+        is, so the route has to add the path."""
+        script_id, _ = _generated_id(client, clicks_wav)
+        items = client.get("/api/generate/store",
+                           params={"video_path": clicks_wav}).json()["items"]
+        item = next(i for i in items if i["id"] == script_id)
+        assert os.path.isfile(item["path"])
+        assert os.path.basename(item["path"]) == item["filename"]
+
+        # The index record itself still holds only a file name: the path is
+        # resolved per request, never written to disk.
+        record = client.get(f"/api/generate/store/{script_id}").json()["record"]
+        assert "path" not in record
+
+    def test_a_script_whose_file_vanished_is_not_listed(self, client, clicks_wav):
+        """A variation the player cannot load is worse than no variation."""
+        script_id, _ = _generated_id(client, clicks_wav)
+        items = client.get("/api/generate/store",
+                           params={"video_path": clicks_wav}).json()["items"]
+        os.remove(next(i for i in items if i["id"] == script_id)["path"])
+
+        remaining = client.get("/api/generate/store",
+                               params={"video_path": clicks_wav}).json()["items"]
+        assert script_id not in [item["id"] for item in remaining]
+        assert script_id not in [item["id"] for item in
+                                 client.get("/api/generate/store").json()["items"]]
+
 
 @pytest.fixture()
 def export_video(media_dir, clicks_wav):

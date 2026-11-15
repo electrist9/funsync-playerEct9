@@ -715,6 +715,7 @@
     "scriptLoadFailed": "ファンスクリプトの読み込みに失敗しました: {error}",
     "handyUploadFailed": "Handy へのスクリプトアップロードに失敗しました",
     "variantSwitchFailed": "スクリプトバリアントの切り替えに失敗しました",
+    "generatedScriptGone": "この生成スクリプトは FunSync に保存されていません",
     "noPlaylists": "プレイリストがありません — プレイリストビューから作成してください",
     "addNoPath": "追加できません — 動画にファイルパスがありません",
     "nowPlayingVariant": "再生中: {label}",
@@ -955,7 +956,13 @@
     "autoTag": "自動",
     "manualTag": "手動",
     "autoTagTitle": "自動検出：ライブラリ内の funscript ファイルから認識しました。外すにはファイル名を変更するか、ファイルを移動してください。",
-    "manualTagTitle": "手動追加：「バリエーションを追加…」で登録したものです。「バリエーションを管理…」で名前変更・削除ができます。"
+    "manualTagTitle": "手動追加：「バリエーションを追加…」で登録したものです。「バリエーションを管理…」で名前変更・削除ができます。",
+    "audioTag": "音声",
+    "motionTag": "動作",
+    "audioTagTitle": "FunSync がこの動画の音声から生成しました。生成ダイアログで削除できます。「動画と同じ場所に保存」を選ぶと動画の隣にコピーが残ります。",
+    "motionTagTitle": "FunSync がこの動画の映像から生成しました。生成ダイアログで削除できます。「動画と同じ場所に保存」を選ぶと動画の隣にコピーが残ります。",
+    "generatedAudioLabel": "生成：音声",
+    "generatedMotionLabel": "生成：動作"
   },
   "syncChip": {
     "noDevices": "デバイスなし",
@@ -1229,7 +1236,9 @@
       "autoVariantModeHint": "Title-soft.funscript のようなファイル名を Title のバリエーションとして扱う方法を決めます。厳密では、実際のタイトルに現れ得ない区切りだけをバリエーションの境界とし、認識するラベルは内蔵の一覧（soft、intense、loop など）に限ります。汎用ではスペース区切りや、ノイズではない他のラベルも受け付けます。オフでは従来どおり (Soft) と Title.soft のパターンだけを認識します。",
       "variantKeywordsLabel": "追加のバリエーションラベル",
       "variantKeywordsPlaceholder": "例: slowmo, handson",
-      "variantKeywordsHint": "カンマ区切りで厳密モードのラベル一覧に追加します。- と _ の区切りで機能し、内蔵のラベルが削除されることはありません。"
+      "variantKeywordsHint": "カンマ区切りで厳密モードのラベル一覧に追加します。- と _ の区切りで機能し、内蔵のラベルが削除されることはありません。",
+      "generatedVariantsLabel": "生成したスクリプトをバリエーションとして提供する",
+      "generatedVariantsHint": "FunSync がその動画のために生成したスクリプトは、音声または動作と表示されてバリエーション一覧に加わります。ファイルは動画の隣ではなく FunSync 自身のフォルダに保存されるため、「動画と同じ場所に保存」を選ぶとライブラリが読み込めるコピーが残ります。"
     },
     "data": {
       "backupHeader": "バックアップと復元",

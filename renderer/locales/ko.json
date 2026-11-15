@@ -715,6 +715,7 @@
     "scriptLoadFailed": "펀스크립트 로드 실패: {error}",
     "handyUploadFailed": "Handy로 스크립트 업로드 실패",
     "variantSwitchFailed": "스크립트 변형 전환 실패",
+    "generatedScriptGone": "이 생성된 스크립트는 더 이상 FunSync에 보관되어 있지 않습니다",
     "noPlaylists": "재생 목록이 없습니다 — 재생 목록 뷰에서 만드세요",
     "addNoPath": "추가할 수 없음 — 동영상에 파일 경로가 없습니다",
     "nowPlayingVariant": "재생 중: {label}",
@@ -955,7 +956,13 @@
     "autoTag": "자동",
     "manualTag": "수동",
     "autoTagTitle": "자동 감지: 라이브러리의 funscript 파일에서 인식했습니다. 해제하려면 파일 이름을 바꾸거나 파일을 이동하세요.",
-    "manualTagTitle": "수동 추가: “변형 추가…”로 등록한 항목입니다. “변형 관리…”에서 이름 변경과 삭제를 할 수 있습니다."
+    "manualTagTitle": "수동 추가: “변형 추가…”로 등록한 항목입니다. “변형 관리…”에서 이름 변경과 삭제를 할 수 있습니다.",
+    "audioTag": "오디오",
+    "motionTag": "모션",
+    "audioTagTitle": "FunSync가 이 영상의 오디오로 생성했습니다. 생성 대화상자에서 삭제하거나 “영상과 같은 폴더에 저장”을 선택하면 영상 옆에 사본이 남습니다.",
+    "motionTagTitle": "FunSync가 이 영상의 화면으로 생성했습니다. 생성 대화상자에서 삭제하거나 “영상과 같은 폴더에 저장”을 선택하면 영상 옆에 사본이 남습니다.",
+    "generatedAudioLabel": "생성: 오디오",
+    "generatedMotionLabel": "생성: 모션"
   },
   "syncChip": {
     "noDevices": "기기 없음",
@@ -1229,7 +1236,9 @@
       "autoVariantModeHint": "Title-soft.funscript 같은 파일 이름을 Title의 변형으로 다루는 방법입니다. 엄격에서는 실제 제목에 들어갈 수 없는 구분자만 변형 경계로 쓰고, 인식하는 라벨은 내장 목록(soft, intense, loop 등)으로 한정합니다. 범용에서는 공백 구분자와 노이즈가 아닌 다른 라벨도 허용합니다. 끄기에서는 기존처럼 (Soft)과 Title.soft 패턴만 인식합니다.",
       "variantKeywordsLabel": "추가 변형 라벨",
       "variantKeywordsPlaceholder": "예: slowmo, handson",
-      "variantKeywordsHint": "쉼표로 구분한 라벨을 엄격 모드 목록에 추가합니다. - 와 _ 구분자에 적용되며 내장 라벨은 삭제되지 않습니다."
+      "variantKeywordsHint": "쉼표로 구분한 라벨을 엄격 모드 목록에 추가합니다. - 와 _ 구분자에 적용되며 내장 라벨은 삭제되지 않습니다.",
+      "generatedVariantsLabel": "생성된 스크립트를 변형으로 제공",
+      "generatedVariantsHint": "FunSync가 해당 영상에 대해 생성한 스크립트는 오디오 또는 모션으로 표시되어 변형 목록에 나타납니다. 파일은 영상 옆이 아니라 FunSync 자체 폴더에 저장되므로, 생성 대화상자에서 “영상과 같은 폴더에 저장”을 선택하면 자료실이 읽을 수 있는 사본이 남습니다."
     },
     "data": {
       "backupHeader": "백업 및 복구",

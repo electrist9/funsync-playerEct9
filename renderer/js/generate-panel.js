@@ -73,12 +73,18 @@ export class GeneratePanel {
    *        caller is responsible for keeping the script editor pointed away
    *        from the on-disk sidecar (setFunscriptPath(null)).
    * @param {(state: object|null) => void} [opts.onChip] — player progress chip.
+   * @param {() => void} [opts.onStoredChanged] — called whenever this panel
+   *        changes what the store holds (a finished generation, a delete, an
+   *        export). The player offers those same files as script variations, so
+   *        its variation list has to be re-looked-up; the panel does not know
+   *        about variations itself.
    */
   constructor(opts = {}) {
     this._getPort = opts.getBackendPort || (() => null);
     this._getVideo = opts.getVideo || (() => null);
     this._onPreview = opts.onPreview || (() => {});
     this._onChip = opts.onChip || (() => {});
+    this._onStoredChanged = opts.onStoredChanged || (() => {});
 
     this._job = null;      // latest job payload from the backend
     this._port = null;     // port the running job was started against
@@ -282,8 +288,12 @@ export class GeneratePanel {
         });
       }
       // A saved script is now in the store, so the "already generated" list
-      // under the form has to catch up with it.
-      if (next.script_id) this._refreshStored();
+      // under the form has to catch up with it — and so does the player's
+      // variation list, which offers the same files as script variations.
+      if (next.script_id) {
+        this._refreshStored();
+        this._onStoredChanged();
+      }
     } else {
       this._schedulePoll();
     }
@@ -422,6 +432,7 @@ export class GeneratePanel {
         // Already gone (another window deleted it): say so and re-sync the list.
         showToast(t('generate.error.storedGone'), 'error');
         await this._refreshStored();
+        this._onStoredChanged();
         return;
       }
       if (!res.ok) {
@@ -435,6 +446,7 @@ export class GeneratePanel {
         this._emitChip(null);
       }
       await this._refreshStored();
+      this._onStoredChanged();
       this._render();
     } catch (err) {
       console.warn('[generate] delete request failed', String(err?.message || err));
@@ -503,6 +515,10 @@ export class GeneratePanel {
         actionCount: data.action_count ?? null,
       });
       showToast(t('generate.saved', { filename: data.filename || '' }), 'info');
+      // The copy beside the video is now a script the player can pick as a
+      // variation, so the caller gets told the same way as for any other
+      // change to what this panel has written out.
+      this._onStoredChanged();
       this._render();
     } catch (err) {
       console.warn('[generate] export failed', String(err?.message || err));

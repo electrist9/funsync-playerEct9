@@ -347,6 +347,25 @@ async def generate_motion(request: Request):
     return await _start_job("motion", request)
 
 
+def _with_paths(store, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Records plus the absolute path of their file.
+
+    The player offers stored scripts as script variants, and a variant is
+    addressed by path — so the path has to come from the store, which is the
+    only thing that knows where its folder is (it follows `--user-data-dir`,
+    and falls back to a temp dir when that flag is missing). Records whose file
+    has gone are dropped rather than returned without a path: a variant that
+    cannot be loaded is worse than no variant at all.
+    """
+    enriched = []
+    for item in items:
+        path = store.script_path(item)
+        if not path or not os.path.isfile(path):
+            continue
+        enriched.append({**item, "path": path})
+    return enriched
+
+
 @router.get("/store")
 async def list_store(video_path: str | None = None):
     """List generated scripts, optionally only those for one video.
@@ -360,8 +379,8 @@ async def list_store(video_path: str | None = None):
             identity = video_identity(video_path)
         except (FileNotFoundError, OSError):
             return {"items": []}
-        return {"items": store.list_for_video(identity["video_hash"])}
-    return {"items": store.list_all()}
+        return {"items": _with_paths(store, store.list_for_video(identity["video_hash"]))}
+    return {"items": _with_paths(store, store.list_all())}
 
 
 @router.get("/store/{script_id}")

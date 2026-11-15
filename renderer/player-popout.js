@@ -431,6 +431,17 @@ function renderVariants(list, activeLabel) {
   const activeVariant = variants.find((v) => (v.label || '') === activeLabel) || variants[0];
   if (label) label.textContent = activeVariant ? (activeVariant.displayLabel || activeVariant.label || '') : (activeLabel || '');
   dropdown.replaceChildren();
+  // Provenance chips, keyed by the `origin` main attaches to each row. Same
+  // keys and the same wording as the inline player's dropdown (app.js), so the
+  // two surfaces never disagree about what a row is.
+  const TAG_KEYS = {
+    auto: 'variants.autoTag', manual: 'variants.manualTag',
+    audio: 'variants.audioTag', motion: 'variants.motionTag',
+  };
+  const TAG_TITLE_KEYS = {
+    auto: 'variants.autoTagTitle', manual: 'variants.manualTagTitle',
+    audio: 'variants.audioTagTitle', motion: 'variants.motionTagTitle',
+  };
   variants.forEach((v) => {
     const item = document.createElement('button');
     item.className = 'variant-selector__item';
@@ -445,13 +456,16 @@ function renderVariants(list, activeLabel) {
 
     // Provenance chip, from the `origin` field main attaches to each row.
     // Unknown origin → no chip, rather than a wrong one.
-    const origin = v.origin === 'auto' || v.origin === 'manual' ? v.origin : '';
+    const origin = TAG_KEYS[v.origin] ? v.origin : '';
     if (origin) {
       const tag = document.createElement('span');
       tag.className = `variant-selector__tag variant-selector__tag--${origin}`;
-      tag.textContent = t(origin === 'auto' ? 'variants.autoTag' : 'variants.manualTag');
-      const detail = t(origin === 'auto' ? 'variants.autoTagTitle' : 'variants.manualTagTitle');
-      tag.title = v.path ? `${detail}\n${v.path}` : detail;
+      tag.textContent = t(TAG_KEYS[origin]);
+      const detail = t(TAG_TITLE_KEYS[origin]);
+      // A generated script lives in the app's own folder, so its tooltip names
+      // the file instead of showing a path the user cannot act on.
+      const where = (origin === 'audio' || origin === 'motion') ? (v.name || v.path) : v.path;
+      tag.title = where ? `${detail}\n${where}` : detail;
       item.appendChild(tag);
     }
 

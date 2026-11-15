@@ -715,6 +715,7 @@
     "scriptLoadFailed": "Impossible de charger le funscript : {error}",
     "handyUploadFailed": "Échec de l'envoi du script vers Handy",
     "variantSwitchFailed": "Échec du changement de variante de script",
+    "generatedScriptGone": "Ce script généré n’est plus enregistré dans FunSync",
     "noPlaylists": "Aucune liste pour l'instant — créez-en une depuis la vue Listes",
     "addNoPath": "Impossible d'ajouter — la vidéo n'a pas de chemin de fichier",
     "nowPlayingVariant": "Lecture en cours : {label}",
@@ -955,7 +956,13 @@
     "autoTag": "auto",
     "manualTag": "manuel",
     "autoTagTitle": "Détecté automatiquement depuis un fichier funscript de votre bibliothèque. Renommez ou déplacez le fichier pour le retirer.",
-    "manualTagTitle": "Ajouté à la main avec « Ajouter une variante… ». Utilisez « Gérer les variantes… » pour le renommer ou le retirer."
+    "manualTagTitle": "Ajouté à la main avec « Ajouter une variante… ». Utilisez « Gérer les variantes… » pour le renommer ou le retirer.",
+    "audioTag": "audio",
+    "motionTag": "mouvement",
+    "audioTagTitle": "Généré par FunSync à partir de l’audio de cette vidéo. Supprimez-le dans le dialogue de génération, ou choisissez « Enregistrer à côté de la vidéo » pour en garder une copie.",
+    "motionTagTitle": "Généré par FunSync à partir de l’image de cette vidéo. Supprimez-le dans le dialogue de génération, ou choisissez « Enregistrer à côté de la vidéo » pour en garder une copie.",
+    "generatedAudioLabel": "Généré : audio",
+    "generatedMotionLabel": "Généré : mouvement"
   },
   "syncChip": {
     "noDevices": "Aucun appareil",
@@ -1229,7 +1236,9 @@
       "autoVariantModeHint": "Définit comment des noms comme Title-soft.funscript deviennent des variantes de Title. Stricte n'utilise que les séparateurs impossibles dans un vrai titre et ne reconnaît que les étiquettes intégrées (soft, intense, loop…). Générique accepte en plus la séparation par espace et d'autres étiquettes sans bruit. Désactivée garde uniquement les motifs d'avant : (Soft) et Title.soft.",
       "variantKeywordsLabel": "Étiquettes de variante supplémentaires",
       "variantKeywordsPlaceholder": "par ex. slowmo, handson",
-      "variantKeywordsHint": "Étiquettes séparées par des virgules qui complètent la liste du mode strict. Elles s'appliquent aux séparateurs - et _ ; les étiquettes intégrées ne sont jamais retirées."
+      "variantKeywordsHint": "Étiquettes séparées par des virgules qui complètent la liste du mode strict. Elles s'appliquent aux séparateurs - et _ ; les étiquettes intégrées ne sont jamais retirées.",
+      "generatedVariantsLabel": "Proposer les scripts générés comme variantes",
+      "generatedVariantsHint": "Les scripts que FunSync a générés pour une vidéo apparaissent dans sa liste de variantes, marqués audio ou mouvement. Ils restent dans le dossier de FunSync et non à côté de la vidéo ; « Enregistrer à côté de la vidéo » dans le dialogue de génération en crée une copie que la bibliothèque peut voir."
     },
     "data": {
       "backupHeader": "Sauvegarde et restauration",

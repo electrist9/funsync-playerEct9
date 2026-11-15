@@ -715,6 +715,7 @@
     "scriptLoadFailed": "加载脚本失败：{error}",
     "handyUploadFailed": "上传脚本到 Handy 失败",
     "variantSwitchFailed": "切换脚本变体失败",
+    "generatedScriptGone": "该生成脚本已不在 FunSync 中",
     "noPlaylists": "暂无播放列表 — 请前往播放列表页创建",
     "addNoPath": "无法添加 — 视频缺少文件路径",
     "nowPlayingVariant": "正在播放：{label}",
@@ -955,7 +956,13 @@
     "autoTag": "自动",
     "manualTag": "手动",
     "autoTagTitle": "自动检测：从资料库中的 funscript 文件识别。要移除它，请重命名或移动该文件。",
-    "manualTagTitle": "手动添加：通过“添加变体…”登记的条目。可在“管理变体…”中重命名或删除。"
+    "manualTagTitle": "手动添加：通过“添加变体…”登记的条目。可在“管理变体…”中重命名或删除。",
+    "audioTag": "音频",
+    "motionTag": "动作",
+    "audioTagTitle": "FunSync 生成：由该视频的音频分析而来。可在生成对话框中删除；选择“保存到视频旁边”会在视频旁保留一份。",
+    "motionTagTitle": "FunSync 生成：由该视频的画面动作分析而来。可在生成对话框中删除；选择“保存到视频旁边”会在视频旁保留一份。",
+    "generatedAudioLabel": "生成（音频）",
+    "generatedMotionLabel": "生成（动作）"
   },
   "syncChip": {
     "noDevices": "无设备",
@@ -1229,7 +1236,9 @@
       "autoVariantModeHint": "决定 Title-soft.funscript 这类文件名如何成为 Title 的变体。严格模式只把真实标题中不可能出现的分隔符当作变体边界，并且只识别内置标签（soft、intense、loop 等）。通用模式还接受空格分隔以及其他非噪声标签。关闭时只保留原来的 (Soft) 和 Title.soft 模式。",
       "variantKeywordsLabel": "额外的变体标签",
       "variantKeywordsPlaceholder": "例如 slowmo, handson",
-      "variantKeywordsHint": "以逗号分隔的标签，会添加到严格模式的标签列表中；它们适用于 - 和 _ 分隔符，内置标签不会被移除。"
+      "variantKeywordsHint": "以逗号分隔的标签，会添加到严格模式的标签列表中；它们适用于 - 和 _ 分隔符，内置标签不会被移除。",
+      "generatedVariantsLabel": "将生成的脚本作为变体提供",
+      "generatedVariantsHint": "FunSync 为某个视频生成的脚本会出现在它的变体列表中，并标记为“音频”或“动作”。这些文件保存在 FunSync 自己的文件夹里，而不是视频旁边；在生成对话框中选择“保存到视频旁边”，才会得到一份资料库能看到的副本。"
     },
     "data": {
       "backupHeader": "备份与恢复",

@@ -1710,6 +1710,19 @@ html.has-wco .player__top-bar :is(button, input, select, a, [role="button"], [ta
   color: var(--accent);
 }
 
+/* Generated scripts: the chip names which analysis produced the file, so the
+   two families need colours the eye can tell apart at 10px. Blue reads as
+   sound (the same token the library uses for a manual funscript badge), teal
+   as movement (the multi-axis token). Both are AA-tuned per theme, and neither
+   is --accent, which already means "added by hand" one row up. */
+.variant-selector__tag--audio {
+  color: var(--badge-info);
+}
+
+.variant-selector__tag--motion {
+  color: var(--badge-multi);
+}
+
 /* Pin-as-default star at the trailing edge of each variant row. */
 .variant-selector__star {
   flex: 0 0 auto;

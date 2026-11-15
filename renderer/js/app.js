@@ -4,7 +4,8 @@ import { VideoPlayer, PLAYBACK_RATE_PRESETS } from './video-player.js';
 import { eventBus } from './event-bus.js';
 import { ProgressBar } from './progress-bar.js';
 import { FunscriptEngine, isAutoMatch, stripBOM } from './funscript-engine.js';
-import { GeneratePanel } from './generate-panel.js';
+import { GeneratePanel, generateApiUrl } from './generate-panel.js';
+import { generatedVariantRows } from './generated-variants.js';
 import { extractEmbeddedAxes, buildCompanionFiles, companionPathMap } from './embedded-multi-axis.js';
 import { getAxisBySuffix } from './multi-axis.js';
 import { sourcesToProbe } from './source-state.js';
@@ -314,7 +315,23 @@ class App {
         : null),
       onPreview: (script, meta) => this._previewGeneratedScript(script, meta),
       onChip: (state) => this._renderGenerateChip(state),
+      // Anything the panel writes to the store — a finished job, a delete, an
+      // export — changes which variations the player can offer. The store rows
+      // come from the backend; an export also lands a file beside the video,
+      // which is the scan-side refresh that sees it.
+      onStoredChanged: () => {
+        this._refreshGeneratedVariants();
+        this._refreshCurrentVariantsFromDisk();
+      },
     });
+
+    // Generated scripts offered as script variations (generated-variants.js,
+    // _refreshGeneratedVariants). The rows for the video loaded right now, the
+    // video they belong to, and the token that discards a lookup whose video
+    // has since moved on. Never persisted: the store is the source of truth.
+    this._generatedVariants = [];
+    this._generatedForPath = null;
+    this._generatedToken = 0;
 
     // Windows Controls Overlay detection: when the native title bar is
     // replaced by the tinted overlay (titleBarStyle hidden, main.js), the
@@ -441,6 +458,11 @@ class App {
       // idempotent (an in-flight scan no-ops) and re-renders the grid.
       onAutoVariantChanged: () => {
         if (this.library?.refresh) this.library.refresh();
+      },
+      // Generated variations come from the backend store, not the scan, so a
+      // change here needs no rescan — just a re-look-up for the loaded video.
+      onGeneratedVariantsChanged: () => {
+        this._refreshGeneratedVariants();
       },
       // Orgasm Switch (hold X) — configure / clear / display the global
       // config (single script, multi-axis bundle, or custom routing —
@@ -1571,6 +1593,14 @@ class App {
           // since the last scan (added files, or a reconnected drive).
           this._showVariantDropdown();
           this._refreshCurrentVariantsFromDisk().then((changed) => {
+            const dd = document.getElementById('variant-dropdown');
+            if (changed && dd && !dd.hidden) this._showVariantDropdown();
+          });
+          // Generated scripts live in the app's own store, which the scan above
+          // never looks at, so they need their own lookup on open — a script
+          // generated in another window, or deleted in the generate dialog,
+          // shows up here rather than after the next video change.
+          this._refreshGeneratedVariants().then((changed) => {
             const dd = document.getElementById('variant-dropdown');
             if (changed && dd && !dd.hidden) this._showVariantDropdown();
           });
@@ -4685,6 +4715,10 @@ class App {
     this._updateGenerateButtonVisibility();
     if ((this._currentVideoPath || null) !== previousVideoPath) {
       this.generatePanel?.reset();
+      // Generated variations are keyed to a file the backend can open, so they
+      // are looked up again with the video — and dropped for remote streams,
+      // which have no path to look up. Reloading the same file keeps the rows.
+      this._refreshGeneratedVariants();
     }
     this.videoPlayer.loadSource(videoUrl, file.name, loadOpts);
     this.progressBar.setVideoSource(videoUrl);
@@ -5675,10 +5709,12 @@ class App {
     }
     // `label` stays the identity used for switching; `displayLabel` is the
     // §7 disambiguated name (duplicate labels get a source/folder suffix).
-    // `origin` tells the pop-out whether the row was auto-detected or added by
-    // hand, so its dropdown can carry the same provenance chip as this one.
+    // `origin` tells the pop-out where the row came from — scan, hand-added, or
+    // generated — so its dropdown can carry the same provenance chip as this
+    // one. `name` is the file name, which is what a generated row's tooltip
+    // shows (its folder is app-internal and no use to the user).
     const list = (this._allVariantsWithManual || []).map((v) => ({
-      label: v.label, path: v.path, displayLabel: v.displayLabel, origin: variantOrigin(v),
+      label: v.label, path: v.path, name: v.name, displayLabel: v.displayLabel, origin: variantOrigin(v),
     }));
     const activeLabel = list[this._activeVariantIndex || 0]?.label || '';
     relay(PLAYERWIN.makeMessage(PLAYERWIN.VARIANTS, { list, activeLabel }));
@@ -8725,7 +8761,15 @@ class App {
     const deduped = manual
       .filter(v => !seenPaths.has(v.path))
       .map(v => ({ ...v, _isManual: true }));
-    const allVariants = [...baseVariants, ...deduped];
+    // Generated scripts live in the app's own store folder, not beside the
+    // video, so the library scan can never see them — they arrive through
+    // _refreshGeneratedVariants() instead. Appended last on purpose: if a
+    // generated file somehow collides with a scanned or hand-registered row,
+    // that row keeps its chip and the generated copy stays hidden.
+    const generated = (this._generatedForPath === videoPath ? this._generatedVariants : [])
+      .filter(v => v.path && !seenPaths.has(v.path));
+    for (const v of generated) seenPaths.add(v.path);
+    const allVariants = [...baseVariants, ...deduped, ...generated];
 
     // Resolve active index from stored path (array may have been rebuilt)
     if (this._activeVariantPath) {
@@ -8751,6 +8795,64 @@ class App {
     }
 
     this._allVariantsWithManual = allVariants;
+  }
+
+  /**
+   * Fetch the scripts the generate dialog stored for the CURRENT video and keep
+   * them as variation rows (`_generatedVariants`), which
+   * `_updateVariantSelector()` then merges in.
+   *
+   * Those files live in the app's own store folder, so the library scan never
+   * sees them. Only the backend knows where that folder is — it follows
+   * `--user-data-dir`, and falls back to a temp dir without it — which is why
+   * `GET /store` hands back an absolute `path` per record and the renderer
+   * never reconstructs the root. Rows are rebuilt per video and never
+   * persisted, so switching the feature off leaves nothing behind to clean up.
+   *
+   * Fail-soft on purpose: the backend can be missing entirely (python-bridge
+   * starts without it), and a variant list that complained every time the
+   * player looked would be worse than one that quietly omits the rows.
+   *
+   * @returns {Promise<boolean>} true if the generated rows changed, so a caller
+   *   with an open dropdown knows it has to re-render.
+   */
+  async _refreshGeneratedVariants() {
+    const videoPath = this._currentVideoPath;
+    const port = this.backendPort;
+    // Invalidate any lookup already in flight, then drop the rows.
+    const clear = () => {
+      this._generatedToken += 1;
+      const had = (this._generatedVariants || []).length > 0;
+      this._generatedVariants = [];
+      this._generatedForPath = null;
+      if (had) this._updateVariantSelector();
+      return had;
+    };
+    if (!videoPath || !port || this.settings.get('library.useGeneratedVariants') === false) {
+      return clear();
+    }
+    const token = ++this._generatedToken;
+    this._generatedForPath = videoPath;
+    let items = [];
+    try {
+      const res = await fetch(generateApiUrl(port, `/store?video_path=${encodeURIComponent(videoPath)}`));
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json().catch(() => ({}));
+      items = Array.isArray(data?.items) ? data.items : [];
+    } catch (err) {
+      console.warn('[Variants] generated store lookup failed', err?.message || err);
+    }
+    // A newer video, or a newer refresh of the same one, already won the race.
+    if (token !== this._generatedToken || this._currentVideoPath !== videoPath) return false;
+    const rows = generatedVariantRows(items, (family) => t(
+      family === 'audio' ? 'variants.generatedAudioLabel' : 'variants.generatedMotionLabel',
+    ));
+    const previous = this._generatedVariants || [];
+    const changed = rows.length !== previous.length
+      || rows.some((row, i) => row.path !== previous[i]?.path);
+    this._generatedVariants = rows;
+    if (changed) this._updateVariantSelector();
+    return changed;
   }
 
   /**
@@ -8893,6 +8995,22 @@ class App {
     const activePath = this._activeVariantPath || '';
     const foundIndex = activePath ? variants.findIndex((v) => v.path === activePath) : -1;
     const markerIndex = foundIndex >= 0 ? foundIndex : this._activeVariantIndex;
+    // Chip wording per origin. `auto` / `manual` are the scan and
+    // "Add variation…"; `audio` / `motion` are scripts the generate dialog
+    // made, and their chip says which analysis produced them — a plain "auto"
+    // would hide exactly the difference the user is looking at.
+    const TAG_KEYS = {
+      auto: 'variants.autoTag',
+      manual: 'variants.manualTag',
+      audio: 'variants.audioTag',
+      motion: 'variants.motionTag',
+    };
+    const TAG_TITLE_KEYS = {
+      auto: 'variants.autoTagTitle',
+      manual: 'variants.manualTagTitle',
+      audio: 'variants.audioTagTitle',
+      motion: 'variants.motionTagTitle',
+    };
     for (let i = 0; i < variants.length; i++) {
       const v = variants[i];
       const item = document.createElement('button');
@@ -8904,28 +9022,40 @@ class App {
       label.textContent = v.displayLabel || v.label;
       item.appendChild(label);
 
-      // Provenance chip — auto-detected from the file names, or registered by
-      // hand through "Add variation…". Without it the two kinds of row look
-      // identical, and the only way to tell them apart was to try removing one.
-      // Mirrors the library card's variant list (library.js) so both UIs read
-      // the same way. Rows with an unknown origin get no chip at all: a missing
-      // marker is honest, a wrong one is worse than none.
+      // Provenance chip — auto-detected from the file names, registered by
+      // hand through "Add variation…", or generated by the audio / motion
+      // analysis. Without it the rows look identical, and the only way to tell
+      // them apart was to try removing one. Mirrors the library card's variant
+      // list (library.js) so both UIs read the same way. Rows with an unknown
+      // origin get no chip at all: a missing marker is honest, a wrong one is
+      // worse than none.
       const origin = variantOrigin(v);
       if (origin) {
         const tag = document.createElement('span');
         tag.className = `variant-selector__tag variant-selector__tag--${origin}`;
-        tag.textContent = t(origin === 'auto' ? 'variants.autoTag' : 'variants.manualTag');
-        const detail = t(origin === 'auto' ? 'variants.autoTagTitle' : 'variants.manualTagTitle');
+        tag.textContent = t(TAG_KEYS[origin]);
+        const detail = t(TAG_TITLE_KEYS[origin]);
         // The path is the part that actually disambiguates two same-named
         // scripts, so it goes in the tooltip alongside the explanation.
-        tag.title = v.path ? `${detail}\n${v.sourceName ? `${v.sourceName}\n` : ''}${v.path}` : detail;
+        // Generated rows are the exception: their file sits in the app's own
+        // data folder, which the user has no reason to open, and the name the
+        // generate dialog lists is the part they can act on.
+        const where = v._generatedFamily ? v.name : v.path;
+        tag.title = where
+          ? `${detail}\n${v.sourceName ? `${v.sourceName}\n` : ''}${where}`
+          : detail;
         item.appendChild(tag);
       }
 
       // Pin-as-default star. Lives inside the (flex) item; clicking it
       // toggles this video's remembered default WITHOUT switching to the
       // variant. Only shown when there's a real choice (2+ variants).
-      if (variants.length > 1) {
+      // Generated rows are left out: the pin is applied when the video loads,
+      // before the store lookup has resolved, so a pinned generated row would
+      // be ignored more often than honoured. A generated script that should
+      // become the default can be exported beside the video instead, which
+      // makes it a normal (auto-detected) variant.
+      if (variants.length > 1 && !v._generatedFamily) {
         const isPreferred = !!preferredLabel && (v.label || '').trim() === preferredLabel.trim();
         const star = document.createElement('span');
         star.className = 'variant-selector__star';
@@ -9326,6 +9456,11 @@ class App {
       this._activeVariantIndex = index;
       return;
     }
+    // Remember where the user was. If the script they clicked has vanished,
+    // the row drops out of the list and the marker goes back to the script
+    // still playing instead of landing on an arbitrary row.
+    const previousIndex = this._activeVariantIndex;
+    const previousPath = this._activeVariantPath;
     this._activeVariantIndex = index;
     this._activeVariantPath = variant.path || null;
 
@@ -9372,18 +9507,38 @@ class App {
     }
 
     try {
-      // Resilient read — recovers from a moved file by trying the same
-      // basename in the current video's folder, and prunes the entry
-      // from manualVariants if it can't recover at all.
-      const read = await this._readScriptResilient(variant.path, this._currentVideoPath || null);
-      if (!read) return;
-      const content = read.content;
-      // Self-heal: update the variant entry + the persisted manualVariants
-      // store so subsequent plays use the recovered path directly.
-      if (read.recoveredPath) {
-        variant.path = read.recoveredPath;
-        this._activeVariantPath = read.recoveredPath;
-        this._healManualVariantPath(this._currentVideoPath, variant);
+      let content;
+      if (variant._generatedFamily) {
+        // A generated script lives in the app's own store folder, not beside
+        // the video. The resilient read below is built for files that do: on a
+        // miss it retries the same basename in the video's folder and then
+        // prunes the entry from manualVariants — none of which means anything
+        // for a store file. Read it straight; if it is gone (deleted in the
+        // generate dialog, or the store cleared) the row simply drops out.
+        content = await window.funsync?.readFunscript?.(variant.path);
+        if (content == null) {
+          this._activeVariantIndex = previousIndex;
+          this._activeVariantPath = previousPath;
+          this._generatedVariants = (this._generatedVariants || [])
+            .filter((row) => row.path !== variant.path);
+          this._updateVariantSelector();
+          showToast(t('toast.generatedScriptGone'), 'error');
+          return;
+        }
+      } else {
+        // Resilient read — recovers from a moved file by trying the same
+        // basename in the current video's folder, and prunes the entry
+        // from manualVariants if it can't recover at all.
+        const read = await this._readScriptResilient(variant.path, this._currentVideoPath || null);
+        if (!read) return;
+        content = read.content;
+        // Self-heal: update the variant entry + the persisted manualVariants
+        // store so subsequent plays use the recovered path directly.
+        if (read.recoveredPath) {
+          variant.path = read.recoveredPath;
+          this._activeVariantPath = read.recoveredPath;
+          this._healManualVariantPath(this._currentVideoPath, variant);
+        }
       }
 
       const fsName = variant.name || variant.path.split(/[\\/]/).pop();
@@ -9443,9 +9598,13 @@ class App {
       // Re-upload to Autoblow
       await this._tryStartAutoblowSync();
 
-      // Reload editor if open
+      // Reload editor if open. `loadScript()` reads the engine's in-memory
+      // script, so a generated one displays fine; what it must not get is a
+      // path, because that path is the autosave target and would point at the
+      // app's own store file. Saving one into the video folder is what the
+      // generate dialog's export action is for, deliberately.
       if (this.scriptEditor?.isOpen) {
-        this.scriptEditor.setFunscriptPath(variant.path);
+        this.scriptEditor.setFunscriptPath(variant._generatedFamily ? null : variant.path);
         this.scriptEditor.loadScript();
       }
 

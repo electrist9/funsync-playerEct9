@@ -715,6 +715,7 @@
     "scriptLoadFailed": "No se pudo cargar el funscript: {error}",
     "handyUploadFailed": "No se pudo subir el script a Handy",
     "variantSwitchFailed": "No se pudo cambiar la variante del script",
+    "generatedScriptGone": "Ese script generado ya no está guardado en FunSync",
     "noPlaylists": "Aún no hay listas — crea una desde la vista de Listas",
     "addNoPath": "No se puede añadir — el vídeo no tiene ruta de archivo",
     "nowPlayingVariant": "Reproduciendo ahora: {label}",
@@ -955,7 +956,13 @@
     "autoTag": "auto",
     "manualTag": "manual",
     "autoTagTitle": "Detectado automáticamente desde un archivo funscript de tu biblioteca. Renombra o mueve el archivo para quitarlo.",
-    "manualTagTitle": "Añadido a mano con «Añadir variación…». Usa «Gestionar variaciones…» para renombrarlo o quitarlo."
+    "manualTagTitle": "Añadido a mano con «Añadir variación…». Usa «Gestionar variaciones…» para renombrarlo o quitarlo.",
+    "audioTag": "audio",
+    "motionTag": "movimiento",
+    "audioTagTitle": "Generado por FunSync a partir del audio de este video. Elimínalo en el diálogo de generación o elige «Guardar junto al video» para conservar una copia junto al video.",
+    "motionTagTitle": "Generado por FunSync a partir de la imagen de este video. Elimínalo en el diálogo de generación o elige «Guardar junto al video» para conservar una copia junto al video.",
+    "generatedAudioLabel": "Generado: audio",
+    "generatedMotionLabel": "Generado: movimiento"
   },
   "syncChip": {
     "noDevices": "Sin dispositivos",
@@ -1229,7 +1236,9 @@
       "autoVariantModeHint": "Define cómo nombres como Title-soft.funscript pasan a ser variantes de Title. Estricto solo usa separadores que no pueden aparecer en un título real y solo reconoce las etiquetas integradas (soft, intense, loop…). Genérico acepta además la separación por espacio y otras etiquetas que no sean ruido. Desactivado mantiene solo los patrones de antes: (Soft) y Title.soft.",
       "variantKeywordsLabel": "Etiquetas de variante adicionales",
       "variantKeywordsPlaceholder": "p. ej., slowmo, handson",
-      "variantKeywordsHint": "Etiquetas separadas por comas que amplían la lista del modo estricto. Se aplican a los separadores - y _; las etiquetas integradas nunca se eliminan."
+      "variantKeywordsHint": "Etiquetas separadas por comas que amplían la lista del modo estricto. Se aplican a los separadores - y _; las etiquetas integradas nunca se eliminan.",
+      "generatedVariantsLabel": "Ofrecer los scripts generados como variantes",
+      "generatedVariantsHint": "Los scripts que FunSync generó para un video aparecen en su lista de variantes, marcados como audio o movimiento. Se guardan en la carpeta de FunSync y no junto al video; «Guardar junto al video» en el diálogo de generación crea una copia que la biblioteca puede ver."
     },
     "data": {
       "backupHeader": "Copia de seguridad y recuperación",

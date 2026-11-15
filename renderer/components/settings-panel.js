@@ -36,6 +36,7 @@ const SETTINGS_DEFAULTS = {
   'library.movingPreviews': true,
   'library.folderPreviews': true,
   'library.autoVariantMode': 'strict',
+  'library.useGeneratedVariants': true,
   'player.miniPlayer': true,
 };
 
@@ -56,6 +57,7 @@ export class SettingsPanel {
     onInlineVizOpacityChanged,
     onLibraryDisplayChanged,
     onAutoVariantChanged,
+    onGeneratedVariantsChanged,
     onPickOrgasmScript,
     onClearOrgasmScript,
     getOrgasmScriptName,
@@ -91,6 +93,9 @@ export class SettingsPanel {
     // Auto-variant detection happens during the scan, so a mode/keyword
     // change only takes effect after a rescan — app.js owns that.
     this.onAutoVariantChanged = onAutoVariantChanged || null;
+    // Generated scripts are offered as variations live, from the store — no
+    // rescan involved, so app.js just re-looks-up the current video's rows.
+    this.onGeneratedVariantsChanged = onGeneratedVariantsChanged || null;
     this.onPickOrgasmScript = onPickOrgasmScript || null;
     this.onClearOrgasmScript = onClearOrgasmScript || null;
     this.getOrgasmScriptName = getOrgasmScriptName || null;
@@ -1901,6 +1906,11 @@ export class SettingsPanel {
         <input type="text" id="sp-variant-keywords" class="settings-panel__input" placeholder="${t('settingsPanel.appearance.variantKeywordsPlaceholder')}" aria-describedby="sp-variant-keywords-hint">
       </div>
       <div class="settings-panel__hint" id="sp-variant-keywords-hint">${t('settingsPanel.appearance.variantKeywordsHint')}</div>
+      <div class="settings-panel__field">
+        <label class="settings-panel__field-label" for="sp-generated-variants">${t('settingsPanel.appearance.generatedVariantsLabel')}</label>
+        <input type="checkbox" id="sp-generated-variants" class="settings-panel__input settings-panel__input--checkbox" ${this._settings.get('library.useGeneratedVariants') !== false ? 'checked' : ''} aria-describedby="sp-generated-variants-hint">
+      </div>
+      <div class="settings-panel__hint" id="sp-generated-variants-hint">${t('settingsPanel.appearance.generatedVariantsHint')}</div>
     `;
     librarySection.querySelector('#sp-moving-previews')
       .addEventListener('change', (e) => {
@@ -1957,6 +1967,16 @@ export class SettingsPanel {
         variantKeywordsEl.value = keywords.join(', ');
         this._settings.set('library.variantKeywords', keywords);
         if (this.onAutoVariantChanged) this.onAutoVariantChanged();
+      });
+    }
+    // Generated funscripts as variations. Turning this off only stops the player
+    // from offering them: the scripts stay in the store, and the generate
+    // dialog still lists them, so switching it back restores the rows.
+    const generatedVariantsEl = librarySection.querySelector('#sp-generated-variants');
+    if (generatedVariantsEl) {
+      generatedVariantsEl.addEventListener('change', () => {
+        this._settings.set('library.useGeneratedVariants', !!generatedVariantsEl.checked);
+        if (this.onGeneratedVariantsChanged) this.onGeneratedVariantsChanged(!!generatedVariantsEl.checked);
       });
     }
     panel.appendChild(librarySection);

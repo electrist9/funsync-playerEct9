@@ -376,15 +376,29 @@ describe('Variant provenance — auto-detected vs added by hand is visible', () 
     // scripts from different sources.
     expect(dropdown).toContain('variants.autoTagTitle');
     expect(dropdown).toContain('variants.manualTagTitle');
+    // Generated rows say which analysis made them instead of claiming "auto":
+    // the file is not in the library, so the auto tooltip would be a lie.
+    expect(dropdown).toContain("audio: 'variants.audioTag'");
+    expect(dropdown).toContain("motion: 'variants.motionTag'");
+    expect(dropdown).toContain('variants.audioTagTitle');
+    expect(dropdown).toContain('variants.motionTagTitle');
+    // Their file sits in the app's own data folder, which the user has no
+    // reason to open — the tooltip names the file instead.
+    expect(dropdown).toContain('v._generatedFamily ? v.name : v.path');
   });
 
   it('the pop-out payload carries origin and its dropdown renders the same chip', () => {
     expect(stream).toContain('origin: variantOrigin(v)');
+    // The file name rides along for the same reason: a generated row's
+    // tooltip shows it in place of the app-internal path.
+    expect(stream).toContain('name: v.name');
     expect(popoutRows).not.toBe('');
-    // Unknown origin (anything but the two known values) gets no chip.
-    expect(popoutRows).toContain("v.origin === 'auto' || v.origin === 'manual'");
+    // Unknown origin (anything the chip map does not know) gets no chip.
+    expect(popoutRows).toContain("TAG_KEYS[v.origin] ? v.origin : ''");
     expect(popoutRows).toContain('variant-selector__tag variant-selector__tag--${origin}');
     expect(popoutRows).toContain("'variants.autoTag'");
+    expect(popoutRows).toContain("audio: 'variants.audioTag'");
+    expect(popoutRows).toContain("motion: 'variants.motionTag'");
     // `is-active` had no rule in player.css, so the selected row was never
     // marked in the pop-out. Both dropdowns now share the styled class.
     expect(popoutRows).toContain("item.classList.add('variant-selector__item--active')");
@@ -394,6 +408,10 @@ describe('Variant provenance — auto-detected vs added by hand is visible', () 
   it('the chip is styled once, in the stylesheet both dropdowns load', () => {
     expect(css).toMatch(/\.variant-selector__tag\s*\{/);
     expect(css).toMatch(/\.variant-selector__tag--manual\s*\{/);
+    // The two engine families need their own colours, or the chip that is
+    // supposed to tell them apart looks identical on both rows.
+    expect(css).toMatch(/\.variant-selector__tag--audio\s*\{/);
+    expect(css).toMatch(/\.variant-selector__tag--motion\s*\{/);
     // The label keeps flex:1, so a long name ellipsizes instead of pushing the
     // chip out of the 320px dropdown.
     expect(css).toMatch(/\.variant-selector__item-label\s*\{[^}]*flex:\s*1/);
@@ -404,9 +422,122 @@ describe('Variant provenance — auto-detected vs added by hand is visible', () 
     // that the new ones are actually filled in, not empty strings.
     for (const locale of ['de', 'en', 'es', 'fr', 'ja', 'ko', 'ru', 'zh']) {
       const json = JSON.parse(read(`../../renderer/locales/${locale}.json`));
-      for (const key of ['autoTag', 'manualTag', 'autoTagTitle', 'manualTagTitle']) {
+      for (const key of [
+        'autoTag', 'manualTag', 'autoTagTitle', 'manualTagTitle',
+        'audioTag', 'motionTag', 'audioTagTitle', 'motionTagTitle',
+        'generatedAudioLabel', 'generatedMotionLabel',
+      ]) {
         expect(json.variants[key], `${locale}.json variants.${key}`).toBeTruthy();
       }
+      // The toast for a generated script whose file has left the store.
+      expect(json.toast.generatedScriptGone, `${locale}.json toast.generatedScriptGone`).toBeTruthy();
+      // The library switch that turns the whole thing off.
+      const appearance = json.settingsPanel?.appearance;
+      expect(appearance?.generatedVariantsLabel, `${locale}.json generatedVariantsLabel`).toBeTruthy();
+      expect(appearance?.generatedVariantsHint, `${locale}.json generatedVariantsHint`).toBeTruthy();
     }
+  });
+});
+
+describe('Generated scripts offered as variations', () => {
+  // The generate dialog keeps its scripts in the app's own store folder, so the
+  // library scan never sees them and they have to arrive through the backend
+  // store instead. The rows are rebuilt per video and never persisted, which is
+  // what keeps "turn it off" and "delete it in the generate dialog" clean.
+  const read = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8');
+
+  const app = read('../../renderer/js/app.js');
+  const panel = read('../../renderer/js/generate-panel.js');
+  const settings = read('../../renderer/components/settings-panel.js');
+  const protocol = read('../../renderer/js/player-popout-protocol.js');
+
+  const merge = app.slice(
+    app.indexOf('_updateVariantSelector() {'),
+    app.indexOf('// Resolve active index from stored path'),
+  );
+  const refresh = app.slice(
+    app.indexOf('async _refreshGeneratedVariants() {'),
+    app.indexOf('async _refreshCurrentVariantsFromDisk() {'),
+  );
+  const switchBody = app.slice(
+    app.indexOf('async _switchVariant(index) {'),
+    app.indexOf('_cycleVariant(direction)'),
+  );
+
+  it('generated rows reach the list through the store, never the scan', () => {
+    expect(merge).toContain('const generated = (this._generatedForPath === videoPath ? this._generatedVariants : [])');
+    // Appended last: a generated file that collides with a scanned or
+    // hand-registered row loses, so the row the user already has keeps its chip.
+    expect(merge).toContain('const allVariants = [...baseVariants, ...deduped, ...generated];');
+    expect(merge).toContain('.filter(v => v.path && !seenPaths.has(v.path));');
+  });
+
+  it('the lookup asks the backend for this video and honours the library switch', () => {
+    expect(refresh).not.toBe('');
+    // The same key the settings panel writes — a typo here silently disables
+    // the switch, because the read would just fall back to the default.
+    expect(refresh).toContain("this.settings.get('library.useGeneratedVariants') === false");
+    expect(refresh).toContain('/store?video_path=${encodeURIComponent(videoPath)}');
+    // A newer video or a newer refresh wins the race; nothing stale is applied.
+    expect(refresh).toContain('if (token !== this._generatedToken || this._currentVideoPath !== videoPath) return false;');
+    // The row label names the engine family, which is the whole point.
+    expect(refresh).toContain('variants.generatedAudioLabel');
+    expect(refresh).toContain('variants.generatedMotionLabel');
+  });
+
+  it('a generated row is read straight, without the recovery meant for sidecars', () => {
+    const generatedRead = switchBody.slice(
+      switchBody.indexOf('if (variant._generatedFamily) {'),
+      switchBody.indexOf('const read = await this._readScriptResilient'),
+    );
+    expect(generatedRead).not.toBe('');
+    // That recovery retries the same basename beside the video and then prunes
+    // the entry from manualVariants — neither means anything for a store file,
+    // and the prune would delete a hand-added row that merely shares a name.
+    expect(generatedRead).not.toContain('_readScriptResilient');
+    expect(generatedRead).toContain('content = await window.funsync?.readFunscript?.(variant.path);');
+    // Gone from the store: the row drops out and the previous one stays active.
+    expect(generatedRead).toContain("row.path !== variant.path");
+    expect(generatedRead).toContain("showToast(t('toast.generatedScriptGone'), 'error')");
+    expect(generatedRead).toContain('this._activeVariantIndex = previousIndex;');
+  });
+
+  it('the editor never gets the store file as its save target', () => {
+    // `setFunscriptPath` is the autosave target; pointing it at the store file
+    // would let an edit overwrite what the generate dialog wrote. Exporting a
+    // copy beside the video is the supported way to keep one.
+    expect(switchBody).toContain('this.scriptEditor.setFunscriptPath(variant._generatedFamily ? null : variant.path);');
+  });
+
+  it('the pin star is hidden on generated rows', () => {
+    // The preferred variant is applied when the video loads, before the store
+    // lookup resolves, so a pinned generated row would miss on most plays.
+    // "Save next to video" gives a permanent default instead.
+    expect(app.slice(app.indexOf('_showVariantDropdown() {'), app.indexOf('// Add variation button')))
+      .toContain('if (variants.length > 1 && !v._generatedFamily) {');
+  });
+
+  it('the library switch exists, defaults on, and re-looks-up without a rescan', () => {
+    expect(settings).toContain("'library.useGeneratedVariants': true,");
+    expect(settings).toContain('id="sp-generated-variants"');
+    expect(settings).toContain("this._settings.set('library.useGeneratedVariants', !!generatedVariantsEl.checked);");
+    expect(settings).toContain('if (this.onGeneratedVariantsChanged) this.onGeneratedVariantsChanged(');
+    // app.js reacts by re-looking-up the loaded video — no rescan involved.
+    expect(app).toContain('onGeneratedVariantsChanged: () => {');
+  });
+
+  it('the generate panel tells the player whenever the store changes', () => {
+    // A finished job, a delete (two branches) and an export all change which
+    // variations the player can offer.
+    expect(panel).toContain('this._onStoredChanged = opts.onStoredChanged || (() => {});');
+    expect(panel.match(/this\._onStoredChanged\(\);/g)).toHaveLength(4);
+    // An export lands a file beside the video, which is the scan-side refresh.
+    expect(app).toContain('onStoredChanged: () => {');
+    expect(app).toContain('this._refreshGeneratedVariants();');
+    expect(app).toContain('this._refreshCurrentVariantsFromDisk();');
+  });
+
+  it('the pop-out protocol documents the four origins it can be sent', () => {
+    expect(protocol).toContain("origin: 'auto'|'manual'|'audio'|'motion'|''");
   });
 });

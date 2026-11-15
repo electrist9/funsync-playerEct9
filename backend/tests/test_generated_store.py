@@ -187,6 +187,20 @@ def test_delete_removes_the_record_and_its_file(store_dir, video_file):
     assert os.listdir(store_dir) == ["index.json"]
 
 
+def test_script_path_resolves_a_record_to_its_file(store_dir, video_file):
+    """The route hands these to the player, which addresses variations by path."""
+    store = FileGeneratedScriptStore(store_dir)
+    record = store.save(engine="audio", video=video_identity(video_file), params={}, script=_script(0), duration_ms=1)
+
+    path = store.script_path(record)
+    assert path == os.path.join(store_dir, "clip-audio.funscript")
+    assert os.path.isfile(path)
+    # Listed records resolve the same way as the one save() returned.
+    assert store.script_path(store.list_all()[0]) == path
+    assert store.script_path({}) is None
+    assert store.script_path({"filename": ""}) is None
+
+
 # -- index versions and hostile file names ------------------------------------
 
 def test_legacy_hash_named_scripts_are_discarded(store_dir, video_file):
@@ -226,5 +240,10 @@ def test_a_record_cannot_point_outside_the_store(store_dir, media_dir):
         )
 
     assert store.get_script("abc123") is None
+    # The path a record resolves to stays inside the store, and is not the
+    # file the record tried to point at.
+    assert store.script_path({"filename": "../escape.funscript"}) == os.path.join(
+        store_dir, "escape.funscript"
+    )
     store.delete("abc123")
     assert os.path.isfile(escape)

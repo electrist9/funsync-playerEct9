@@ -36,23 +36,30 @@ export function pickVariantIndexOnLoad(variants, { randomOn = false, preferredLa
  * Where a variant row came from, so the UI can say so out loud.
  *
  * The provenance is already in the data — auto-detected rows carry
- * `_autoDetected: true` from the scan (electron/main.js), and manual rows are
+ * `_autoDetected: true` from the scan (electron/main.js), manual rows are
  * the entries under `settings.library.manualVariants`, which the renderer tags
- * with `_isManual` at merge time (never persisted). Nothing here is stored.
+ * with `_isManual` at merge time, and generated rows carry `_generatedFamily`
+ * ('audio' | 'motion') from the generated-script store (generated-variants.js).
+ * None of the tags are persisted. Nothing here is stored.
  *
  * Precedence: an explicit `_isManual` wins, because that flag is set by the
- * code that knows the row is hand-registered. In practice the two never
- * coexist — the merge dedupes by path and keeps the auto-detected row — but
- * making the tie-break explicit keeps a future caller from guessing.
+ * code that knows the row is hand-registered — including over a generated
+ * script someone registered by hand, which is their call and not ours.
+ * Generated rows beat `_autoDetected`: a store file is never in the library
+ * scan, so the two only meet once a script has also been exported beside the
+ * video, and the store copy is the one that came from generation.
  *
  * @param {object|null} v — one variant row
- * @returns {'auto'|'manual'|''} — '' when the origin is unknown, so the UI
- *   shows no chip rather than a wrong one (the synthetic "current script" row,
- *   or rows from a path that never went through the scan)
+ * @returns {'auto'|'manual'|'audio'|'motion'|''} — '' when the origin is
+ *   unknown, so the UI shows no chip rather than a wrong one (the synthetic
+ *   "current script" row, rows from a path that never went through the scan, or
+ *   a `_generatedFamily` we have no chip for)
  */
 export function variantOrigin(v) {
   if (!v) return '';
   if (v._isManual) return 'manual';
+  const generated = v._generatedFamily;
+  if (generated === 'audio' || generated === 'motion') return generated;
   if (v._autoDetected) return 'auto';
   return '';
 }
