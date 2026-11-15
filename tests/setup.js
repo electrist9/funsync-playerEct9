@@ -254,6 +254,47 @@ if (!globalThis.devicePixelRatio) {
   globalThis.devicePixelRatio = 1;
 }
 
+// --- localStorage ---
+// Node 22+ ships a global `localStorage` that stays `undefined` unless the
+// process was started with `--localstorage-file`, and that accessor shadows
+// the jsdom implementation under vitest's jsdom environment. A test that
+// clears or seeds storage then dies on `undefined.clear()`. Install a plain
+// in-memory Storage only when nothing usable is there, so a real one is
+// never masked on a runtime that provides it.
+let _hasStorage = false;
+try {
+  _hasStorage = !!globalThis.localStorage;
+} catch {
+  // jsdom throws for an opaque origin; treat that as "no storage".
+  _hasStorage = false;
+}
+if (!_hasStorage) {
+  const _store = new Map();
+  const _storage = {
+    getItem: (key) => (_store.has(key) ? _store.get(key) : null),
+    setItem: (key, value) => { _store.set(key, String(value)); },
+    removeItem: (key) => { _store.delete(key); },
+    clear: () => { _store.clear(); },
+    key: (index) => [..._store.keys()][index] ?? null,
+    get length() { return _store.size; },
+  };
+  const _installStorage = (target) => {
+    try {
+      Object.defineProperty(target, 'localStorage', {
+        value: _storage,
+        writable: true,
+        configurable: true,
+        enumerable: true,
+      });
+    } catch {
+      // A runtime that refuses the patch keeps whatever it had; the tests
+      // that need storage will fail loudly instead of silently.
+    }
+  };
+  _installStorage(globalThis);
+  if (typeof window !== 'undefined' && window !== globalThis) _installStorage(window);
+}
+
 // --- crypto.randomUUID ---
 if (!crypto.randomUUID) {
   crypto.randomUUID = () => {
