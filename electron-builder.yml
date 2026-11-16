@@ -1,5 +1,7 @@
-appId: com.funsync.player
-productName: FunSync Player
+# Ect9 fork: distinct appId + productName so this build never collides with
+# (or upgrades over) an installed upstream FunSync Player on the same machine.
+appId: com.funsync.player.ect9
+productName: FunSync Player Ect9
 copyright: Copyright © 2026
 
 # serialport's native binding (@serialport/bindings-cpp) ships N-API prebuilds
@@ -24,30 +26,50 @@ files:
   - package.json
 
 extraResources:
-  - from: backend-dist/
+  # PyInstaller onedir output folder (funsync-backend.exe + _internal/).
+  # Its CONTENTS land directly in resources/backend/, so python-bridge's
+  # `resources/backend/funsync-backend.exe` path is unchanged from onefile.
+  - from: backend-dist/funsync-backend
     to: backend
     filter:
       - "**/*"
 
+# Injects the FunSync-portable.txt marker (next to the exe) into the win zip
+# artifact — the only artifact this fork ships. See scripts/after-all-artifact-build.js.
+afterAllArtifactBuild: scripts/after-all-artifact-build.js
+
 win:
   icon: assets/icons/icon.ico
+  # The exe name ONLY (productName keeps its space for Start menu / shortcuts).
+  executableName: FunSyncPlayerEct9
+  # Ect9 fork ships the portable zip ONLY — no NSIS installer. The zip is a
+  # plain compressed copy of the onedir win-unpacked folder (the marker file
+  # is injected by afterAllArtifactBuild), and main.js opts it into portable
+  # data (data/ next to the exe) via FunSync-portable.txt. There is NO
+  # single-exe `portable` target: electron-builder's portable .exe is a
+  # self-extractor that unpacks to a per-build UUID temp dir (pinning
+  # unpackDirName makes two running instances share a temp dir and the
+  # second one's exit corrupts the first — SCOPE-portable-install.md §7),
+  # which is neither a real onedir layout nor AV-friendly.
   target:
-    - target: nsis
+    - target: zip
       arch: x64
-    # Portable: a single self-extracting .exe that runs from a USB/external
-    # disk and keeps its data in a `data/` folder next to itself (the app
-    # detects PORTABLE_EXECUTABLE_DIR — see main.js). No installer, no
-    # auto-update. unpackDirName is intentionally LEFT AT DEFAULT (per-build
-    # UUID): pinning it makes two running instances share a temp dir and the
-    # second one's exit corrupts the first. See SCOPE-portable-install.md §7.
-    - target: portable
-      arch: x64
-  extraFiles:
+  # ffmpeg beside the backend exe (resources/backend/ffmpeg.exe), which is
+  # exactly where services/ffmpeg.py's frozen `_find_binary` branch looks
+  # (dirname(sys.executable)). Previously these sat at the content root
+  # (resources/ffmpeg/), which the backend never resolved — it silently
+  # fell back to PATH.
+  extraResources:
     - from: ffmpeg/
-      to: ffmpeg
+      to: backend
       filter:
         - ffmpeg.exe
         - ffprobe.exe
+  # Dash-based, space-free name (GitHub rewrites spaces in asset names).
+  # `-win-x64` marks the platform. NOTE: electron-builder 25's schema has NO
+  # top-level `zip:` section — the zip target has no dedicated config block —
+  # so the zip's name lives here at the win level.
+  artifactName: FunSyncPlayerEct9-${version}-win-x64.${ext}
 
 linux:
   icon: assets/icons/icon.png
@@ -67,39 +89,13 @@ linux:
   desktop:
     Name: FunSync Player
     Comment: Video player with device integration for synchronized funscript playback
-  extraFiles:
+  # Same as Windows: ffmpeg next to the backend exe so the frozen
+  # `_find_binary` branch (dirname(sys.executable)) finds it.
+  extraResources:
     - from: ffmpeg-linux/
-      to: ffmpeg
+      to: backend
       filter:
         - ffmpeg
         - ffprobe
-
-nsis:
-  # Dash-based, space-free artifact name. The default derives from the
-  # space-containing productName ("FunSync Player Setup X.Y.Z.exe"); GitHub
-  # then rewrites spaces → dots on upload ("FunSync.Player.Setup..."), but
-  # electron-builder writes latest.yml with spaces → DASHES — so the two never
-  # matched and the auto-update download 404'd. Naming the file with dashes up
-  # front makes the file, latest.yml, and the GitHub asset all identical.
-  artifactName: FunSync-Player-Setup-${version}.${ext}
-  # Assisted installer (NOT oneClick) — shows a wizard with a destination
-  # folder picker and a "create desktop shortcut" checkbox. Default install
-  # path stays per-user (`%LOCALAPPDATA%\Programs\funsync-player`); the user
-  # can pick another path and NSIS will prompt for elevation if needed.
-  # Auto-updates remain silent because `auto-updater.js` calls
-  # `quitAndInstall(true, true)` which passes the `/S` NSIS flag.
-  oneClick: false
-  perMachine: false
-  allowToChangeInstallationDirectory: true
-  allowElevation: true
-  runAfterFinish: true
-  createDesktopShortcut: true        # default state of the wizard checkbox
-  createStartMenuShortcut: true
-  uninstallDisplayName: FunSync Player
-
-publish:
-  provider: github
-  owner: DaveMakesWaves
-  repo: funsync-player
 
 asar: true

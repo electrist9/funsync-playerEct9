@@ -29,7 +29,7 @@ FunSync Player は、ローカル（および Web 上）の動画 — 特に VR 
 | デバイス SDK | @ohdoki/handy-sdk ^2.3.4 / buttplug ^4.0.1 / @xsense/autoblow-sdk ^2.1.1 / serialport ^13 |
 | i18n | intl-messageformat ^11.2.6（ICU MessageFormat）、8 ロケール |
 | テスト | vitest ^4.1.4（jsdom、約 188 テストファイル）、Playwright e2e、pytest |
-| 配布 | electron-builder ^25.1.8（Win NSIS + portable、Linux AppImage）、GitHub Actions |
+| 配布 | electron-builder ^25.1.8（Win NSIS + zip ポータブル、Linux AppImage）、GitHub Actions |
 
 ---
 
@@ -83,7 +83,7 @@ FunSync Player は、ローカル（および Web 上）の動画 — 特に VR 
 ```
 funsync-player/
 ├── package.json              # entry: electron/main.js
-├── electron-builder.yml      # asar, extraResources(backend-dist→backend), ffmpeg 同梱
+├── electron-builder.yml      # asar, extraResources(backend-dist/funsync-backend→backend, ffmpeg→backend), zip マーカー注入フック
 ├── vitest.config.js          # jsdom, tests/unit/**, retry:2
 ├── playwright.config.js      # e2e
 ├── pytest.ini                # backend テスト
@@ -495,21 +495,23 @@ device-transform-stack.js ── 共通変換順: [1]Range Extender → [2]Inver
 
 ## 10. ビルド・配布・CI/CD
 
-### scripts/build.js（138 行）— 4 段階ガード
+### scripts/build.js（159 行）— 4 段階ガード
 
 1. vitest + pytest 実行
-2. PyInstaller（`funsync-backend.spec`）→ **2b: バックエンド exe 欠損 or 1,000,000 バイト未満で FATAL**（実事故 2026-08-13）→ **2c: fetch-twemoji.mjs、SVG 100 個未満で FATAL**
+2. PyInstaller（`funsync-backend.spec`、**onedir**）→ **2b: `backend-dist/funsync-backend/` の exe 欠損 or 1,000,000 バイト未満 or `_internal/` 欠損で FATAL**（実事故 2026-08-13）→ **2c: fetch-twemoji.mjs、SVG 100 個未満で FATAL**
 3. electron-builder
-4. **dist/{win,linux}-unpacked/resources/backend の欠損/空で FATAL**
+4. **dist/{win,linux}-unpacked/resources/backend に backend exe + `_internal/` が無ければ FATAL**
 
-### electron-builder.yml（105 行）
+### electron-builder.yml
 
 - `asar:true`、`npmRebuild:false`、`asarUnpack: ["**/*.node"]`（serialport 等のネイティブ）
-- `extraResources: backend-dist → backend`（PyInstaller 出力をリソースへ）
-- win: NSIS + portable（x64）+ `ffmpeg/` extraFiles / linux: AppImage + `ffmpeg-linux/`
+- `extraResources: backend-dist/funsync-backend → backend`（PyInstaller onedir の**中身**が resources/backend/ 直下に。python-bridge の `resources/backend/funsync-backend.exe` は無変更）
+- win: NSIS + **zip**（x64）/ linux: AppImage。`afterAllArtifactBuild: scripts/after-all-artifact-build.js` が **zip のみに** `FunSync-portable.txt` を注入（NSIS に入れるとインストール版がポータブルモードになり自動更新が消えるため）
+- ffmpeg/ffprobe は win・linux とも `extraResources` で `to: backend`（`_find_binary` の frozen 分岐 = `dirname(sys.executable)` と一致。旧 `extraFiles to: ffmpeg` は backend から見えず PATH フォールバックしていた潜在バグ）
+- zip の artifactName: `FunSync-Player-${version}-win-x64.zip`（latest.yml なし → IS_PORTABLE で自動更新スキップ済み）
 - publish: GitHub Releases
 
-### .github/workflows/build.yml（206 行）
+### .github/workflows/build.yml（227 行）
 
 tag `v*` で起動。win+linux matrix（`fail-fast:false`）、Node 22 + Python 3.11、vitest → pytest → PyInstaller → exe≥1MB ガード → twemoji ガード → electron-builder → `softprops/action-gh-release@v2`（tag に `-` を含むと prerelease）。
 

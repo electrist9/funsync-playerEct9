@@ -38,7 +38,7 @@ describe('formatDiagnostics', () => {
 
   it('handles missing fields gracefully', () => {
     const out = formatDiagnostics({});
-    expect(out).toContain('FunSync Player ?');
+    expect(out).toContain('FunSync Player Ect9 ?');
     expect(out).toContain('Backend: not running');
   });
 
@@ -97,7 +97,7 @@ describe('buildIssueUrl', () => {
       steps: '',
       diagnostics: 'D',
     });
-    expect(url).toMatch(/^https:\/\/github\.com\/DaveMakesWaves\/funsync-player\/issues\/new\?/);
+    expect(url).toMatch(/^https:\/\/github\.com\/electrist9\/funsync-playerEct9\/issues\/new\?/);
   });
 
   it('sets labels=bug and does NOT set template (would 500 if template file missing on default branch)', () => {

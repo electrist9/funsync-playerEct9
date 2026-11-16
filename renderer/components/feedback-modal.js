@@ -26,7 +26,7 @@ import { showToast } from '../js/toast.js';
 import { t } from '../js/i18n.js';
 import { eventBus } from '../js/event-bus.js';
 
-const REPO = 'DaveMakesWaves/funsync-player';
+const REPO = 'electrist9/funsync-playerEct9';
 const ISSUE_URL_BUDGET = 7500;
 const LOG_TAIL_LINES = 80;
 
@@ -46,7 +46,7 @@ export function formatDiagnostics(d) {
   const runtime = d.runtime || {};
   const backend = d.backend || {};
   const devices = d.devices || {};
-  lines.push(`${app.name || 'FunSync Player'} ${app.version || '?'}`);
+  lines.push(`${app.name || 'FunSync Player Ect9'} ${app.version || '?'}`);
   lines.push(`OS: ${platform.os || '?'} ${platform.release || ''} (${platform.arch || '?'})`);
   lines.push(`Electron: ${runtime.electron || '?'}  Chrome: ${runtime.chrome || '?'}  Node: ${runtime.node || '?'}`);
   lines.push(`Backend: ${backend.running ? 'running' : 'not running'} (port ${backend.port || '?'})`);

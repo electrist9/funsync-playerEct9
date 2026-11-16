@@ -2204,10 +2204,10 @@ export class SettingsPanel {
       openKeyboardHelp(t('kbd.playerTitle'), getPlayerShortcutGroups());
     });
     panel.querySelector('#sp-about-github')?.addEventListener('click', () => {
-      window.funsync.openExternal('https://github.com/DaveMakesWaves/funsync-player');
+      window.funsync.openExternal('https://github.com/electrist9/funsync-playerEct9');
     });
     panel.querySelector('#sp-about-license')?.addEventListener('click', () => {
-      window.funsync.openExternal('https://github.com/DaveMakesWaves/funsync-player/blob/main/LICENSE');
+      window.funsync.openExternal('https://github.com/electrist9/funsync-playerEct9/blob/main/LICENSE');
     });
   }
 

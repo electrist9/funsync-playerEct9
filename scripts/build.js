@@ -61,9 +61,13 @@ run(`"${venvPython}" -m PyInstaller --distpath "${BACKEND_DIST}" --workpath "${p
 // 4wen hit exactly that shape on 2026-08-13 (`spawn python ENOENT`). His was
 // most likely antivirus removing the file post-install, but the build had no
 // way of ruling itself out, which is what this closes.
+//
+// onedir layout: the exe lives in backend-dist/funsync-backend/ with its
+// binaries/datas in the sibling `_internal/` — both must be present.
 step('Step 2b: Verifying the backend executable was produced');
+const backendDir = path.join(BACKEND_DIST, 'funsync-backend');
 const backendExe = path.join(
-  BACKEND_DIST,
+  backendDir,
   process.platform === 'win32' ? 'funsync-backend.exe' : 'funsync-backend',
 );
 if (!fs.existsSync(backendExe)) {
@@ -85,7 +89,14 @@ if (exeSize < 1_000_000) {
   console.error(`\nFATAL: ${backendExe} is only ${exeSize} bytes — that is not a real build.`);
   process.exit(1);
 }
-console.log(`OK: ${path.basename(backendExe)} (${(exeSize / 1024 / 1024).toFixed(1)} MB)`);
+const internalDir = path.join(backendDir, '_internal');
+if (!fs.existsSync(internalDir)) {
+  console.error(`\nFATAL: ${internalDir} missing — the onedir bundle is incomplete`);
+  console.error('(exe without _internal/ cannot start; this looks like a onefile');
+  console.error('build or a half-written dist). Do not package this.');
+  process.exit(1);
+}
+console.log(`OK: ${path.basename(backendExe)} (${(exeSize / 1024 / 1024).toFixed(1)} MB) + _internal/`);
 
 // 2c. Fetch the Twemoji artwork for category icons.
 //
@@ -127,12 +138,22 @@ if (shipped.length === 0) {
   process.exit(1);
 }
 for (const dir of shipped) {
-  const files = fs.readdirSync(dir);
-  if (files.length === 0) {
-    console.error(`\nFATAL: ${dir} is EMPTY. The installer would ship without a backend.`);
+  // onedir: resources/backend/ must hold the exe AND _internal/ (the
+  // extraResources `from` is the onedir folder, so its contents — not the
+  // folder itself — land here). A non-empty dir that is missing either one
+  // is still a dead backend.
+  const isWin = path.basename(path.dirname(path.dirname(dir))) === 'win-unpacked';
+  const exe = path.join(dir, isWin ? 'funsync-backend.exe' : 'funsync-backend');
+  if (!fs.existsSync(exe)) {
+    console.error(`\nFATAL: ${exe} missing — the packaged app would show "Backend program is missing".`);
     process.exit(1);
   }
-  console.log(`OK: ${path.relative(ROOT, dir)} contains ${files.length} file(s)`);
+  if (!fs.existsSync(path.join(dir, '_internal'))) {
+    console.error(`\nFATAL: ${path.join(dir, '_internal')} missing — onedir bundle shipped incomplete.`);
+    process.exit(1);
+  }
+  const files = fs.readdirSync(dir);
+  console.log(`OK: ${path.relative(ROOT, dir)} contains ${files.length} file(s) incl. backend exe + _internal/`);
 }
 
 step('Build complete! Check the dist/ folder.');

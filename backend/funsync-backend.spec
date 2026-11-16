@@ -61,12 +61,24 @@ a = Analysis(
 
 pyz = PYZ(a.pure)
 
+# onedir (folder) build, NOT onefile. Reasons:
+# - onefile self-extracts the whole bundle to a fresh %TEMP%\_MEIxxxx on
+#   EVERY launch — slow start, and that extract-and-run shape is exactly
+#   what Defender's ML model flags (the Program:Win32/Wacapew.A!ml false
+#   positives we already fight via UPX-off);
+# - the Windows portable distribution is a plain zip of this folder, so
+#   the onedir layout IS the portable layout — one packaging mode, no
+#   self-extracting `portable` target unpacking to a per-build UUID temp
+#   dir (two instances sharing a pinned unpackDirName corrupt each other
+#   — SCOPE-portable-install.md §7);
+# - PyInstaller 6.x onedir puts everything except the exe in `_internal/`
+#   next to it, and `sys._MEIPASS` points there — main.py's datas lookups
+#   (web-remote, locales) work unchanged.
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.datas,
     [],
+    exclude_binaries=True,
     name='funsync-backend',
     debug=False,
     bootloader_ignore_signals=False,
@@ -80,11 +92,27 @@ exe = EXE(
     # this is the no-cost mitigation while we wait on that.
     upx=False,
     upx_exclude=[],
-    runtime_tmpdir=None,
     console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+)
+
+# The binaries/datas onefile used to embed in the exe now collect into the
+# folder beside it: backend-dist/funsync-backend/{funsync-backend.exe,_internal/}.
+# electron-builder copies this folder's CONTENTS to resources/backend/, so
+# python-bridge's `resources/backend/funsync-backend.exe` path is unchanged,
+# and ffmpeg.exe/ffprobe.exe land in the same folder via extraResources —
+# which is what services/ffmpeg.py's `_find_binary` frozen branch
+# (dirname(sys.executable)) resolves against.
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.datas,
+    strip=False,
+    upx=False,
+    upx_exclude=[],
+    name='funsync-backend',
 )

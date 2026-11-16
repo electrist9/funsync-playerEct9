@@ -34,7 +34,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdirSync, writeFileSync, copyFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
-const REPO = process.env.RELEASE_STATS_REPO || 'DaveMakesWaves/funsync-player';
+const REPO = process.env.RELEASE_STATS_REPO || 'electrist9/funsync-playerEct9';
 const OUTDIR = process.argv[2] || 'notes/release-stats';
 const TODAY = new Date().toISOString().slice(0, 10);
 const OUTFILE = join(OUTDIR, `release-stats-${TODAY}.json`);

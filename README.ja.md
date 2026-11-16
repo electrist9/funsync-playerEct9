@@ -4,7 +4,7 @@
 
 funscript 再生向けのデバイス同期機能を備えた、ローカルデスクトップ動画プレイヤー。Electron で構築。Windows と Linux に対応。
 
-**[最新リリースをダウンロード](https://github.com/DaveMakesWaves/funsync-player/releases/latest)**
+**[最新リリースをダウンロード](https://github.com/electrist9/funsync-playerEct9/releases/latest)**
 
 ---
 
@@ -114,15 +114,13 @@ funscript 再生向けのデバイス同期機能を備えた、ローカルデ�
 
 ## インストール
 
-1. [Releases ページ](https://github.com/DaveMakesWaves/funsync-player/releases/latest)から最新インストーラーをダウンロード
-   - **Windows**: `FunSync Player Setup X.Y.Z.exe`
-   - **Linux**: `FunSync-Player-X.Y.Z.AppImage`
-2. インストーラー / AppImage を実行
-   - Windows: 管理者権限不要、ユーザー単位でインストール
-   - Linux: AppImage に `chmod +x` して実行
+1. [Releases ページ](https://github.com/electrist9/funsync-playerEct9/releases/latest)から最新のポータブル zip をダウンロード
+   - **Windows x64**: `FunSyncPlayerEct9-X.Y.Z-win-x64.zip`（インストーラーなしのポータブル版）
+2. zip を解凍して `FunSyncPlayerEct9.exe` を実行
+   - 初回起動時は未署名のため SmartScreen が警告する場合があります —「詳細情報」→「実行」
 3. アプリが自動で起動
 
-アップデートは起動時にチェックされます。新バージョンがある場合はトーストが表示されます — Download をクリックし、準備ができたら Restart Now を押してください。
+ライブラリ・設定・ログは exe と同じフォルダの `data/` に保存されます（ポータブルモード）。このフォークでは自動アップデートは無効です。新バージョンは Releases ページから zip を入手してください。
 
 ---
 

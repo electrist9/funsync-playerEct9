@@ -401,7 +401,7 @@ function loadVideo({ src, timeMs, autoplay, title }) {
   _hasVideo = true;
   if (loadingEl) loadingEl.hidden = true;
   containerEl.hidden = false;
-  if (title) document.title = `FunSync Player — ${title}`;
+  if (title) document.title = `FunSync Player Ect9 — ${title}`;
   showSpinner(true); // until the new video can actually play
   videoPlayer.loadSource(src, title || '');
   progressBar?.setVideoSource(src);

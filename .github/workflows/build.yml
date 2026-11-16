@@ -11,18 +11,15 @@ permissions:
 jobs:
   build:
     strategy:
-      # Don't cancel a healthy Windows build because Linux had a network
-      # blip. Each OS publishes its own artifact independently — the
-      # release job only requires both to have succeeded.
       fail-fast: false
+      # Ect9 fork ships Windows portable-zip ONLY — the upstream Linux
+      # (AppImage) matrix entry was removed. The linux: section in
+      # electron-builder.yml is kept inert for reference.
       matrix:
         include:
           - os: windows-latest
             target: win
             python: python
-          - os: ubuntu-latest
-            target: linux
-            python: python3
 
     runs-on: ${{ matrix.os }}
 
@@ -70,8 +67,8 @@ jobs:
       - name: Verify backend executable was produced
         shell: bash
         run: |
-          EXE="backend-dist/funsync-backend"
-          [ "${{ matrix.os }}" = "windows-latest" ] && EXE="backend-dist/funsync-backend.exe"
+          EXE="backend-dist/funsync-backend/funsync-backend"
+          [ "${{ matrix.os }}" = "windows-latest" ] && EXE="backend-dist/funsync-backend/funsync-backend.exe"
           if [ ! -f "$EXE" ]; then
             echo "FATAL: $EXE missing after a successful PyInstaller run."
             echo "Contents of backend-dist/:"
@@ -83,7 +80,13 @@ jobs:
             echo "FATAL: $EXE is only $SIZE bytes — not a real build."
             exit 1
           fi
-          echo "OK: $EXE ($SIZE bytes)"
+          # onedir: the exe is a thin bootloader; everything else lives in
+          # the sibling _internal/. An exe without it cannot start.
+          if [ ! -d "backend-dist/funsync-backend/_internal" ]; then
+            echo "FATAL: backend-dist/funsync-backend/_internal missing — incomplete onedir bundle."
+            exit 1
+          fi
+          echo "OK: $EXE ($SIZE bytes) + _internal/"
 
       # Category-icon artwork (Twemoji, ~737 SVGs / 2.7 MB). Gitignored and
       # fetched here, same treatment as ffmpeg below — it is generated
@@ -133,20 +136,16 @@ jobs:
           chmod +x ffmpeg-linux/ffmpeg ffmpeg-linux/ffprobe
 
       - name: Build Electron app
-        # --publish never: electron-builder ONLY builds here; it must NOT
-        # create a GitHub release. electron-builder.yml has `publish: github`
-        # (needed so electron-updater knows where to look for updates), and
-        # on a tag build with a token present electron-builder would otherwise
-        # auto-create a DRAFT release for the version. That draft then collides
-        # with the `release` job's softprops/action-gh-release on the same
-        # tag_name → "Validation Failed: already_exists" → "Too many retries".
-        # Two publishers, one tag = the bug that broke every 0.8.0-experimental
-        # release. Publishing is centralized in the `release` job below.
+        # --publish never: electron-builder ONLY builds here. The Ect9 fork
+        # removed the `publish:` block entirely (auto-update is disabled), so
+        # this flag is belt-and-braces insurance against a stray publish /
+        # draft-release creation on tag builds.
         run: npx electron-builder --config electron-builder.yml --${{ matrix.target }} --publish never
 
       # And prove it survived INTO the package. The step above can succeed
       # with an empty extraResources copy, so verifying the source file
-      # existed is not the same as verifying it shipped.
+      # existed is not the same as verifying it shipped. onedir: the exe
+      # AND the sibling _internal/ must both be in resources/backend/.
       - name: Verify backend shipped inside the package
         shell: bash
         run: |
@@ -158,7 +157,19 @@ jobs:
               echo "FATAL: $DIR is EMPTY — this installer has no backend."
               exit 1
             fi
-            echo "OK: $DIR contains $COUNT file(s)"
+            case "$DIR" in
+              *win-unpacked*) BEXE="$DIR/funsync-backend.exe" ;;
+              *)              BEXE="$DIR/funsync-backend" ;;
+            esac
+            if [ ! -f "$BEXE" ]; then
+              echo "FATAL: $BEXE missing in $DIR — packaged app would show 'Backend program is missing'."
+              exit 1
+            fi
+            if [ ! -d "$DIR/_internal" ]; then
+              echo "FATAL: $DIR/_internal missing — incomplete onedir bundle shipped."
+              exit 1
+            fi
+            echo "OK: $DIR contains $COUNT file(s) incl. backend exe + _internal/"
             FOUND=1
           done
           if [ "$FOUND" -eq 0 ]; then
@@ -174,6 +185,7 @@ jobs:
           name: funsync-${{ matrix.target }}
           path: |
             dist/*.exe
+            dist/*.zip
             dist/*.AppImage
             dist/*.yml
             dist/*.blockmap
@@ -191,12 +203,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            artifacts/funsync-win/*.exe
+            artifacts/funsync-win/*.zip
             artifacts/funsync-win/*.blockmap
-            artifacts/funsync-win/latest.yml
-            artifacts/funsync-linux/*.AppImage
-            artifacts/funsync-linux/*.blockmap
-            artifacts/funsync-linux/latest-linux.yml
           draft: false
           # Auto-detect pre-release from the tag name. Any semver suffix
           # (e.g. v0.8.0-experimental.0, v1.0.0-rc.1) marks the GitHub

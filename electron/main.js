@@ -3,10 +3,13 @@ const path = require('path');
 const fs = require('fs');
 
 // --- Portable mode (run from a USB / external disk) -------------------------
-// When launched from electron-builder's `portable` target, PORTABLE_EXECUTABLE_DIR
-// points at the folder holding the user-visible .exe (the app itself runs from a
-// temp extraction). We also honour a `data/` folder or a `FunSync-portable.txt`
-// marker next to the exe so an unpacked/zip build can opt in (VS Code convention).
+// PORTABLE_EXECUTABLE_DIR is set by dev launchers (start-funsync.bat) and by
+// the legacy single-exe `portable` target (removed in favour of the zip). We
+// also honour a `data/` folder or a `FunSync-portable.txt` marker next to the
+// exe — the win zip artifact ships the marker beside the exe (see
+// scripts/after-all-artifact-build.js), so an unzipped folder opts in
+// automatically (VS Code convention). The NSIS install carries no marker and
+// therefore keeps default userData + auto-update.
 //
 // In portable mode ALL durable data — config, logs, backups, the (plaintext)
 // Handy key — lives in a `data/` folder next to the exe instead of %LOCALAPPDATA%,
@@ -56,6 +59,12 @@ const store = require('./store');
 const dataBackup = require('./data-backup');
 const dataMigration = require('./data-migration');
 const { initAutoUpdater, checkForUpdates, downloadUpdate, quitAndInstall } = require('./auto-updater');
+// Ect9 fork: auto-update is disabled outright. The upstream GitHub Releases
+// feed (DaveMakesWaves/funsync-player) would serve the UPSTREAM installer —
+// never wanted here. The portable zip already skips the updater via
+// IS_PORTABLE; this flag is the belt-and-braces gate for any non-portable
+// launch too. Flip to true only if this fork grows its own release feed.
+const AUTO_UPDATE_ENABLED = false;
 const { EroScriptsAPI } = require('./eroscripts-api');
 const editorPopout = require('./editor-popout-window');
 const audiencePopout = require('./audience-popout-window');
@@ -241,10 +250,10 @@ function createWindow() {
   mainWindow.once('ready-to-show', () => {
     splash.destroy();
     mainWindow.show();
-    // electron-builder's auto-updater doesn't support the portable target
-    // (no latest.yml is published for it), so skip it entirely in portable
-    // mode — the user updates by replacing the exe. See SCOPE-portable-install.
-    if (app.isPackaged && !IS_PORTABLE) {
+    // The auto-updater has no update metadata for portable builds (the zip
+    // artifact ships no latest.yml), so skip it entirely in portable mode —
+    // the user updates by replacing the folder. See SCOPE-portable-install.
+    if (app.isPackaged && !IS_PORTABLE && AUTO_UPDATE_ENABLED) {
       initAutoUpdater(mainWindow);
     }
   });
@@ -568,7 +577,7 @@ ipcMain.handle('collect-diagnostics', async (_event, rendererState) => {
   const health = getHealthState?.() || {};
   return {
     app: {
-      name: 'FunSync Player',
+      name: 'FunSync Player Ect9',
       version: app.getVersion(),
     },
     platform: {
@@ -2472,7 +2481,7 @@ ipcMain.handle('autoblow-latency', async () => {
 // --- IPC Handlers: Auto-Updater ---
 
 ipcMain.handle('updater-check', () => {
-  if (IS_PORTABLE) return; // no auto-update for portable builds
+  if (IS_PORTABLE || !AUTO_UPDATE_ENABLED) return; // Ect9: no auto-update at all
   checkForUpdates();
 });
 

