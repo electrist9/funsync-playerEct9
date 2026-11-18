@@ -829,6 +829,19 @@
   color: var(--badge-info);
 }
 
+/* Generated scripts are the backend store's, not a sidecar match. Same colors
+   the player's variation chips use for the two families, so a video counted as
+   「一致あり」 because of a generated script reads that way in the library too.
+   These rules cover the list-view inline badges as well — those carry the same
+   modifier classes. */
+.library__funscript-badge--audio {
+  color: var(--badge-info);
+}
+
+.library__funscript-badge--motion {
+  color: var(--badge-multi);
+}
+
 .library__subtitle-badge--auto {
   color: var(--state-warning);
 }

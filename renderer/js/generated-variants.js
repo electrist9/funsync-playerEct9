@@ -65,3 +65,46 @@ export function generatedVariantRows(items, labelFor) {
   }
   return rows;
 }
+
+/**
+ * The newest generated script per video, keyed for a join against the library.
+ *
+ * The library's 「一致あり」 filter asks whether a video has a script at all.
+ * Generated scripts live in the store folder, which the scan never walks, so
+ * the scan alone answers "no" for a video whose only script was generated. The
+ * store hands over every record through `GET /api/generate/store` (no
+ * `video_path` = all records); this turns them into a lookup the library joins
+ * against its own video paths.
+ *
+ * `list_all()` is newest-first, so the first record seen for a video is the
+ * newest — later records for the same video are older and skipped. Records
+ * without a `video_path` cannot be joined, and records without a `path` cannot
+ * be loaded (the route drops gone files, but an older backend sends no path).
+ *
+ * Unlike `generatedVariantRows`, an unknown engine family is KEPT here: the
+ * library only needs to know that a script exists, and a family it cannot
+ * label still plays — the badge just falls back to the plain auto marker.
+ *
+ * @param items `data.items` from GET /api/generate/store; unknown keys ignored
+ * @param normalizePath (path) => string, canonical key for the join
+ * @returns Map<normalised video path, { scriptId, path, family, filename }>
+ */
+export function generatedScriptsByVideo(items, normalizePath) {
+  if (!Array.isArray(items)) return new Map();
+  const normalize = typeof normalizePath === 'function' ? normalizePath : (p) => String(p ?? '');
+  const byVideo = new Map();
+  for (const item of items) {
+    const videoPath = typeof item?.video_path === 'string' ? item.video_path : '';
+    const path = typeof item?.path === 'string' ? item.path : '';
+    if (!videoPath || !path) continue;
+    const key = normalize(videoPath);
+    if (!key || byVideo.has(key)) continue; // newest-first ⇒ first wins
+    byVideo.set(key, {
+      scriptId: typeof item.id === 'string' ? item.id : '',
+      path,
+      family: engineFamilyOf(item),
+      filename: typeof item.filename === 'string' ? item.filename : '',
+    });
+  }
+  return byVideo;
+}

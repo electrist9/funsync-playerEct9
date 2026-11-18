@@ -1,9 +1,9 @@
 # 仕様書: 生成スクリプトのバリエーション自動追加
 
-- 版: v1.0（確定）
+- 版: v1.1（確定）
 - 状態: 承認済み・実装済み
-- 対象: `backend/services/generated_store.py` / `backend/routes/generate.py` / `renderer/js/generated-variants.js` / `renderer/js/app.js` / `renderer/player-popout.js`
-- 日付: 2026-11-15
+- 対象: `backend/services/generated_store.py` / `backend/routes/generate.py` / `renderer/js/generated-variants.js` / `renderer/js/app.js` / `renderer/player-popout.js` / `renderer/components/library.js` / `renderer/styles/library.css`
+- 日付: 2026-11-15（v1.0）/ 2026-11-18（v1.1 追補: §12）
 
 ## 1. 目的と現状のギャップ
 
@@ -59,7 +59,7 @@
 
 | 制限 | 内容 |
 |---|---|
-| スマホ / Web リモート | 一覧はスキャン由来の `video.variants` を見ている（`backend/web-remote/app.js`）。ストア由来の生成行は出ない |
+| スマホ / Web リモート | 一覧はスキャン由来の `video.variants` を見ている（`backend/web-remote/app.js`）。ストア由来の生成行は出ない。ただし登録ペイロードの `funscriptPath` には生成スクリプトが乗るようになったので、一致ステータスとスクリプト本体は渡る（§12） |
 | ライブラリカードの関連付けメニュー | 対象外。変更はプレイヤーのドロップダウンとポップアウトのみ |
 | ★ピン | 生成行では非表示（§6）。ランダム再生は照合が間に合えば生成行を選ぶ |
 | 再生成でファイル名が変わる | ストアは衝突時にファイル名へハッシュや連番を足すため、再生成でアクティブ行のパスが古くなることがある。次の読み直しで正しい行に載り替わる |
@@ -71,6 +71,7 @@
 - `tests/unit/generated-variants.test.js`: 行の成形、捨てられる条件（id / path / 未知のファミリー）、ファミリーごと 1 行、パス重複、`name` のフォールバック。
 - `tests/unit/variant-select.test.js`: `variantOrigin` の audio / motion と優先順位。
 - `tests/unit/variants.test.js`: ソース形状（マージ、照合、`_readScriptResilient` を通さない、エディタへパスを渡さない、★非表示、設定、`onStoredChanged` の 4 箇所、プロトコルのコメント）と、8 ロケールすべてのキー・CSS ルール。
+- `tests/unit/library-generated-scripts.test.js`（v1.1）: 注釈（手動・サイドカーが勝つ／ストアから消えたら戻る／パスが動いたら新しい方を残す）、正規化パスでの結合、バッジの分岐、設定オフでは取得しない、失敗時の再試行は 1 連鎖・上限 2 回、空ストアは失敗ではない。
 
 ## 10. ロールバック
 
@@ -89,3 +90,59 @@
 | エディタ | 生成行にはパスを渡さない（自動保存先になるため） |
 | ★ピン | 生成行では非表示。恒久的な既定はサイドカー書き出しで実現する |
 | スマホ / Web リモート | 対応しない（既知の制限） |
+
+## 12. 追補（v1.1）: ライブラリの「一致あり」に生成スクリプトを反映する
+
+### 12.1 不具合
+
+生成スクリプト**しか**持たない動画が、ライブラリの一致ステータスで「一致あり」に選ばれない（例: `えなこ-ZZZZ__dj pawa-orgasm (hardstyle) [MB0CkGfoGoY]-audio.funscript` に対して動画は `えなこ-ZZZZ__dj pawa-orgasm (hardstyle) [MB0CkGfoGoY].mp4`）。原因は §1 と同じで、`scan-directory` がストアフォルダを歩かないため動画レコードが `hasFunscript: false` のままになる。フィルター（`v.hasFunscript`）はスキャンの答えを見ているので、ストアの存在を知らない。
+
+### 12.2 方針: フィルターを飾るのではなく、レコードに注釈する
+
+`_applyGeneratedScripts()` が動画レコードへ書き込む:
+
+- `hasFunscript = true`
+- `funscriptPath =` ストアの絶対パス
+- `_generatedScript = { scriptId, path, family, filename }`（由来の印。永続化しない）
+
+手動関連付けが既に「動画フォルダ外のパスを `funscriptPath` に入れる」前例なので、形は同じ。これで「一致あり」のカードが実際に動く: 再生はそのまま読み、ヒートマップと速度統計もストアのパスで計算され、プレイヤーのドロップダウンは同じパスの生成行をアクティブとして光る。フラグだけ足す案（`hasGeneratedScript`）は、再生時に自動読み込みが app.js に無いので「一致ありなのにスクリプトなし」のままになり却下。
+
+### 12.3 結合
+
+- `GET /api/generate/store`（`video_path` なし）で**全件**を取り、`generatedScriptsByVideo(items, canonicalPath)`（`renderer/js/generated-variants.js`）が動画パスごとの Map にまとめる。絶対パスはバックエンドが渡す（§2 の設計 A は変わらない）。
+- 結合キーは**正規化パス**（`canonicalPath`）。バックエンドの `video_hash`（path:size:mtime）ではない。フィルターが聞くのは「スクリプトが存在するか」だけで、再エンコードや移動で hash は消えるがパスは残る。
+- 1 動画 1 件。`list_all()` は `created_at` の降順（新しい順）なので、**最初の 1 件**を採用する（並び直しはしない）。
+- `video_path` / `path` が無い item は捨てる。未知のエンジンファミリーは**残す**（`family: ''`）——一致するか否かはラベルの問題ではなくスクリプトの有無の問題で、§3 の「未知のファミリーは行を作らない」とは判断が逆になる。バッジは素の「自動」になる。
+
+### 12.4 呼び出し順と優先順位
+
+- `ensureScanned()` では `_applyManualAssociations()` の**後**に `_refreshGeneratedScripts()` を待つ。手動関連付けとサイドカーが勝ち、生成は空いている動画にだけ乗る。登録（`_registerWithBackend`）より前なので、スマホ / VR にも同じ答えが渡る。
+- 公開フック `refreshGeneratedScripts()` を app.js が呼ぶ: 生成ダイアログの `onStoredChanged` と、設定 `library.useGeneratedVariants` の `onGeneratedVariantsChanged`。どちらも再スキャンしない（ストアはスキャンの一部ではない）。再フィルタと再登録まで行うので、カードのバッジ数と一覧がその場で一致する。
+- 設定オフなら Map を空にして注釈を外す。生成のみの動画は「一致なし」に戻る。何も永続化していないので後始末は不要。
+
+### 12.5 バッジ
+
+`_funscriptBadgeStyle(video)` が `modifier` と `title` を返し、グリッドカードとリスト行の両方が同じクラス（`library__funscript-badge--audio` / `--motion` / `--manual` / `--auto`）で描く。文言はプレイヤーのドロップダウンと同じ `variants.generatedAudioLabel` / `generatedMotionLabel`（新しいロケールキーは要らない）。色も `--badge-info` / `--badge-multi` を `library.css` に足しただけで、プレイヤーと対応が取れる。「一致あり」なのにサイドカーがない、という誤解をバッジが防ぐ。
+
+### 12.6 関連する経路の扱い
+
+| 経路 | 扱い |
+|---|---|
+| multi-axis 自動昇格（`_autoPromoteEligibleVideos` / `_countAutoPromotionEligible`） | `_generatedScript` の乗った動画は候補から外す。ストアのパスを `library.associations` に漏らし、手動関連付けとして固定してしまうため。ストアが真実であり続ける |
+| 関連付けの削除（`_removeAssociation`） | `_generatedScript` もクリア。「関連付けなし」と「スクリプトなし」をその場の表示と一致させる。ストアはまだ持っているが、次の照合で復活する |
+| ストアから消えた（生成ダイアログで削除、ファイル消去） | `_with_paths` が実在しない item を落とすので、次の照合で注釈が外れ「一致なし」に戻る。`funscriptPath` がストアのパスだった時だけ戻す（途中で手動関連付けが入っていれば、その新しい答えを残す） |
+| ヒートマップ / 速度統計の読み直し | ストアのパスでもそのまま読める（`readFunscript` に許可リストはない）。basename 再試行や `library.associations` の枝り落としは、生成のみの動画には条目が無いので発動しない |
+| 起動レース | スキャンがバックエンドの起動より速いことがある。失敗時は 2.5 秒間隔で最大 2 回だけ再試行（`_scheduleGeneratedScriptsRetry`）。空の一覧は「答え」なので再試行しない |
+
+### 12.7 決定記録（v1.1）
+
+| 論点 | 決定 |
+|---|---|
+| 実装の形 | フィルターではなくレコード注釈（`hasFunscript` + `funscriptPath`）。手動関連付けの前例に従う |
+| 結合キー | 正規化パス。`video_hash` は再エンコードで消えるので使わない |
+| どの 1 件 | ストアの新しい順で最初。プレイヤーのドロップダウンと同じ答え |
+| 未知のファミリー | 一致としては残す（バッジは「自動」）。行を作らない §3 とは目的が違う |
+| 永続化 | しない。`library.associations` にも `manualVariants` にも書かない |
+| 設定 | `library.useGeneratedVariants` をそのまま共用（プレイヤーとライブラリで 1 つのスイッチ） |
+| 自動昇格 | 生成注釈の動画は候補にしない |
+| スマホ / VR | 登録ペイロード経由で一致ステータスとスクリプトは渡る。バリエーション一覧は引き続き対象外（§8） |

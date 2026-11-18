@@ -318,10 +318,13 @@ class App {
       // Anything the panel writes to the store — a finished job, a delete, an
       // export — changes which variations the player can offer. The store rows
       // come from the backend; an export also lands a file beside the video,
-      // which is the scan-side refresh that sees it.
+      // which is the scan-side refresh that sees it. The library joins the same
+      // store for its 「一致あり」 answer, so a store change re-joins there too
+      // (no rescan — the store is not part of the scan).
       onStoredChanged: () => {
         this._refreshGeneratedVariants();
         this._refreshCurrentVariantsFromDisk();
+        this.library?.refreshGeneratedScripts?.();
       },
     });
 
@@ -460,9 +463,12 @@ class App {
         if (this.library?.refresh) this.library.refresh();
       },
       // Generated variations come from the backend store, not the scan, so a
-      // change here needs no rescan — just a re-look-up for the loaded video.
+      // change here needs no rescan — just a re-look-up for the loaded video,
+      // and a re-join for the library's match-status filter (turning the
+      // switch off drops generated-only videos back to 「一致なし」).
       onGeneratedVariantsChanged: () => {
         this._refreshGeneratedVariants();
+        this.library?.refreshGeneratedScripts?.();
       },
       // Orgasm Switch (hold X) — configure / clear / display the global
       // config (single script, multi-axis bundle, or custom routing —

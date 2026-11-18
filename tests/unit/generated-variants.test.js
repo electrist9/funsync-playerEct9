@@ -10,7 +10,7 @@
 // No DOM needed for the shaping itself, but the module imports the generate
 // panel, which is a browser module — so this runs in the default jsdom env.
 import { describe, it, expect } from 'vitest';
-import { generatedVariantRows } from '../../renderer/js/generated-variants.js';
+import { generatedVariantRows, generatedScriptsByVideo } from '../../renderer/js/generated-variants.js';
 
 const labelFor = (family) => (family === 'audio' ? 'Generated audio' : 'Generated motion');
 
@@ -96,5 +96,70 @@ describe('generatedVariantRows', () => {
     expect(generatedVariantRows(null, labelFor)).toEqual([]);
     expect(generatedVariantRows('nope', labelFor)).toEqual([]);
     expect(generatedVariantRows([null, 42, audio], labelFor)).toHaveLength(1);
+  });
+});
+
+// The library's 「一致あり」 filter asks a different question than the player's
+// dropdown: does this video have a script at all? So the same store records are
+// shaped as a join table keyed by video path — and what gets kept differs.
+describe('generatedScriptsByVideo', () => {
+  const lower = (p) => String(p).toLowerCase();
+
+  const enako = 'D:\\Y\\Movie\\えなこ-ZZZZ__dj pawa-orgasm (hardstyle) [MB0CkGfoGoY].mp4';
+
+  it('keys records by video path for a library join', () => {
+    const map = generatedScriptsByVideo([{ ...audio, video_path: enako }], lower);
+    expect([...map.keys()]).toEqual([enako.toLowerCase()]);
+    expect(map.get(enako.toLowerCase())).toEqual({
+      scriptId: 's-audio-1',
+      path: audio.path,
+      family: 'audio',
+      filename: 'clip-audio.funscript',
+    });
+  });
+
+  it('keeps the newest record per video, the store being newest-first', () => {
+    const map = generatedScriptsByVideo([
+      { ...audio, id: 'newer', video_path: enako },
+      { ...motion, id: 'older', video_path: enako },
+    ], lower);
+    expect([...map.values()].map((entry) => entry.scriptId)).toEqual(['newer']);
+  });
+
+  it('drops records it cannot join or load', () => {
+    // No video path → nothing to join against; no path → nothing to load.
+    expect(generatedScriptsByVideo([{ ...audio, video_path: '' }], lower).size).toBe(0);
+    expect(generatedScriptsByVideo([{ ...audio, video_path: null }], lower).size).toBe(0);
+    expect(generatedScriptsByVideo([{ ...audio, path: '' }], lower).size).toBe(0);
+    expect(generatedScriptsByVideo([{ ...audio, path: undefined }], lower).size).toBe(0);
+    expect(generatedScriptsByVideo([null, 42], lower).size).toBe(0);
+  });
+
+  it('keeps a family the library cannot label, unlike variation rows', () => {
+    // The filter only asks whether a script exists. A `depth` script from a
+    // newer backend still plays; only the badge falls back to plain auto.
+    const map = generatedScriptsByVideo([{ ...audio, engine: 'depth:high', video_path: enako }], lower);
+    expect(map.get(enako.toLowerCase()).family).toBe('');
+    expect(generatedVariantRows([{ ...audio, engine: 'depth:high' }], labelFor)).toEqual([]);
+  });
+
+  it('collapses path spellings through the normaliser', () => {
+    const map = generatedScriptsByVideo([
+      { ...audio, id: 'newer', video_path: enako.toUpperCase() },
+      { ...motion, id: 'older', video_path: enako },
+    ], lower);
+    // Same video, two spellings: one entry, and the newest of the two wins.
+    expect([...map.values()].map((entry) => entry.scriptId)).toEqual(['newer']);
+  });
+
+  it('falls back to the raw path as key and tolerates a malformed payload', () => {
+    const map = generatedScriptsByVideo([{ ...audio, video_path: enako }]);
+    expect([...map.keys()]).toEqual([enako]);
+    // Missing id / filename stay empty strings rather than breaking the join.
+    const bare = generatedScriptsByVideo([{ video_path: enako, path: audio.path }]);
+    expect(bare.get(enako)).toEqual({ scriptId: '', path: audio.path, family: '', filename: '' });
+    expect(generatedScriptsByVideo(undefined, lower).size).toBe(0);
+    expect(generatedScriptsByVideo(null, lower).size).toBe(0);
+    expect(generatedScriptsByVideo('nope', lower).size).toBe(0);
   });
 });
