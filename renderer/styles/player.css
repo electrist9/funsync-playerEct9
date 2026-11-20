@@ -656,6 +656,74 @@ html, body {
   .player__video { transition: none; }
 }
 
+/* === Photo slideshow (rhythmslide-style) ===
+   While active, the photo layer fills the wrapper and the <video> shrinks
+   to a corner wipe. The wipe rect (left/top/width/height) is written
+   inline by slideshow.js from wipeGeometry() (a port of rhythmslide's
+   ui/videowipe.py wipe_geometry, © electrist9, GPL-3.0); these rules only
+   take the video out of flow and dress the wipe. The transparent
+   .slideshow-wipe button sits exactly over the video rect so clicking the
+   wipe returns to the full-size video without firing the play/pause
+   click handler bound on the <video> itself. */
+.player__video-wrapper--slideshow {
+  /* Stacking context while the slideshow runs: scopes the wipe video's
+     z-index inside the wrapper so it can never paint past the
+     .player__controls / .player__top-bar siblings (same constraint as
+     .vr-projection-canvas above). z-index:0 keeps the wrapper at the
+     same paint level as before (auto ≡ 0). */
+  z-index: 0;
+}
+.player__video-wrapper--slideshow .player__video {
+  position: absolute;
+  /* Above the photo layer (z 1) — otherwise the layer's black background
+     covers the shrunken video and the wipe renders black — but below the
+     transparent .slideshow-wipe button (z 3) so clicks still land there. */
+  z-index: 2;
+  border-radius: 8px;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.55);
+}
+
+.slideshow-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background: #000;
+}
+.slideshow-layer[hidden] { display: none; }
+.slideshow-layer__img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  opacity: 0;
+  transition: opacity 400ms ease;
+}
+.slideshow-layer__img--visible { opacity: 1; }
+
+.slideshow-wipe {
+  position: absolute;
+  /* Above the wipe video (z 2) so the click-to-restore hit target wins. */
+  z-index: 3;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  margin: 0;
+  padding: 0;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.slideshow-wipe[hidden] { display: none; }
+.slideshow-wipe:hover,
+.slideshow-wipe:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.4);
+  outline-offset: -2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .slideshow-layer__img { transition: none; }
+}
+
 /* === Center Play/Pause Overlay === */
 .center-play {
   position: absolute;
@@ -1303,6 +1371,95 @@ html, body {
 .speed-popover__item--current::after {
   content: '✓';
   font-weight: 700;
+}
+
+/* Photo slideshow popover — same anchoring as the speed popover (inside
+   #controls-overflow, anchored above the ⋮ button), but sectioned:
+   on/off, folder, preset, corner, size, photo order. Built in JS by
+   createSlideshowPopover() in renderer/js/slideshow.js. */
+.slideshow-popover {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  right: 0;
+  min-width: 230px;
+  max-width: 320px;
+  max-height: 70vh;
+  overflow-y: auto;
+  background: var(--video-overlay-bg);
+  border: 1px solid var(--video-overlay-border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  padding: 4px;
+  z-index: 31;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.slideshow-popover[hidden] { display: none; }
+.slideshow-popover__section {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 0;
+  border-top: 1px solid var(--video-overlay-border);
+}
+.slideshow-popover__label {
+  font-size: 11px;
+  opacity: 0.6;
+  padding: 2px 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--video-overlay-text);
+}
+.slideshow-popover__row {
+  display: flex;
+  gap: 4px;
+}
+.slideshow-popover__row .slideshow-popover__item {
+  flex: 1;
+  justify-content: center;
+  white-space: normal;
+}
+.slideshow-popover__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  background: none;
+  border: none;
+  color: var(--video-overlay-text);
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-family: var(--font-family);
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--transition-fast);
+  min-height: 32px;
+}
+.slideshow-popover__item:hover {
+  background: var(--video-overlay-control-hover);
+}
+.slideshow-popover__item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.slideshow-popover__item--current {
+  color: var(--accent);
+  font-weight: 600;
+}
+.slideshow-popover__item--current::after {
+  content: '✓';
+  font-weight: 700;
+}
+.slideshow-popover__value {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  opacity: 0.85;
 }
 
 /* Persistent text labels on key buttons (Editor / Devices / Fullscreen).

@@ -7,6 +7,7 @@ import { classifyOverlap } from '../js/path-utils.js';
 import { t, SUPPORTED_LOCALES, LOCALE_LABELS, setLocale, getCurrentLocale, translatePage } from '../js/i18n.js';
 import { createToggleSwitch } from './toggle-switch.js';
 import { FILLER_PRESETS, DEFAULT_PRESET_ID, resolveFillerOptions } from '../js/filler-presets.js';
+import { FUNSCRIPT_MODES, PHOTO_ORDERS, makePreset, sanitizePresets } from '../js/slideshow-timing.js';
 import { resolveDepth } from '../js/filler-engine.js';
 import { buildPreviewSample, drawFillerWaveform } from '../js/filler-preview.js';
 import { isUserEnabled, isToggleLocked, setUserEnabled } from '../js/source-state.js';
@@ -1101,6 +1102,34 @@ export class SettingsPanel {
     `;
     panel.appendChild(edgeSection);
 
+    // --- Photo slideshow ---
+    // A preset bundles the switch rules (mode, amplitude threshold,
+    // cumulative step, photo order) into one named unit, mirroring
+    // rhythmslide's preset list. The player's slideshow popover can
+    // switch presets live while a slideshow runs; this section is the
+    // editor for that set, plus the default preset and image order.
+    const slideshowSection = document.createElement('div');
+    slideshowSection.className = 'settings-panel__section';
+    slideshowSection.id = 'sp-sec-slideshow';
+    slideshowSection.innerHTML = `
+      <h2 class="settings-panel__section-header">${t('settingsPanel.playback.slideshowHeader')}</h2>
+      <div class="settings-panel__hint">${t('settingsPanel.playback.slideshowHint')}</div>
+      <div class="settings-panel__field">
+        <label class="settings-panel__field-label" for="sp-slideshow-preset">${t('settingsPanel.playback.slideshowDefaultLabel')}</label>
+        <select id="sp-slideshow-preset" class="settings-panel__input settings-panel__input--select"></select>
+      </div>
+      <div class="settings-panel__field">
+        <label class="settings-panel__field-label" for="sp-slideshow-order">${t('settingsPanel.playback.slideshowOrderLabel')}</label>
+        <select id="sp-slideshow-order" class="settings-panel__input settings-panel__input--select">
+          <option value="name">${t('player.slideshow.orderName')}</option>
+          <option value="random">${t('player.slideshow.orderRandom')}</option>
+        </select>
+      </div>
+      <div id="sp-slideshow-presets"></div>
+      <button type="button" id="sp-slideshow-add" class="settings-panel__add-btn" style="border-style:solid">${t('settingsPanel.playback.slideshowAddPreset')}</button>
+    `;
+    panel.appendChild(slideshowSection);
+
 
     // Final order for the rail. Re-appending an existing child MOVES it, so
     // this reorders without disturbing the creation/wiring above. Reads
@@ -1111,6 +1140,7 @@ export class SettingsPanel {
       panel.querySelector('#sp-sec-gapskip'),
       panel.querySelector('#sp-sec-orgasm'),
       panel.querySelector('#sp-sec-edge'),
+      panel.querySelector('#sp-sec-slideshow'),
       panel.querySelector('#sp-sec-multiaxis'),
       panel.querySelector('#sp-sec-video'),
     ]) {
@@ -1606,6 +1636,179 @@ export class SettingsPanel {
           if (this.onEdgeHoldModeChanged) this.onEdgeHoldModeChanged(edgeMode.value);
         });
       }
+
+      // Photo slideshow presets — edit the named switch-rule bundles the
+      // player's slideshow popover switches between live. Rows rebuild on
+      // add/remove; edits commit on change and sanitizePresets normalizes
+      // every write (same contract the slideshow controller reads).
+      const ssPresetSel = panel.querySelector('#sp-slideshow-preset');
+      const ssOrderSel = panel.querySelector('#sp-slideshow-order');
+      const ssList = panel.querySelector('#sp-slideshow-presets');
+      const ssAddBtn = panel.querySelector('#sp-slideshow-add');
+
+      const readPresets = () => sanitizePresets(this._settings.get('player.slideshowPresets'));
+      const writePresets = (list) => this._settings.set('player.slideshowPresets', sanitizePresets(list));
+
+      const refreshPresetSelect = () => {
+        if (!ssPresetSel) return;
+        const current = this._settings.get('player.slideshowPreset') || '';
+        ssPresetSel.replaceChildren();
+        const builtin = document.createElement('option');
+        builtin.value = '';
+        builtin.textContent = t('player.slideshow.presetBuiltin');
+        ssPresetSel.appendChild(builtin);
+        for (const p of readPresets()) {
+          const opt = document.createElement('option');
+          opt.value = p.name;
+          opt.textContent = p.name;
+          ssPresetSel.appendChild(opt);
+        }
+        // A deleted preset's name may still sit in settings; fall back to
+        // built-in instead of leaving the select blank.
+        ssPresetSel.value = current;
+        if (!ssPresetSel.value) ssPresetSel.value = '';
+      };
+
+      const PHOTO_ORDER_LABEL_KEYS = {
+        forward: 'settingsPanel.playback.slideshowPhotoForward',
+        pingpong: 'settingsPanel.playback.slideshowPhotoPingPong',
+      };
+
+      const renderPresetRows = () => {
+        if (!ssList) return;
+        ssList.replaceChildren();
+        const presets = readPresets();
+        if (!presets.length) {
+          const empty = document.createElement('div');
+          empty.className = 'settings-panel__hint';
+          empty.textContent = t('settingsPanel.playback.slideshowNoPresets');
+          ssList.appendChild(empty);
+          return;
+        }
+        presets.forEach((p, idx) => {
+          const row = document.createElement('div');
+          row.className = 'settings-panel__slideshow-preset-row';
+
+          const nameInput = document.createElement('input');
+          nameInput.type = 'text';
+          nameInput.className = 'settings-panel__input settings-panel__slideshow-preset-name';
+          nameInput.value = p.name;
+          nameInput.placeholder = t('settingsPanel.playback.slideshowPresetNamePlaceholder');
+          nameInput.setAttribute('aria-label', t('settingsPanel.playback.slideshowPresetNameLabel'));
+
+          const modeSel = document.createElement('select');
+          modeSel.className = 'settings-panel__input settings-panel__input--select';
+          modeSel.setAttribute('aria-label', t('settingsPanel.playback.slideshowModeLabel'));
+          for (const m of FUNSCRIPT_MODES) {
+            const opt = document.createElement('option');
+            opt.value = m;
+            opt.textContent = t(`settingsPanel.playback.slideshowMode${m.charAt(0).toUpperCase()}${m.slice(1)}`);
+            modeSel.appendChild(opt);
+          }
+          modeSel.value = p.mode;
+
+          const thrInput = document.createElement('input');
+          thrInput.type = 'number';
+          thrInput.min = '0';
+          thrInput.step = '1';
+          thrInput.className = 'settings-panel__input settings-panel__input--number settings-panel__slideshow-preset-num';
+          thrInput.value = String(p.threshold);
+          thrInput.setAttribute('aria-label', t('settingsPanel.playback.slideshowThresholdLabel'));
+
+          const stepInput = document.createElement('input');
+          stepInput.type = 'number';
+          stepInput.min = '1';
+          stepInput.step = '10';
+          stepInput.className = 'settings-panel__input settings-panel__input--number settings-panel__slideshow-preset-num';
+          stepInput.value = String(p.step);
+          stepInput.setAttribute('aria-label', t('settingsPanel.playback.slideshowStepLabel'));
+
+          const orderSel = document.createElement('select');
+          orderSel.className = 'settings-panel__input settings-panel__input--select';
+          orderSel.setAttribute('aria-label', t('settingsPanel.playback.slideshowPhotoOrderLabel'));
+          for (const o of PHOTO_ORDERS) {
+            const opt = document.createElement('option');
+            opt.value = o;
+            opt.textContent = t(PHOTO_ORDER_LABEL_KEYS[o]);
+            orderSel.appendChild(opt);
+          }
+          orderSel.value = p.order;
+
+          const delBtn = document.createElement('button');
+          delBtn.type = 'button';
+          delBtn.className = 'settings-panel__field-reset';
+          delBtn.title = t('settingsPanel.playback.slideshowDeletePreset');
+          delBtn.setAttribute('aria-label', t('settingsPanel.playback.slideshowDeletePreset'));
+          delBtn.appendChild(icon(Trash2, { width: 14, height: 14 }));
+
+          row.append(nameInput, modeSel, thrInput, stepInput, orderSel, delBtn);
+
+          const commit = () => {
+            const list = readPresets();
+            const cur = list[idx];
+            if (!cur) return;
+            const trimmed = nameInput.value.trim();
+            const clash = trimmed && list.some((q, j) => j !== idx && q.name === trimmed);
+            if (!trimmed || clash) {
+              // sanitizePresets drops empty and duplicate (non-first)
+              // names — that would delete the whole row under the
+              // user's feet, so snap back to the old name instead.
+              nameInput.value = cur.name;
+            } else {
+              cur.name = trimmed;
+            }
+            cur.mode = modeSel.value;
+            cur.threshold = Number(thrInput.value);
+            cur.step = Number(stepInput.value);
+            cur.order = orderSel.value;
+            writePresets(list);
+            refreshPresetSelect();
+          };
+          for (const el of [nameInput, modeSel, thrInput, stepInput, orderSel]) {
+            el.addEventListener('change', commit);
+          }
+
+          delBtn.addEventListener('click', () => {
+            const list = readPresets();
+            const removed = list[idx]?.name;
+            list.splice(idx, 1);
+            writePresets(list);
+            if (removed && (this._settings.get('player.slideshowPreset') || '') === removed) {
+              this._settings.set('player.slideshowPreset', '');
+            }
+            renderPresetRows();
+            refreshPresetSelect();
+          });
+
+          ssList.appendChild(row);
+        });
+      };
+
+      ssPresetSel?.addEventListener('change', () => {
+        this._settings.set('player.slideshowPreset', ssPresetSel.value);
+      });
+      if (ssOrderSel) {
+        ssOrderSel.value = this._settings.get('player.slideshowImageOrder') || 'name';
+        ssOrderSel.addEventListener('change', () => {
+          this._settings.set('player.slideshowImageOrder', ssOrderSel.value);
+        });
+      }
+      ssAddBtn?.addEventListener('click', () => {
+        const list = readPresets();
+        const base = t('settingsPanel.playback.slideshowPresetDefaultName');
+        let n = list.length + 1;
+        let candidate = `${base} ${n}`;
+        while (list.some((p) => p.name === candidate)) {
+          n += 1;
+          candidate = `${base} ${n}`;
+        }
+        list.push(makePreset(candidate, 'up', 0, 100, 'forward'));
+        writePresets(list);
+        renderPresetRows();
+        refreshPresetSelect();
+      });
+      renderPresetRows();
+      refreshPresetSelect();
 
       // Random script variation on play (zaikechi #209) — when a video has
       // 2+ variants, pick one at random each load. Beats pinned defaults

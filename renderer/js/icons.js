@@ -48,6 +48,7 @@ export { default as FlipVertical2 } from '../../node_modules/lucide/dist/esm/ico
 export { default as Spline } from '../../node_modules/lucide/dist/esm/icons/spline.js';
 export { default as Scissors } from '../../node_modules/lucide/dist/esm/icons/scissors.js';
 export { default as WandSparkles } from '../../node_modules/lucide/dist/esm/icons/wand-sparkles.js';
+export { default as Images } from '../../node_modules/lucide/dist/esm/icons/images.js';
 export { default as BookmarkPlus } from '../../node_modules/lucide/dist/esm/icons/bookmark-plus.js';
 export { default as FileText } from '../../node_modules/lucide/dist/esm/icons/file-text.js';
 export { default as Rows3 } from '../../node_modules/lucide/dist/esm/icons/rows-3.js';

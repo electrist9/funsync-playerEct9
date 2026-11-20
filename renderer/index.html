@@ -38,6 +38,20 @@
       <div id="video-wrapper" class="player__video-wrapper">
         <video id="video" class="player__video"></video>
 
+        <!-- Photo slideshow (rhythmslide-style): while active the photo
+             layer fills the wrapper and the <video> shrinks to a corner
+             wipe (positioned inline by slideshow.js via wipeGeometry).
+             The transparent button over the wipe returns to the full-size
+             video on click — it sits above the video so the play/pause
+             click handler never fires in wipe mode. -->
+        <div id="slideshow-layer" class="slideshow-layer" hidden>
+          <img id="slideshow-img-a" class="slideshow-layer__img slideshow-layer__img--visible" alt="" />
+          <img id="slideshow-img-b" class="slideshow-layer__img" alt="" />
+        </div>
+        <button id="slideshow-wipe" class="slideshow-wipe" type="button" hidden
+                data-i18n-aria-label="player.slideshow.wipeAria" data-i18n-title="player.slideshow.wipeAria"
+                aria-label="Back to full-size video" title="Back to full-size video"></button>
+
         <!-- Center Play/Pause/Replay Overlay -->
         <button id="center-play-btn" class="center-play" data-i18n-aria-label="player.play" aria-label="Play">
           <span class="center-play__icon center-play__icon--play"><i data-lucide="play"></i></span>
@@ -285,6 +299,18 @@
                   <span data-i18n="player.inlineHeatmap">Heatmap strip</span>
                   <span class="controls-overflow__check" aria-hidden="true"></span>
                 </button>
+                <!-- Photo slideshow (rhythmslide-style): photos from a
+                     per-video folder cycle in the main area on the script's
+                     switch times while the video shrinks to a corner wipe.
+                     Requires a loaded funscript, so it is hidden until one
+                     is available (same gating as the inline-viz items).
+                     Opens a popover (folder / preset / corner / size /
+                     order) anchored to the ⋮ button. -->
+                <button id="btn-slideshow" class="controls-overflow__item controls-overflow__item--check" role="menuitemcheckbox" aria-checked="false" aria-haspopup="menu" aria-expanded="false" data-i18n-aria-label="player.slideshow.aria" aria-label="Photo slideshow" hidden>
+                  <i data-lucide="images"></i>
+                  <span data-i18n="player.slideshow.menuLabel">Photo slideshow</span>
+                  <span class="controls-overflow__check" aria-hidden="true"></span>
+                </button>
                 <button id="btn-pip" class="controls-overflow__item" role="menuitem" data-i18n-aria-label="player.pictureInPicture" aria-label="Picture in Picture">
                   <i data-lucide="picture-in-picture-2"></i>
                   <span data-i18n="player.pictureInPicture">Picture-in-Picture</span>
@@ -301,6 +327,9 @@
               <!-- Shared preset popover — anchored to whichever trigger
                    opens it (the chip or the ⋮ menu item). -->
               <div id="speed-popover" class="speed-popover" role="menu" hidden></div>
+              <!-- Photo slideshow popover — folder / on-off / preset /
+                   corner / size / order, anchored to the ⋮ button. -->
+              <div id="slideshow-popover" class="slideshow-popover" role="menu" hidden></div>
             </div>
 
             <button id="btn-fullscreen" class="control-btn control-btn--labelled" data-i18n-aria-label="player.fullscreen" data-i18n-title="player.fullscreen" aria-label="Fullscreen" title="Fullscreen (F)">

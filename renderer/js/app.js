@@ -73,7 +73,9 @@ import {
   EllipsisVertical, Keyboard, Gauge, ChevronDown, Goggles, Repeat1,
   Maximize, Maximize2, Minimize, ArrowLeft, Plus, PictureInPicture2, SkipBack, SkipForward,
   Pencil, FileCheck, Captions, RotateCcw, Columns2, X, Activity, Thermometer, WandSparkles,
+  Images,
 } from './icons.js';
+import { SlideshowController, createSlideshowPopover } from './slideshow.js';
 import { startInit, span, mark, logSummary } from './startup-timer.js';
 import { installConsoleForwarding } from './logger.js';
 import { isVideoInPip, teardownPlayback, beginDeferredPipTeardown } from './pip-guard.js';
@@ -250,6 +252,9 @@ class App {
         // (SCOPE-funscript-generation): a wand reads as "made for me"
         // without implying magic beyond the local analysis it does.
         WandSparkles,
+        // 'images' for the photo-slideshow overflow item (rhythmslide-style
+        // slideshow during playback; stacked-photos glyph).
+        Images,
       },
       attrs: { width: 20, height: 20, 'stroke-width': 1.75 },
     });
@@ -356,6 +361,26 @@ class App {
       video: this.videoPlayer.video,
     });
     this._wireInlineVizToggles();
+
+    // Photo slideshow (rhythmslide-style): photos from a per-video folder
+    // switch on the script's switch times while the video shrinks to a
+    // corner wipe. Timing rules live in slideshow-timing.js; this is the
+    // player-side glue (folder map, image cache, photo layer, wipe).
+    this.slideshow = new SlideshowController({
+      video: this.videoPlayer.video,
+      wrapper: document.getElementById('video-wrapper'),
+      layer: document.getElementById('slideshow-layer'),
+      imgA: document.getElementById('slideshow-img-a'),
+      imgB: document.getElementById('slideshow-img-b'),
+      wipeBtn: document.getElementById('slideshow-wipe'),
+      settings: this.settings,
+      getActions: () => this.funscriptEngine?.getActions() ?? null,
+      isScriptLoaded: () => !!this.funscriptEngine?.isLoaded,
+      getVideoPath: () => this._currentVideoPath,
+      onStateChange: () => this._syncSlideshowUi?.(),
+      onNotice: (kind) => this._slideshowNotice(kind),
+      t,
+    });
 
     // Initialize drag-and-drop EARLY — this must always work. Omit
     // `dropZoneElement` so the default `#drop-zone-overlay` element
@@ -702,6 +727,7 @@ class App {
 
     this._wireSpeedControl();
     this._wireLoopVideo();
+    this._wireSlideshowControl();
 
     // Wire thumbnail preview + marker tooltip on progress hover. The
     // marker tooltip resolves the cursor to the nearest chapter / bookmark
@@ -1237,6 +1263,7 @@ class App {
         onJumpBookmark: (direction) => this._jumpBookmark(direction),
         onLoadNext: () => this._playNext(),
         onLoadPrev: () => this._playPrev(),
+        onToggleSlideshow: () => this.slideshow?.toggle(),
       });
 
       // Auto-connect if a key is saved
@@ -4713,6 +4740,11 @@ class App {
       this._resumeSuppressedPath = null;
     }
     this._currentIsRemote = !!file._remote;
+    // Slideshow: re-point at the new video's folder + script. Keeps the
+    // show running across queue hand-offs when the new video supports it
+    // (folder known, script arriving within the grace window), otherwise
+    // disables with a notice. No-op when the slideshow is off.
+    this.slideshow?.onVideoLoaded();
     // Generation works on a file the backend can open, so the button only
     // appears for local videos. A generated script belongs to the video it was
     // built from, so loading a different one — local or remote — discards the
@@ -7288,6 +7320,71 @@ class App {
   }
 
   /**
+   * Photo slideshow (rhythmslide-style) control wiring. The ⋮ overflow
+   * item opens a popover (on/off, folder, preset, corner, size, order)
+   * anchored to the ⋮ trigger — same open/close dance as the speed
+   * popover. The popover's first row is the on/off toggle; the C key is
+   * the quick-toggle shortcut.
+   */
+  _wireSlideshowControl() {
+    const overflowItem = document.getElementById('btn-slideshow');
+    const popoverEl = document.getElementById('slideshow-popover');
+    const overflowBtn = document.getElementById('btn-overflow');
+    const overflowMenu = document.getElementById('controls-overflow-menu');
+    if (!overflowItem || !popoverEl || !this.slideshow) return;
+
+    const popover = createSlideshowPopover({ controller: this.slideshow, popoverEl, t });
+    this._slideshowPopover = popover;
+
+    const closeOverflowMenu = () => {
+      if (overflowMenu && !overflowMenu.hidden) {
+        overflowMenu.hidden = true;
+        overflowBtn?.setAttribute('aria-expanded', 'false');
+      }
+    };
+
+    // Overflow menu entry — close the menu, then open the slideshow
+    // popover anchored to the ⋮ trigger so it visually replaces the menu.
+    overflowItem.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeOverflowMenu();
+      if (popover.isOpen()) popover.close();
+      else popover.open(overflowBtn || overflowItem);
+    });
+
+    // Outside-click / Escape dismissal — capture phase, mirroring
+    // _wireSpeedControl (the ⋮ button's own handler stopPropagations in
+    // bubble phase). A click anywhere outside the popover closes it,
+    // including on ⋮, whose bubble handler then re-opens the overflow
+    // menu — so ⋮ always "goes back" instead of trapping the popover.
+    document.addEventListener('click', (e) => {
+      if (!popover.isOpen()) return;
+      if (popoverEl.contains(e.target)) return;
+      popover.close();
+    }, true);
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && popover.isOpen()) popover.close();
+    }, true);
+  }
+
+  /** Keep the ⋮ menu check and an open popover in step with state. */
+  _syncSlideshowUi() {
+    const item = document.getElementById('btn-slideshow');
+    if (item) item.setAttribute('aria-checked', String(!!this.slideshow?.active));
+    if (this._slideshowPopover?.isOpen()) this._slideshowPopover.refresh();
+  }
+
+  /** Toast for a slideshow enable/continue failure (kind from the controller). */
+  _slideshowNotice(kind) {
+    const key = {
+      'no-script': 'player.slideshow.toastNoScript',
+      'no-images': 'player.slideshow.toastNoImages',
+      'read-failed': 'player.slideshow.toastReadFailed',
+    }[kind];
+    if (key) showToast(t(key), 'warn', 4000);
+  }
+
+  /**
    * Wire the "Loop video" overflow menu item + the loop chip + the
    * Shift+L shortcut. Session-scoped: `video.loop` resets to `false`
    * on every new video load (the existing reset path in `loadVideo`
@@ -9799,6 +9896,10 @@ class App {
     const hmBtn = document.getElementById('btn-inline-hm');
     if (tlBtn) tlBtn.hidden = !has;
     if (hmBtn) hmBtn.hidden = !has;
+    // The photo slideshow is driven by the script's switch times, so its
+    // overflow item is gated exactly like the inline-viz toggles.
+    const ssBtn = document.getElementById('btn-slideshow');
+    if (ssBtn) ssBtn.hidden = !has;
   }
 
   /**

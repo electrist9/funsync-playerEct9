@@ -79,6 +79,13 @@ const {
   resolveAutoVariantMode,
   sortVariantsForDisplay,
 } = require('./funscript-variants');
+// Slideshow image listing/serving helpers (photo slideshow during playback).
+// Shared with the unit tests, which import the module directly.
+const {
+  collectSlideshowImages,
+  isWithinFolder,
+  imageMimeForExt,
+} = require('./slideshow-images');
 
 const eroScripts = new EroScriptsAPI();
 
@@ -1660,6 +1667,55 @@ ipcMain.handle('read-custom-thumbnail', async (_event, cachedPath) => {
     const mime = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
     return { dataUrl: `data:${mime};base64,${bytes.toString('base64')}` };
   } catch {
+    return null;
+  }
+});
+
+// --- IPC Handlers: Slideshow (photo slideshow during playback) ---
+//
+// Photo-switch timing is a port of rhythmslide's funscript.py (© electrist9,
+// GPL-3.0) — see renderer/js/slideshow-timing.js. Images are served as data
+// URLs because CSP img-src allows data:, not file: (same idiom as custom
+// thumbs); the listing/filter/guard logic lives in ./slideshow-images so the
+// unit tests can exercise it outside Electron.
+
+ipcMain.handle('list-slideshow-images', async (_event, folderPath) => {
+  try {
+    const dir = String(folderPath || '');
+    if (!dir) return { images: [], error: 'no-folder' };
+    const dirStat = await fs.promises.stat(dir);
+    if (!dirStat.isDirectory()) return { images: [], error: 'not-a-directory' };
+    const entries = await fs.promises.readdir(dir, { withFileTypes: true, recursive: true });
+    return { images: collectSlideshowImages(entries, dir) };
+  } catch (err) {
+    log.warn('[Slideshow] list-slideshow-images failed:', err.message);
+    return { images: [], error: 'read-failed' };
+  }
+});
+
+ipcMain.handle('read-slideshow-image', async (_event, opts) => {
+  try {
+    const folder = opts && opts.folder;
+    const filePath = opts && opts.filePath;
+    if (!isWithinFolder(folder, filePath)) return null;
+    const maxDim = Number(opts.maxDim) > 0 ? Number(opts.maxDim) : 1920;
+    const bytes = await fs.promises.readFile(path.resolve(String(filePath)));
+    const { nativeImage } = require('electron');
+    const img = nativeImage.createFromBuffer(bytes);
+    if (!img.isEmpty()) {
+      const size = img.getSize();
+      const resized = (size.width > maxDim || size.height > maxDim)
+        ? img.resize({ width: maxDim, height: maxDim, quality: 'good' })
+        : img;
+      const jpeg = resized.toJPEG(82);
+      return `data:image/jpeg;base64,${jpeg.toString('base64')}`;
+    }
+    // Format nativeImage can't decode (e.g. some webp/avif encodes) — hand
+    // back the raw bytes; Chromium's <img> still renders it from a data URL.
+    const mime = imageMimeForExt(path.extname(String(filePath)));
+    return `data:${mime};base64,${bytes.toString('base64')}`;
+  } catch (err) {
+    log.warn('[Slideshow] read-slideshow-image failed:', err.message);
     return null;
   }
 });

@@ -52,6 +52,25 @@ const DEFAULTS = {
       // strip. Independent toggles via the player's TL/HM buttons.
       inlineTimeline: false,
       inlineHeatmap: false,
+      // Photo slideshow during playback (rhythmslide-style). Timing rules
+      // are a port of rhythmslide's funscript.py (© electrist9, GPL-3.0) —
+      // see renderer/js/slideshow-timing.js. Default OFF: playback is
+      // video-only until the user enables the slideshow per video.
+      // slideshowCorner: where the video wipe sits — 'bottom_right' (default),
+      //   'bottom_left', 'top_left', 'top_right'.
+      // slideshowSizeDenom: wipe box area = 1/denom of the player (4|8|16).
+      // slideshowImageOrder: global image-list order — 'name' (natural sort,
+      //   default) or 'random' (re-shuffled on every slideshow start).
+      // slideshowPresets: named switch-timing presets
+      //   [{ name, mode: 'up'|'peak'|'cumulative', threshold, step,
+      //      order: 'forward'|'pingpong' }] (sanitized on read).
+      // slideshowPreset: name of the DEFAULT preset applied on enable ('' =
+      //   built-in up/0/100/forward). Runtime popover picks are session-only.
+      slideshowCorner: 'bottom_right',
+      slideshowSizeDenom: 8,
+      slideshowImageOrder: 'name',
+      slideshowPresets: [],
+      slideshowPreset: '',
       // Keep the video playing in a docked corner overlay while browsing
       // the library, instead of stopping on leave (mini-player). Default on.
       miniPlayer: true,
@@ -93,6 +112,14 @@ const DEFAULTS = {
       // Tri-state covers both flipping a missed VR file → VR and
       // clearing a false-positive on a flat file with a VR-like token.
       manualVRType: {},
+      // Per-video slideshow photo folder (photo slideshow during playback).
+      // Keyed by the video's normalized path (same key shape as
+      // manualVariants/manualVRType); value is an absolute folder path.
+      // Videos without an entry fall back to the last-used slideshow folder.
+      slideshowFolders: {},
+      // Last photo folder chosen for any slideshow — the fallback when the
+      // current video has no slideshowFolders entry yet.
+      slideshowLastFolder: '',
       // Per-path VR-as-flat playback override. Legacy two-string shape
       // — value was `'left'` or `'right'`. Kept indefinitely as a read
       // fallback for downgrade safety (a user reverting to <0.7.x still

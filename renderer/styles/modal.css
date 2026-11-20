@@ -241,6 +241,25 @@
   cursor: pointer;
 }
 
+/* Photo slideshow preset rows — one named switch-rule bundle per row:
+   name, switch mode, threshold, cumulative step, photo order, delete.
+   Wraps on narrow panels so the number fields never squash. */
+.settings-panel__slideshow-preset-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+.settings-panel__slideshow-preset-name {
+  flex: 1 1 120px;
+  min-width: 100px;
+}
+.settings-panel__slideshow-preset-num {
+  width: 72px;
+  flex: 0 0 auto;
+}
+
 .settings-panel__input--checkbox {
   width: 18px;
   height: 18px;

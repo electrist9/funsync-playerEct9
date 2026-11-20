@@ -131,6 +131,7 @@ export function getPlayerShortcutGroups() {
         ['>',             t('kbd.speedUp')],
         ['I',             t('kbd.toggleInfo')],
         ['S',             t('kbd.screenshot')],
+        ['C',             t('kbd.slideshow')],
       ],
     },
     {

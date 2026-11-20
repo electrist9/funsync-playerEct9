@@ -28,6 +28,8 @@ globalThis.funsync = {
   fetchMetadata: vi.fn().mockResolvedValue(null),
   selectDirectory: vi.fn().mockResolvedValue(null),
   scanDirectory: vi.fn().mockResolvedValue({ videos: [], unmatchedFunscripts: [] }),
+  listSlideshowImages: vi.fn().mockResolvedValue({ images: [] }),
+  readSlideshowImage: vi.fn().mockResolvedValue(null),
   selectFunscript: vi.fn().mockResolvedValue(null),
   selectSubtitle: vi.fn().mockResolvedValue(null),
   getBackendPort: vi.fn().mockResolvedValue(5123),

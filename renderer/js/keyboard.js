@@ -4,7 +4,7 @@ import { openKeyboardHelp, getPlayerShortcutGroups } from './keyboard-help.js';
 import { t } from './i18n.js';
 
 export class KeyboardHandler {
-  constructor({ videoPlayer, connectionPanel, onOpenFile, scriptEditor, deviceSimulator, gapSkipEngine, onNavigate, onToggleLoop, onToggleQueue, onJumpChapter, onJumpBookmark, onLoadNext, onLoadPrev }) {
+  constructor({ videoPlayer, connectionPanel, onOpenFile, scriptEditor, deviceSimulator, gapSkipEngine, onNavigate, onToggleLoop, onToggleQueue, onJumpChapter, onJumpBookmark, onLoadNext, onLoadPrev, onToggleSlideshow }) {
     this.player = videoPlayer;
     this.connectionPanel = connectionPanel || null;
     this.onOpenFile = onOpenFile || null;
@@ -18,6 +18,7 @@ export class KeyboardHandler {
     this.onJumpBookmark = onJumpBookmark || null;
     this.onLoadNext = onLoadNext || null;
     this.onLoadPrev = onLoadPrev || null;
+    this.onToggleSlideshow = onToggleSlideshow || null;
     this._bindEvents();
   }
 
@@ -228,6 +229,16 @@ export class KeyboardHandler {
       case 'I':
         e.preventDefault();
         this.player.toggleInfoOverlay();
+        break;
+
+      // C — photo slideshow quick toggle (rhythmslide-style). The
+      // controller refuses to enable without a script or images and
+      // toasts the reason, so no extra gating here beyond the editor.
+      case 'c':
+      case 'C':
+        if (this.scriptEditor?.isOpen) break;
+        e.preventDefault();
+        if (this.onToggleSlideshow) this.onToggleSlideshow();
         break;
 
       case 'a':

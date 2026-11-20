@@ -103,6 +103,10 @@ contextBridge.exposeInMainWorld('funsync', {
   readCustomThumbnail: (cachedPath) => ipcRenderer.invoke('read-custom-thumbnail', cachedPath),
   getCustomThumbsDir: () => ipcRenderer.invoke('get-custom-thumbs-dir'),
 
+  // Photo slideshow (recursive folder listing + data-URL image reads)
+  listSlideshowImages: (folderPath) => ipcRenderer.invoke('list-slideshow-images', folderPath),
+  readSlideshowImage: (opts) => ipcRenderer.invoke('read-slideshow-image', opts),
+
   // Script editor
   saveFunscript: (content, name) => ipcRenderer.invoke('save-funscript', content, name),
   writeFunscript: (content, filePath) => ipcRenderer.invoke('write-funscript', content, filePath),
