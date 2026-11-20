@@ -7,7 +7,7 @@ import { classifyOverlap } from '../js/path-utils.js';
 import { t, SUPPORTED_LOCALES, LOCALE_LABELS, setLocale, getCurrentLocale, translatePage } from '../js/i18n.js';
 import { createToggleSwitch } from './toggle-switch.js';
 import { FILLER_PRESETS, DEFAULT_PRESET_ID, resolveFillerOptions } from '../js/filler-presets.js';
-import { FUNSCRIPT_MODES, PHOTO_ORDERS, makePreset, sanitizePresets } from '../js/slideshow-timing.js';
+import { FUNSCRIPT_MODES, PHOTO_ORDERS, makePreset, sanitizePresets, sanitizeTransition, sanitizeBackground } from '../js/slideshow-timing.js';
 import { resolveDepth } from '../js/filler-engine.js';
 import { buildPreviewSample, drawFillerWaveform } from '../js/filler-preview.js';
 import { isUserEnabled, isToggleLocked, setUserEnabled } from '../js/source-state.js';
@@ -1125,6 +1125,25 @@ export class SettingsPanel {
           <option value="random">${t('player.slideshow.orderRandom')}</option>
         </select>
       </div>
+      <div class="settings-panel__field">
+        <label class="settings-panel__field-label" for="sp-slideshow-transition">${t('player.slideshow.transitionLabel')}</label>
+        <select id="sp-slideshow-transition" class="settings-panel__input settings-panel__input--select">
+          <option value="crossfade">${t('player.slideshow.transitionCrossfade')}</option>
+          <option value="wipe_left">${t('player.slideshow.transitionWipeLeft')}</option>
+          <option value="wipe_right">${t('player.slideshow.transitionWipeRight')}</option>
+          <option value="slide_left">${t('player.slideshow.transitionSlideLeft')}</option>
+          <option value="slide_right">${t('player.slideshow.transitionSlideRight')}</option>
+          <option value="zoom">${t('player.slideshow.transitionZoom')}</option>
+          <option value="random">${t('player.slideshow.transitionRandom')}</option>
+        </select>
+      </div>
+      <div class="settings-panel__field">
+        <label class="settings-panel__field-label" for="sp-slideshow-background">${t('player.slideshow.backgroundLabel')}</label>
+        <select id="sp-slideshow-background" class="settings-panel__input settings-panel__input--select">
+          <option value="solid">${t('player.slideshow.backgroundSolid')}</option>
+          <option value="dominant">${t('player.slideshow.backgroundDominant')}</option>
+        </select>
+      </div>
       <div id="sp-slideshow-presets"></div>
       <button type="button" id="sp-slideshow-add" class="settings-panel__add-btn" style="border-style:solid">${t('settingsPanel.playback.slideshowAddPreset')}</button>
     `;
@@ -1643,6 +1662,8 @@ export class SettingsPanel {
       // every write (same contract the slideshow controller reads).
       const ssPresetSel = panel.querySelector('#sp-slideshow-preset');
       const ssOrderSel = panel.querySelector('#sp-slideshow-order');
+      const ssTransSel = panel.querySelector('#sp-slideshow-transition');
+      const ssBgSel = panel.querySelector('#sp-slideshow-background');
       const ssList = panel.querySelector('#sp-slideshow-presets');
       const ssAddBtn = panel.querySelector('#sp-slideshow-add');
 
@@ -1791,6 +1812,18 @@ export class SettingsPanel {
         ssOrderSel.value = this._settings.get('player.slideshowImageOrder') || 'name';
         ssOrderSel.addEventListener('change', () => {
           this._settings.set('player.slideshowImageOrder', ssOrderSel.value);
+        });
+      }
+      if (ssTransSel) {
+        ssTransSel.value = sanitizeTransition(this._settings.get('player.slideshowTransition'));
+        ssTransSel.addEventListener('change', () => {
+          this._settings.set('player.slideshowTransition', sanitizeTransition(ssTransSel.value));
+        });
+      }
+      if (ssBgSel) {
+        ssBgSel.value = sanitizeBackground(this._settings.get('player.slideshowBackground'));
+        ssBgSel.addEventListener('change', () => {
+          this._settings.set('player.slideshowBackground', sanitizeBackground(ssBgSel.value));
         });
       }
       ssAddBtn?.addEventListener('click', () => {

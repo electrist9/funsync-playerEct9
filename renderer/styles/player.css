@@ -688,6 +688,9 @@ html, body {
   inset: 0;
   z-index: 1;
   background: #000;
+  /* Dominant-color background mode fades in gently (matches the 100ms
+     photo-switch duration). */
+  transition: background-color 100ms ease;
 }
 .slideshow-layer[hidden] { display: none; }
 .slideshow-layer__img {
@@ -697,9 +700,22 @@ html, body {
   height: 100%;
   object-fit: contain;
   opacity: 0;
-  transition: opacity 400ms ease;
+  /* Transition kinds mirror rhythmslide's ui/renderer.py _draw_transition
+     (© electrist9, GPL-3.0); duration is fixed at 100ms. */
+  transition: opacity 100ms cubic-bezier(0.4, 0, 0.2, 1),
+    transform 100ms cubic-bezier(0.4, 0, 0.2, 1),
+    clip-path 100ms cubic-bezier(0.4, 0, 0.2, 1);
 }
-.slideshow-layer__img--visible { opacity: 1; }
+/* Enter states (applied with --no-anim, then released so the transition
+   animates enter -> visible). */
+.slideshow-layer__img--enter-crossfade { opacity: 0; }
+.slideshow-layer__img--enter-wipe_left { opacity: 1; clip-path: inset(0 100% 0 0); }
+.slideshow-layer__img--enter-wipe_right { opacity: 1; clip-path: inset(0 0 0 100%); }
+.slideshow-layer__img--enter-slide_left { opacity: 1; transform: translateX(-100%); }
+.slideshow-layer__img--enter-slide_right { opacity: 1; transform: translateX(100%); }
+.slideshow-layer__img--enter-zoom { opacity: 0; transform: scale(0.9); }
+.slideshow-layer__img--no-anim { transition: none; }
+.slideshow-layer__img--visible { opacity: 1; transform: none; clip-path: inset(0); }
 
 .slideshow-wipe {
   position: absolute;
@@ -722,6 +738,7 @@ html, body {
 
 @media (prefers-reduced-motion: reduce) {
   .slideshow-layer__img { transition: none; }
+  .slideshow-layer { transition: none; }
 }
 
 /* === Center Play/Pause Overlay === */
@@ -1413,10 +1430,11 @@ html, body {
 }
 .slideshow-popover__row {
   display: flex;
+  flex-wrap: wrap;
   gap: 4px;
 }
 .slideshow-popover__row .slideshow-popover__item {
-  flex: 1;
+  flex: 1 1 auto;
   justify-content: center;
   white-space: normal;
 }

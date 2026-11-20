@@ -22,6 +22,8 @@ function makeController(overrides = {}) {
       corner: 'bottom_right',
       sizeDenom: 8,
       imageOrder: 'name',
+      transition: 'crossfade',
+      background: 'solid',
       ...overrides,
     },
     toggle() {},
@@ -30,6 +32,8 @@ function makeController(overrides = {}) {
     setCorner() {},
     setSizeDenom() {},
     setImageOrder() {},
+    setTransition() {},
+    setBackgroundMode() {},
   };
 }
 
@@ -55,9 +59,38 @@ describe('createSlideshowPopover', () => {
     // Regression guard: the popover must not be empty after open().
     expect(popoverEl.children.length).toBeGreaterThan(0);
     const items = popoverEl.querySelectorAll('.slideshow-popover__item');
-    // toggle + change-folder + builtin preset + P1 + 4 corners + 3 sizes + 2 orders
-    expect(items.length).toBe(13);
+    // toggle + change-folder + builtin preset + P1 + 4 corners + 3 sizes
+    // + 2 orders + 7 transitions + 2 backgrounds
+    expect(items.length).toBe(22);
     expect(anchor.getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('marks the current transition and background', () => {
+    popover.open(anchor);
+    const items = [...popoverEl.querySelectorAll('.slideshow-popover__item')];
+    const current = (key) => items
+      .filter((b) => b.textContent === key)
+      .filter((b) => b.classList.contains('slideshow-popover__item--current'))
+      .map((b) => b.textContent);
+    expect(current('player.slideshow.transitionCrossfade')).toEqual(['player.slideshow.transitionCrossfade']);
+    expect(current('player.slideshow.backgroundSolid')).toEqual(['player.slideshow.backgroundSolid']);
+    // No other transition/background button is marked current.
+    for (const key of ['transitionWipeLeft', 'transitionRandom', 'backgroundDominant']) {
+      expect(current(`player.slideshow.${key}`)).toEqual([]);
+    }
+  });
+
+  it('transition=random and background=dominant mark those buttons', () => {
+    controller.state = { ...controller.state, transition: 'random', background: 'dominant' };
+    popover.open(anchor);
+    const items = [...popoverEl.querySelectorAll('.slideshow-popover__item')];
+    const marked = items
+      .filter((b) => b.classList.contains('slideshow-popover__item--current'))
+      .map((b) => b.textContent);
+    expect(marked).toContain('player.slideshow.transitionRandom');
+    expect(marked).toContain('player.slideshow.backgroundDominant');
+    expect(marked).not.toContain('player.slideshow.transitionCrossfade');
+    expect(marked).not.toContain('player.slideshow.backgroundSolid');
   });
 
   it('close() hides the popover and resets aria-expanded', () => {

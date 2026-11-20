@@ -15,6 +15,12 @@ import {
   arrangeImages,
   wipeGeometry,
   WIPE_MARGIN_PX,
+  CONCRETE_TRANSITIONS,
+  TRANSITIONS,
+  BACKGROUNDS,
+  sanitizeTransition,
+  sanitizeBackground,
+  pickRandomTransition,
 } from '../../renderer/js/slideshow-timing.js';
 
 describe('makePreset', () => {
@@ -357,5 +363,53 @@ describe('constants', () => {
     expect(FUNSCRIPT_MODES).toEqual(['up', 'peak', 'cumulative']);
     expect(PHOTO_ORDERS).toEqual(['forward', 'pingpong']);
     expect(BUILTIN_PRESET).toMatchObject({ mode: 'up', threshold: 0, step: 100, order: 'forward' });
+  });
+
+  it('transition/background tuples match the rhythmslide renderer port', () => {
+    expect(CONCRETE_TRANSITIONS).toEqual(['crossfade', 'wipe_left', 'wipe_right', 'slide_left', 'slide_right', 'zoom']);
+    expect(TRANSITIONS).toEqual([...CONCRETE_TRANSITIONS, 'random']);
+    expect(BACKGROUNDS).toEqual(['solid', 'dominant']);
+  });
+});
+
+describe('sanitizeTransition', () => {
+  it('accepts every concrete kind and random', () => {
+    for (const v of TRANSITIONS) expect(sanitizeTransition(v)).toBe(v);
+  });
+
+  it('falls back to crossfade for invalid values', () => {
+    expect(sanitizeTransition(undefined)).toBe('crossfade');
+    expect(sanitizeTransition(null)).toBe('crossfade');
+    expect(sanitizeTransition('spin')).toBe('crossfade');
+    expect(sanitizeTransition('')).toBe('crossfade');
+  });
+});
+
+describe('sanitizeBackground', () => {
+  it('accepts solid and dominant, falls back to solid', () => {
+    expect(sanitizeBackground('solid')).toBe('solid');
+    expect(sanitizeBackground('dominant')).toBe('dominant');
+    expect(sanitizeBackground('gradient')).toBe('solid');
+    expect(sanitizeBackground(undefined)).toBe('solid');
+  });
+});
+
+describe('pickRandomTransition', () => {
+  it('maps rng values deterministically onto the concrete kinds', () => {
+    const n = CONCRETE_TRANSITIONS.length; // 6
+    expect(pickRandomTransition(() => 0)).toBe(CONCRETE_TRANSITIONS[0]);
+    expect(pickRandomTransition(() => 0.5)).toBe(CONCRETE_TRANSITIONS[Math.floor(0.5 * n)]);
+    expect(pickRandomTransition(() => 0.999999)).toBe(CONCRETE_TRANSITIONS[n - 1]);
+  });
+
+  it('clamps out-of-range rng values and always returns a concrete kind', () => {
+    for (const v of [-1, 0, 0.33, 0.75, 0.999999, 1, 2]) {
+      const picked = pickRandomTransition(() => v);
+      expect(CONCRETE_TRANSITIONS).toContain(picked);
+    }
+  });
+
+  it('treats a non-numeric rng result as 0', () => {
+    expect(pickRandomTransition(() => 'x')).toBe(CONCRETE_TRANSITIONS[0]);
   });
 });

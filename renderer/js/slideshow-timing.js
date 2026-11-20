@@ -20,6 +20,42 @@ export const PHOTO_ORDERS = ['forward', 'pingpong'];
 /** Image-list ordering modes, chosen in the player (global setting). */
 export const IMAGE_ORDERS = ['name', 'random'];
 
+/**
+ * Concrete photo-switch transition kinds — port of the transition kinds in
+ * rhythmslide's `rhythmslide/ui/renderer.py` `_draw_transition` (© electrist9,
+ * GPL-3.0). 'fade' in the reference aliases 'crossfade' and is not exposed.
+ */
+export const CONCRETE_TRANSITIONS = ['crossfade', 'wipe_left', 'wipe_right', 'slide_left', 'slide_right', 'zoom'];
+
+/** Selectable transition settings: the six kinds plus per-switch random. */
+export const TRANSITIONS = [...CONCRETE_TRANSITIONS, 'random'];
+
+/** Slideshow background modes — port of renderer.py `background_mode`. */
+export const BACKGROUNDS = ['solid', 'dominant'];
+
+/** Validate/normalize a stored transition setting (invalid → 'crossfade'). */
+export function sanitizeTransition(value) {
+  const v = String(value ?? '');
+  return TRANSITIONS.includes(v) ? v : 'crossfade';
+}
+
+/** Validate/normalize a stored background setting (invalid → 'solid'). */
+export function sanitizeBackground(value) {
+  const v = String(value ?? '');
+  return BACKGROUNDS.includes(v) ? v : 'solid';
+}
+
+/**
+ * Draw one concrete transition kind uniformly from CONCRETE_TRANSITIONS.
+ * Used per photo switch when the setting is 'random'. Injectable rng (same
+ * convention as arrangeImages).
+ */
+export function pickRandomTransition(rng = Math.random) {
+  const i = Math.floor((Number(rng()) || 0) * CONCRETE_TRANSITIONS.length);
+  const idx = Math.min(CONCRETE_TRANSITIONS.length - 1, Math.max(0, i));
+  return CONCRETE_TRANSITIONS[idx];
+}
+
 /** Built-in fallback preset (rhythmslide defaults: up / 0 / 100 / forward). */
 export const BUILTIN_PRESET = Object.freeze({
   name: '',

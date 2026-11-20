@@ -7,9 +7,11 @@
  *
  *   - per-video photo folder (library.slideshowFolders + last-used fallback)
  *   - recursive image listing + data-URL cache via the slideshow IPC bridge
- *   - photo crossfade layer + corner video wipe (wipeGeometry from the port)
+ *   - photo transition layer (crossfade / wipe / slide / zoom, 100ms) +
+ *     corner video wipe (wipeGeometry from the port) + dominant-color background
  *   - live preset switching while a slideshow runs
- *   - the in-player popover (folder / preset / corner / size / order)
+ *   - the in-player popover (folder / preset / corner / size / order /
+ *     transition / background)
  *
  * A slideshow requires a loaded funscript — without one there are no switch
  * times, so enabling is refused (the ⋮ menu entry is hidden for scriptless
@@ -24,12 +26,23 @@ import {
   wipeGeometry,
   WIPE_MARGIN_PX,
   DEFAULT_WIPE_SIZE_DENOM,
+  TRANSITIONS,
+  CONCRETE_TRANSITIONS,
+  BACKGROUNDS,
+  sanitizeTransition,
+  sanitizeBackground,
+  pickRandomTransition,
 } from './slideshow-timing.js';
+import { dominantColorFromImageData } from './slideshow-color.js';
 
 const CACHE_MAX = 12;
 const PREFETCH_AHEAD = 2;
 /** Grace for the new video's script to load after a hand-off (ms). */
 const SCRIPT_GRACE_MS = 8000;
+/** Photo-switch transition duration — fixed 100ms (user requirement). */
+const TRANSITION_MS = 100;
+/** Side length of the tiny canvas used for dominant-color sampling (px). */
+const DOMINANT_SAMPLE = 48;
 
 const CORNERS = ['top_left', 'top_right', 'bottom_left', 'bottom_right'];
 const SIZES = [16, 8, 4]; // wipe area = 1/denom → small / medium / large
@@ -65,6 +78,8 @@ export class SlideshowController {
     this.onStateChange = opts.onStateChange || (() => {});
     this.onNotice = opts.onNotice || (() => {});
     this.t = opts.t || ((k) => k);
+    /** Injectable rng for the per-switch 'random' transition draw (tests). */
+    this._rng = typeof opts.rng === 'function' ? opts.rng : Math.random;
 
     this._active = false;
     this._folder = null;
@@ -78,6 +93,8 @@ export class SlideshowController {
     this._back = this.imgB;     // next img (gets new src, then fades in)
     this._cache = new Map();    // path -> data URL (insertion order = LRU-ish)
     this._inflight = new Set();
+    this._dominantCache = new Map(); // path -> '#rrggbb' | null (port of renderer.py _dominant)
+    this._holdTimers = new Set();    // pending outgoing-image hold timeouts (wipe/slide)
     this._sessionPresetName = null; // null = use settings default
     this._raf = 0;
     this._scriptGraceUntil = 0;
@@ -107,6 +124,8 @@ export class SlideshowController {
       corner: this.settings.get('player.slideshowCorner') || 'bottom_right',
       sizeDenom: this.settings.get('player.slideshowSizeDenom') || DEFAULT_WIPE_SIZE_DENOM,
       imageOrder: this.settings.get('player.slideshowImageOrder') || 'name',
+      transition: sanitizeTransition(this.settings.get('player.slideshowTransition')),
+      background: sanitizeBackground(this.settings.get('player.slideshowBackground')),
     };
   }
 
@@ -198,7 +217,9 @@ export class SlideshowController {
     const s = this.video.style;
     s.left = s.top = s.width = s.height = '';
     for (const img of [this.imgA, this.imgB]) {
-      img.classList.remove('slideshow-layer__img--visible');
+      for (const cls of [...img.classList]) {
+        if (cls.startsWith('slideshow-layer__img--')) img.classList.remove(cls);
+      }
       img.removeAttribute('src');
     }
     this._front = this.imgA;
@@ -208,6 +229,10 @@ export class SlideshowController {
     this._segment = 0;
     this._cache.clear();
     this._inflight.clear();
+    this._dominantCache.clear();
+    for (const timer of this._holdTimers) clearTimeout(timer);
+    this._holdTimers.clear();
+    this.layer.style.backgroundColor = '';
     this.onStateChange(this.state);
   }
 
@@ -220,6 +245,7 @@ export class SlideshowController {
   onVideoLoaded() {
     this._cache.clear();
     this._inflight.clear();
+    this._dominantCache.clear();
     this._images = [];
     this._switchTimes = [];
     this._actionsRef = null;
@@ -275,6 +301,7 @@ export class SlideshowController {
       if (res && !res.error && res.images.length) {
         this._cache.clear();
         this._inflight.clear();
+        this._dominantCache.clear();
         this._loadImages(res.images);
         this._showPhoto(photoIndexAt(this._images.length, this.currentPreset().order, this._segment));
       } else {
@@ -308,6 +335,21 @@ export class SlideshowController {
       this._images = arrangeImages(this._images, order);
       this._showPhoto(photoIndexAt(this._images.length, this.currentPreset().order, this._segment));
     }
+    this.onStateChange(this.state);
+  }
+
+  /** Photo-switch transition kind ('random' draws per switch). */
+  setTransition(mode) {
+    const v = sanitizeTransition(mode);
+    this.settings.set('player.slideshowTransition', v);
+    this.onStateChange(this.state);
+  }
+
+  /** 'solid' (CSS default) or 'dominant' (shown photo's dominant color). */
+  setBackgroundMode(mode) {
+    const v = sanitizeBackground(mode);
+    this.settings.set('player.slideshowBackground', v);
+    if (this._active) this._applyBackground();
     this.onStateChange(this.state);
   }
 
@@ -397,16 +439,107 @@ export class SlideshowController {
     });
   }
 
+  /** Resolve the stored transition setting; 'random' draws a concrete kind. */
+  _resolveTransition() {
+    const stored = sanitizeTransition(this.settings.get('player.slideshowTransition'));
+    return stored === 'random' ? pickRandomTransition(this._rng) : stored;
+  }
+
   _swap(url, idx) {
-    this._back.src = url;
-    // Force a reflow so the fade-in transition fires from opacity 0.
-    void this._back.offsetWidth;
-    this._back.classList.add('slideshow-layer__img--visible');
-    this._front.classList.remove('slideshow-layer__img--visible');
+    const mode = this._resolveTransition();
+    const enterClass = `slideshow-layer__img--enter-${mode}`;
+    const back = this._back;
+    const front = this._front;
+    // Incoming on top (DOM order) — safe: .slideshow-layer is its own
+    // stacking context, so this never escapes into the wrapper/V-R layers.
+    this.layer.appendChild(back);
+    // Commit the enter state with transitions off, then release so the
+    // 100ms CSS transition animates enter -> visible.
+    back.classList.add('slideshow-layer__img--no-anim', enterClass);
+    back.src = url;
+    void back.offsetWidth;
+    back.classList.remove('slideshow-layer__img--no-anim', enterClass);
+    back.classList.add('slideshow-layer__img--visible');
+    if (mode === 'crossfade' || mode === 'zoom') {
+      front.classList.remove('slideshow-layer__img--visible');
+    } else {
+      // wipe/slide: the outgoing photo stays fully visible underneath
+      // until the incoming one has finished covering it.
+      const timer = setTimeout(() => {
+        this._holdTimers.delete(timer);
+        front.classList.remove('slideshow-layer__img--visible');
+      }, TRANSITION_MS);
+      this._holdTimers.add(timer);
+    }
     const tmp = this._front;
     this._front = this._back;
     this._back = tmp;
     this._shownIdx = idx;
+    this._applyBackground();
+  }
+
+  /** Paint the layer background per the background setting (renderer.py port). */
+  _applyBackground() {
+    if (sanitizeBackground(this.settings.get('player.slideshowBackground')) !== 'dominant') {
+      this.layer.style.backgroundColor = '';
+      return;
+    }
+    const path = this._images[this._shownIdx];
+    if (!path) return;
+    if (this._dominantCache.has(path)) {
+      const cached = this._dominantCache.get(path);
+      if (cached) this.layer.style.backgroundColor = cached;
+      return;
+    }
+    const url = this._cache.get(path);
+    if (!url) return;
+    this._ensureDominant(path, url).then((color) => {
+      if (!this._active) return;
+      if (sanitizeBackground(this.settings.get('player.slideshowBackground')) !== 'dominant') return;
+      if (this._images[this._shownIdx] !== path) return; // stale (folder/order switch)
+      if (color) this.layer.style.backgroundColor = color;
+    });
+  }
+
+  /**
+   * Dominant color of a cached data URL: draw the image aspect-fit into a
+   * 48x48 canvas (renderer.py scales to 48x48 KeepAspectRatio) and bucket
+   * the pixels. data: URLs never taint the canvas. Caches failures as null.
+   */
+  _ensureDominant(path, url) {
+    if (this._dominantCache.has(path)) return Promise.resolve(this._dominantCache.get(path));
+    const computed = new Promise((resolve) => {
+      let color = null;
+      try {
+        const img = new Image();
+        img.onload = () => {
+          try {
+            const iw = img.naturalWidth || img.width;
+            const ih = img.naturalHeight || img.height;
+            if (iw > 0 && ih > 0) {
+              const scale = Math.min(DOMINANT_SAMPLE / iw, DOMINANT_SAMPLE / ih);
+              const w = Math.max(1, Math.round(iw * scale));
+              const h = Math.max(1, Math.round(ih * scale));
+              const canvas = document.createElement('canvas');
+              canvas.width = w;
+              canvas.height = h;
+              const ctx = canvas.getContext('2d');
+              if (ctx) {
+                ctx.drawImage(img, 0, 0, iw, ih, 0, 0, w, h);
+                color = dominantColorFromImageData(ctx.getImageData(0, 0, w, h).data, w, h);
+              }
+            }
+          } catch { color = null; }
+          resolve(color);
+        };
+        img.onerror = () => resolve(null);
+        img.src = url;
+      } catch { resolve(null); }
+    });
+    return computed.then((color) => {
+      this._dominantCache.set(path, color);
+      return color;
+    });
   }
 
   async _loadImage(path) {
@@ -593,6 +726,41 @@ export function createSlideshowPopover({ controller, popoverEl, t }) {
       onClick: () => controller.setImageOrder('random'),
     }));
     popoverEl.appendChild(orderSec);
+
+    // Transition effect ------------------------------------------------------
+    const transSec = section(tt('player.slideshow.transitionLabel'));
+    const transRow = row(transSec);
+    const transitionKey = {
+      crossfade: 'player.slideshow.transitionCrossfade',
+      wipe_left: 'player.slideshow.transitionWipeLeft',
+      wipe_right: 'player.slideshow.transitionWipeRight',
+      slide_left: 'player.slideshow.transitionSlideLeft',
+      slide_right: 'player.slideshow.transitionSlideRight',
+      zoom: 'player.slideshow.transitionZoom',
+      random: 'player.slideshow.transitionRandom',
+    };
+    for (const mode of TRANSITIONS) {
+      transRow.appendChild(btn(tt(transitionKey[mode]), {
+        current: st.transition === mode,
+        onClick: () => controller.setTransition(mode),
+      }));
+    }
+    popoverEl.appendChild(transSec);
+
+    // Background ---------------------------------------------------------------
+    const bgSec = section(tt('player.slideshow.backgroundLabel'));
+    const bgRow = row(bgSec);
+    const bgKey = {
+      solid: 'player.slideshow.backgroundSolid',
+      dominant: 'player.slideshow.backgroundDominant',
+    };
+    for (const mode of BACKGROUNDS) {
+      bgRow.appendChild(btn(tt(bgKey[mode]), {
+        current: st.background === mode,
+        onClick: () => controller.setBackgroundMode(mode),
+      }));
+    }
+    popoverEl.appendChild(bgSec);
   };
 
   const open = (anchorEl) => {

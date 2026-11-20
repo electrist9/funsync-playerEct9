@@ -66,11 +66,20 @@ const DEFAULTS = {
       //      order: 'forward'|'pingpong' }] (sanitized on read).
       // slideshowPreset: name of the DEFAULT preset applied on enable ('' =
       //   built-in up/0/100/forward). Runtime popover picks are session-only.
+      // slideshowTransition: photo-switch effect — 'crossfade' (default),
+      //   'wipe_left', 'wipe_right', 'slide_left', 'slide_right', 'zoom',
+      //   or 'random' (a concrete kind drawn per switch). Duration is fixed
+      //   at 100ms. Port of rhythmslide's renderer.py _draw_transition.
+      // slideshowBackground: photo-layer backdrop — 'solid' (default, CSS
+      //   black) or 'dominant' (the shown photo's most-frequent color
+      //   bucket average; port of renderer.py _dominant_color).
       slideshowCorner: 'bottom_right',
       slideshowSizeDenom: 8,
       slideshowImageOrder: 'name',
       slideshowPresets: [],
       slideshowPreset: '',
+      slideshowTransition: 'crossfade',
+      slideshowBackground: 'solid',
       // Keep the video playing in a docked corner overlay while browsing
       // the library, instead of stopping on leave (mini-player). Default on.
       miniPlayer: true,
