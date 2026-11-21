@@ -1479,6 +1479,29 @@ html, body {
   font-size: 13px;
   opacity: 0.85;
 }
+/* Compact dropdowns for long option lists (presets, transitions) so the
+   popover stays short even with many presets registered. */
+.slideshow-popover__select {
+  align-self: stretch;
+  margin: 2px 8px 4px;
+  background: var(--video-overlay-control-hover);
+  border: 1px solid var(--video-overlay-border);
+  border-radius: 6px;
+  color: var(--video-overlay-text);
+  font-family: var(--font-family);
+  font-size: 13px;
+  min-height: 32px;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+.slideshow-popover__select option {
+  background: var(--video-overlay-bg);
+  color: var(--video-overlay-text);
+}
+.slideshow-popover__select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
 
 /* Persistent text labels on key buttons (Editor / Devices / Fullscreen).
    Hidden by default — only revealed at desktop widths (≥1024px) where

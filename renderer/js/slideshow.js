@@ -640,6 +640,29 @@ export function createSlideshowPopover({ controller, popoverEl, t }) {
     return r;
   };
 
+  // Compact dropdown for long option lists (presets, transitions): one
+  // line in the popover instead of one radio item per option.
+  const selectEl = (options, { value, label, onChange }) => {
+    const sel = document.createElement('select');
+    sel.className = 'slideshow-popover__select';
+    sel.setAttribute('aria-label', label);
+    for (const opt of options) {
+      const o = document.createElement('option');
+      o.value = opt.value;
+      o.textContent = opt.label;
+      sel.appendChild(o);
+    }
+    // Guard against a stored value that is no longer offered (e.g. a
+    // preset deleted while selected): fall back to the first option.
+    sel.value = options.some((opt) => opt.value === value) ? value : options[0].value;
+    sel.addEventListener('change', (e) => {
+      e.stopPropagation();
+      onChange(sel.value);
+      refresh();
+    });
+    return sel;
+  };
+
   const refresh = () => {
     if (popoverEl.hidden) return;
     const st = controller.state;
@@ -671,16 +694,17 @@ export function createSlideshowPopover({ controller, popoverEl, t }) {
 
     // Preset ---------------------------------------------------------------
     const presetSec = section(tt('player.slideshow.presetLabel'));
-    const names = ['', ...st.presets.map((p) => p.name)];
-    for (const name of names) {
-      const label = name === ''
-        ? tt('player.slideshow.presetBuiltin')
-        : name;
-      presetSec.appendChild(btn(label, {
-        current: (st.presetName || '') === name,
-        onClick: () => controller.setPresetName(name),
-      }));
-    }
+    presetSec.appendChild(selectEl(
+      [
+        { value: '', label: tt('player.slideshow.presetBuiltin') },
+        ...st.presets.map((p) => ({ value: p.name, label: p.name })),
+      ],
+      {
+        value: st.presetName || '',
+        label: tt('player.slideshow.presetLabel'),
+        onChange: (v) => controller.setPresetName(v),
+      },
+    ));
     popoverEl.appendChild(presetSec);
 
     // Corner ---------------------------------------------------------------
@@ -729,7 +753,6 @@ export function createSlideshowPopover({ controller, popoverEl, t }) {
 
     // Transition effect ------------------------------------------------------
     const transSec = section(tt('player.slideshow.transitionLabel'));
-    const transRow = row(transSec);
     const transitionKey = {
       crossfade: 'player.slideshow.transitionCrossfade',
       wipe_left: 'player.slideshow.transitionWipeLeft',
@@ -739,12 +762,14 @@ export function createSlideshowPopover({ controller, popoverEl, t }) {
       zoom: 'player.slideshow.transitionZoom',
       random: 'player.slideshow.transitionRandom',
     };
-    for (const mode of TRANSITIONS) {
-      transRow.appendChild(btn(tt(transitionKey[mode]), {
-        current: st.transition === mode,
-        onClick: () => controller.setTransition(mode),
-      }));
-    }
+    transSec.appendChild(selectEl(
+      TRANSITIONS.map((mode) => ({ value: mode, label: tt(transitionKey[mode]) })),
+      {
+        value: st.transition,
+        label: tt('player.slideshow.transitionLabel'),
+        onChange: (v) => controller.setTransition(v),
+      },
+    ));
     popoverEl.appendChild(transSec);
 
     // Background ---------------------------------------------------------------
