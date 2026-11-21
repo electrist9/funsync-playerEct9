@@ -241,15 +241,76 @@
   cursor: pointer;
 }
 
-/* Photo slideshow preset rows — one named switch-rule bundle per row:
-   name, switch mode, threshold, cumulative step, photo order, delete.
-   Wraps on narrow panels so the number fields never squash. */
-.settings-panel__slideshow-preset-row {
+/* Photo slideshow presets — one collapsible card per named switch-rule
+   bundle. Collapsed: a single header line (chevron + name + mode/threshold/
+   step/order summary) with the delete button, so eight presets stay compact.
+   Expanded: the full edit row (name, switch mode, threshold, cumulative
+   step, photo order), which wraps on narrow panels so the number fields
+   never squash. */
+.settings-panel__slideshow-preset {
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-bottom: 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+}
+.settings-panel__slideshow-preset-header {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px 10px;
+  background: none;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.settings-panel__slideshow-preset-header:hover {
+  background: var(--surface-hover, rgba(255, 255, 255, 0.04));
+}
+.settings-panel__slideshow-preset-chevron {
+  flex: 0 0 auto;
+  transition: transform var(--transition-fast, 120ms) ease;
+}
+.settings-panel__slideshow-preset--expanded .settings-panel__slideshow-preset-chevron {
+  transform: rotate(90deg);
+}
+.settings-panel__slideshow-preset-summary-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.settings-panel__slideshow-preset-summary-meta {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted, rgba(255, 255, 255, 0.55));
+  font-size: 12px;
+}
+.settings-panel__slideshow-preset-delete {
+  flex: 0 0 auto;
+  margin-right: 6px;
+}
+.settings-panel__slideshow-preset-body {
+  display: none;
+  flex: 1 0 100%;
   align-items: center;
   gap: 6px;
-  margin-bottom: 8px;
   flex-wrap: wrap;
+  padding: 8px 10px;
+  border-top: 1px solid var(--border-subtle);
+}
+.settings-panel__slideshow-preset--expanded .settings-panel__slideshow-preset-body {
+  display: flex;
 }
 .settings-panel__slideshow-preset-name {
   flex: 1 1 120px;

@@ -1251,7 +1251,9 @@
       "fillerDepth": "Profondeur",
       "fillerAbsolute": "Définir une plage exacte",
       "fillerAbsMin": "Minimum",
-      "fillerAbsMax": "Maximum"
+      "fillerAbsMax": "Maximum",
+      "slideshowPresetExpand": "Développer le préréglage",
+      "slideshowPresetCollapse": "Réduire le préréglage"
     },
     "appearance": {
       "themeHeader": "Thème",

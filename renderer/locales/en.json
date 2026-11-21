@@ -1225,7 +1225,9 @@
       "fillerDepth": "Depth",
       "fillerAbsolute": "Set exact range",
       "fillerAbsMin": "Lowest",
-      "fillerAbsMax": "Highest"
+      "fillerAbsMax": "Highest",
+      "slideshowPresetExpand": "Expand preset",
+      "slideshowPresetCollapse": "Collapse preset"
     },
     "appearance": {
       "themeHeader": "Theme",

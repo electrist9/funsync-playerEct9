@@ -1251,7 +1251,9 @@
       "fillerDepth": "深度",
       "fillerAbsolute": "设定精确范围",
       "fillerAbsMin": "最小值",
-      "fillerAbsMax": "最大值"
+      "fillerAbsMax": "最大值",
+      "slideshowPresetExpand": "展开预设",
+      "slideshowPresetCollapse": "折叠预设"
     },
     "appearance": {
       "themeHeader": "主题",

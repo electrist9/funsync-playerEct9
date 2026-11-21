@@ -1251,7 +1251,9 @@
       "fillerDepth": "깊이",
       "fillerAbsolute": "범위 직접 지정",
       "fillerAbsMin": "최소",
-      "fillerAbsMax": "최대"
+      "fillerAbsMax": "최대",
+      "slideshowPresetExpand": "프리셋 펼치기",
+      "slideshowPresetCollapse": "프리셋 접기"
     },
     "appearance": {
       "themeHeader": "테마",

@@ -1,7 +1,7 @@
 // SettingsPanel — App settings modal with tabs (Sources, Playback, Data)
 
 import { Modal } from './modal.js';
-import { icon, Trash2, Pencil, GripVertical } from '../js/icons.js';
+import { icon, Trash2, Pencil, GripVertical, ChevronRight } from '../js/icons.js';
 import { showToast } from '../js/toast.js';
 import { classifyOverlap } from '../js/path-utils.js';
 import { t, SUPPORTED_LOCALES, LOCALE_LABELS, setLocale, getCurrentLocale, translatePage } from '../js/i18n.js';
@@ -1695,6 +1695,17 @@ export class SettingsPanel {
         pingpong: 'settingsPanel.playback.slideshowPhotoPingPong',
       };
 
+      // Collapsed-by-default preset cards. Names the user expanded (or
+      // just added) stay open across re-renders, so eight presets occupy
+      // eight single-line headers instead of eight wrapping edit rows.
+      const expandedPresets = new Set();
+
+      const presetMeta = (p) => {
+        const modeLabel = t(`settingsPanel.playback.slideshowMode${String(p.mode).charAt(0).toUpperCase()}${String(p.mode).slice(1)}`);
+        const orderLabel = t(PHOTO_ORDER_LABEL_KEYS[p.order] || PHOTO_ORDER_LABEL_KEYS.forward);
+        return `${modeLabel} · ${p.threshold} · ${p.step} · ${orderLabel}`;
+      };
+
       const renderPresetRows = () => {
         if (!ssList) return;
         ssList.replaceChildren();
@@ -1707,8 +1718,35 @@ export class SettingsPanel {
           return;
         }
         presets.forEach((p, idx) => {
-          const row = document.createElement('div');
-          row.className = 'settings-panel__slideshow-preset-row';
+          const card = document.createElement('div');
+          card.className = 'settings-panel__slideshow-preset';
+
+          const header = document.createElement('button');
+          header.type = 'button';
+          header.className = 'settings-panel__slideshow-preset-header';
+
+          const chevron = icon(ChevronRight, { width: 14, height: 14 });
+          chevron.classList.add('settings-panel__slideshow-preset-chevron');
+
+          const nameSpan = document.createElement('span');
+          nameSpan.className = 'settings-panel__slideshow-preset-summary-name';
+          nameSpan.textContent = p.name;
+
+          const metaSpan = document.createElement('span');
+          metaSpan.className = 'settings-panel__slideshow-preset-summary-meta';
+          metaSpan.textContent = presetMeta(p);
+
+          header.append(chevron, nameSpan, metaSpan);
+
+          const delBtn = document.createElement('button');
+          delBtn.type = 'button';
+          delBtn.className = 'settings-panel__field-reset settings-panel__slideshow-preset-delete';
+          delBtn.title = t('settingsPanel.playback.slideshowDeletePreset');
+          delBtn.setAttribute('aria-label', t('settingsPanel.playback.slideshowDeletePreset'));
+          delBtn.appendChild(icon(Trash2, { width: 14, height: 14 }));
+
+          const body = document.createElement('div');
+          body.className = 'settings-panel__slideshow-preset-body';
 
           const nameInput = document.createElement('input');
           nameInput.type = 'text';
@@ -1755,14 +1793,35 @@ export class SettingsPanel {
           }
           orderSel.value = p.order;
 
-          const delBtn = document.createElement('button');
-          delBtn.type = 'button';
-          delBtn.className = 'settings-panel__field-reset';
-          delBtn.title = t('settingsPanel.playback.slideshowDeletePreset');
-          delBtn.setAttribute('aria-label', t('settingsPanel.playback.slideshowDeletePreset'));
-          delBtn.appendChild(icon(Trash2, { width: 14, height: 14 }));
+          body.append(nameInput, modeSel, thrInput, stepInput, orderSel);
 
-          row.append(nameInput, modeSel, thrInput, stepInput, orderSel, delBtn);
+          // Keep the collapsed header in sync with edits.
+          const syncSummary = () => {
+            nameSpan.textContent = nameInput.value.trim() || p.name;
+            metaSpan.textContent = presetMeta({
+              mode: modeSel.value,
+              threshold: thrInput.value,
+              step: stepInput.value,
+              order: orderSel.value,
+            });
+          };
+
+          const setExpanded = (next) => {
+            card.classList.toggle('settings-panel__slideshow-preset--expanded', next);
+            header.setAttribute('aria-expanded', String(next));
+            header.setAttribute('aria-label', t(next
+              ? 'settingsPanel.playback.slideshowPresetCollapse'
+              : 'settingsPanel.playback.slideshowPresetExpand'));
+          };
+          setExpanded(expandedPresets.has(p.name));
+
+          header.addEventListener('click', () => {
+            const next = !card.classList.contains('settings-panel__slideshow-preset--expanded');
+            const key = nameInput.value.trim() || p.name;
+            if (next) expandedPresets.add(key);
+            else expandedPresets.delete(key);
+            setExpanded(next);
+          });
 
           const commit = () => {
             const list = readPresets();
@@ -1775,7 +1834,9 @@ export class SettingsPanel {
               // names — that would delete the whole row under the
               // user's feet, so snap back to the old name instead.
               nameInput.value = cur.name;
-            } else {
+            } else if (trimmed !== cur.name) {
+              // Keep the expanded state keyed to the renamed preset.
+              if (expandedPresets.delete(cur.name)) expandedPresets.add(trimmed);
               cur.name = trimmed;
             }
             cur.mode = modeSel.value;
@@ -1784,6 +1845,7 @@ export class SettingsPanel {
             cur.order = orderSel.value;
             writePresets(list);
             refreshPresetSelect();
+            syncSummary();
           };
           for (const el of [nameInput, modeSel, thrInput, stepInput, orderSel]) {
             el.addEventListener('change', commit);
@@ -1794,6 +1856,7 @@ export class SettingsPanel {
             const removed = list[idx]?.name;
             list.splice(idx, 1);
             writePresets(list);
+            if (removed) expandedPresets.delete(removed);
             if (removed && (this._settings.get('player.slideshowPreset') || '') === removed) {
               this._settings.set('player.slideshowPreset', '');
             }
@@ -1801,7 +1864,8 @@ export class SettingsPanel {
             refreshPresetSelect();
           });
 
-          ssList.appendChild(row);
+          card.append(header, delBtn, body);
+          ssList.appendChild(card);
         });
       };
 
@@ -1835,6 +1899,7 @@ export class SettingsPanel {
           n += 1;
           candidate = `${base} ${n}`;
         }
+        expandedPresets.add(candidate);
         list.push(makePreset(candidate, 'up', 0, 100, 'forward'));
         writePresets(list);
         renderPresetRows();

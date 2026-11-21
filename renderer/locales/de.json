@@ -1251,7 +1251,9 @@
       "fillerDepth": "Tiefe",
       "fillerAbsolute": "Genauen Bereich festlegen",
       "fillerAbsMin": "Minimum",
-      "fillerAbsMax": "Maximum"
+      "fillerAbsMax": "Maximum",
+      "slideshowPresetExpand": "Preset ausklappen",
+      "slideshowPresetCollapse": "Preset einklappen"
     },
     "appearance": {
       "themeHeader": "Design",

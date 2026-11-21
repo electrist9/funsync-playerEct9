@@ -1251,7 +1251,9 @@
       "fillerDepth": "Глубина",
       "fillerAbsolute": "Задать точный диапазон",
       "fillerAbsMin": "Минимум",
-      "fillerAbsMax": "Максимум"
+      "fillerAbsMax": "Максимум",
+      "slideshowPresetExpand": "Развернуть пресет",
+      "slideshowPresetCollapse": "Свернуть пресет"
     },
     "appearance": {
       "themeHeader": "Тема",

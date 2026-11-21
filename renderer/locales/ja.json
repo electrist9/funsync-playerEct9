@@ -1251,7 +1251,9 @@
       "fillerDepth": "深さ",
       "fillerAbsolute": "範囲を数値で指定",
       "fillerAbsMin": "最小",
-      "fillerAbsMax": "最大"
+      "fillerAbsMax": "最大",
+      "slideshowPresetExpand": "プリセットを展開",
+      "slideshowPresetCollapse": "プリセットを折りたたむ"
     },
     "appearance": {
       "themeHeader": "テーマ",
