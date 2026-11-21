@@ -73,6 +73,11 @@ const DEFAULTS = {
       // slideshowBackground: photo-layer backdrop — 'solid' (default, CSS
       //   black) or 'dominant' (the shown photo's most-frequent color
       //   bucket average; port of renderer.py _dominant_color).
+      // slideshowFolder: the ONE photo folder shared by every slideshow
+      //   (absolute path, persisted app-wide; '' = not chosen yet, the
+      //   next enable asks). Replaces the old per-video map
+      //   (library.slideshowFolders), dropped 2026-11-21.
+      slideshowFolder: '',
       slideshowCorner: 'bottom_right',
       slideshowSizeDenom: 8,
       slideshowImageOrder: 'name',
@@ -121,14 +126,11 @@ const DEFAULTS = {
       // Tri-state covers both flipping a missed VR file → VR and
       // clearing a false-positive on a flat file with a VR-like token.
       manualVRType: {},
-      // Per-video slideshow photo folder (photo slideshow during playback).
-      // Keyed by the video's normalized path (same key shape as
-      // manualVariants/manualVRType); value is an absolute folder path.
-      // Videos without an entry fall back to the last-used slideshow folder.
-      slideshowFolders: {},
-      // Last photo folder chosen for any slideshow — the fallback when the
-      // current video has no slideshowFolders entry yet.
-      slideshowLastFolder: '',
+      // NOTE: the old per-video slideshow photo folder map
+      // (slideshowFolders) and its last-used fallback (slideshowLastFolder)
+      // were dropped 2026-11-21 in favour of the shared player.slideshowFolder.
+      // Stale copies may linger in existing store JSON; the renderer reads
+      // slideshowLastFolder once as a migration seed and never writes either.
       // Per-path VR-as-flat playback override. Legacy two-string shape
       // — value was `'left'` or `'right'`. Kept indefinitely as a read
       // fallback for downgrade safety (a user reverting to <0.7.x still

@@ -5,7 +5,8 @@
  * rhythmslide's funscript.py (© electrist9, GPL-3.0). This module is the
  * player-side glue only:
  *
- *   - per-video photo folder (library.slideshowFolders + last-used fallback)
+ *   - one shared photo folder for the whole app (player.slideshowFolder,
+ *     persisted; seeded once from the old library.slideshowLastFolder)
  *   - recursive image listing + data-URL cache via the slideshow IPC bridge
  *   - photo transition layer (crossfade / wipe / slide / zoom, 100ms) +
  *     corner video wipe (wipeGeometry from the port) + dominant-color background
@@ -59,7 +60,6 @@ export class SlideshowController {
    * @param {object} opts.settings      dataService (dotted get/set)
    * @param {() => Array|null} opts.getActions      funscript actions
    * @param {() => boolean} opts.isScriptLoaded
-   * @param {() => string|null} opts.getVideoPath   current video path (map key)
    * @param {(state: object) => void} opts.onStateChange
    * @param {(kind: string) => void} opts.onNotice  'no-script' | 'no-images' | 'read-failed'
    * @param {(key: string) => string} opts.t
@@ -74,7 +74,6 @@ export class SlideshowController {
     this.settings = opts.settings;
     this.getActions = opts.getActions;
     this.isScriptLoaded = opts.isScriptLoaded;
-    this.getVideoPath = opts.getVideoPath;
     this.onStateChange = opts.onStateChange || (() => {});
     this.onNotice = opts.onNotice || (() => {});
     this.t = opts.t || ((k) => k);
@@ -137,22 +136,19 @@ export class SlideshowController {
     return resolvePreset(this.presets(), this._sessionPresetName ?? (this.settings.get('player.slideshowPreset') || ''));
   }
 
-  /** Per-video folder from the map, else the last folder used anywhere. */
+  /**
+   * The shared photo folder (player.slideshowFolder) — one folder for the
+   * whole app, not per video. Seeded once from the pre-2026-11-21
+   * library.slideshowLastFolder so existing users keep their choice.
+   */
   resolveFolder() {
-    const key = this.getVideoPath();
-    const map = this.settings.get('library.slideshowFolders') || {};
-    if (key && map[key]) return map[key];
-    return this.settings.get('library.slideshowLastFolder') || null;
+    return this.settings.get('player.slideshowFolder')
+      || this.settings.get('library.slideshowLastFolder')
+      || null;
   }
 
   _persistFolder(folder) {
-    const key = this.getVideoPath();
-    if (key) {
-      const map = { ...(this.settings.get('library.slideshowFolders') || {}) };
-      map[key] = folder;
-      this.settings.set('library.slideshowFolders', map);
-    }
-    this.settings.set('library.slideshowLastFolder', folder);
+    this.settings.set('player.slideshowFolder', folder);
     this._folder = folder;
   }
 
@@ -169,7 +165,7 @@ export class SlideshowController {
     }
     let folder = this.resolveFolder();
     if (!folder) {
-      // First time for this video (and ever): ask for the photo folder now.
+      // No folder chosen yet (ever): ask for the shared photo folder now.
       try { folder = await window.funsync.selectDirectory(); } catch { folder = null; }
       if (!folder) return false;
     }
@@ -238,9 +234,9 @@ export class SlideshowController {
 
   /**
    * Called from loadVideo() after the engine teardown. Keeps the slideshow
-   * running across a queue hand-off when the new video has a folder + a
-   * script arriving; disables (with a notice) when the new video can't
-   * support it.
+   * running across a queue hand-off when a script is arriving for the new
+   * video (the photo folder is shared app-wide); disables (with a notice)
+   * when the new video can't support it.
    */
   onVideoLoaded() {
     this._cache.clear();

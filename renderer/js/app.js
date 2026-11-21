@@ -362,10 +362,11 @@ class App {
     });
     this._wireInlineVizToggles();
 
-    // Photo slideshow (rhythmslide-style): photos from a per-video folder
-    // switch on the script's switch times while the video shrinks to a
-    // corner wipe. Timing rules live in slideshow-timing.js; this is the
-    // player-side glue (folder map, image cache, photo layer, wipe).
+    // Photo slideshow (rhythmslide-style): photos from one shared photo
+    // folder (player.slideshowFolder) switch on the script's switch times
+    // while the video shrinks to a corner wipe. Timing rules live in
+    // slideshow-timing.js; this is the player-side glue (folder setting,
+    // image cache, photo layer, wipe).
     this.slideshow = new SlideshowController({
       video: this.videoPlayer.video,
       wrapper: document.getElementById('video-wrapper'),
@@ -376,7 +377,6 @@ class App {
       settings: this.settings,
       getActions: () => this.funscriptEngine?.getActions() ?? null,
       isScriptLoaded: () => !!this.funscriptEngine?.isLoaded,
-      getVideoPath: () => this._currentVideoPath,
       onStateChange: () => this._syncSlideshowUi?.(),
       onNotice: (kind) => this._slideshowNotice(kind),
       t,
