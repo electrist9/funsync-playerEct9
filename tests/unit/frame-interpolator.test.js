@@ -490,6 +490,94 @@ describe('FrameInterpolator activate/deactivate canvas visibility', () => {
 });
 
 // ---------------------------------------------------------------------------
+// 6b. Upscale-only mode — FI off must stop interpolation even with _rt loaded
+// ---------------------------------------------------------------------------
+
+describe('FrameInterpolator upscale-only mode', () => {
+  function afterCopyFixture(enabled) {
+    const rt = { prepPair: vi.fn(), runT: vi.fn(), w: 64, h: 64 };
+    const fi = bareInterpolator({
+      _active: true,
+      _enabled: enabled,
+      _upscale: true,
+      _factor: '4',
+      _rt: rt,
+      _curTex: { t: 'cur' },
+      _ring: [[{ t: 'b0' }, { t: 'b1' }, { t: 'b2' }], [{ t: 'c0' }, { t: 'c1' }, { t: 'c2' }]],
+      _parity: 0,
+      _presentQ: [],
+      _pushPresent: vi.fn(),
+      _prevTex: null,
+    });
+    return { fi, rt };
+  }
+
+  it('skips mid generation when FI is off but the loaded _rt is still present', () => {
+    const { fi, rt } = afterCopyFixture(false);
+    const next = { t: 'next' };
+    fi._afterCopy(next);
+    expect(rt.prepPair).not.toHaveBeenCalled();
+    expect(rt.runT).not.toHaveBeenCalled();
+    expect(fi._pushPresent).toHaveBeenCalledTimes(1);
+    expect(fi._pushPresent).toHaveBeenCalledWith(next, false);
+    expect(fi._curTex).toBe(next);
+  });
+
+  it('still generates mids when FI is on (control)', () => {
+    const { fi, rt } = afterCopyFixture(true);
+    fi._afterCopy({ t: 'next' });
+    expect(rt.prepPair).toHaveBeenCalledTimes(1);
+    expect(rt.runT).toHaveBeenCalledTimes(3); // factor 4 → 3 mids
+    expect(fi._pushPresent).toHaveBeenCalledTimes(4); // 3 mids + the real frame
+  });
+
+  it('HUD omits the factor in upscale-only mode', () => {
+    const fi = bareInterpolator({
+      _hud: true,
+      _hudEl: { textContent: '', hidden: false },
+      _enabled: false,
+      _upscale: true,
+      _factor: '4',
+      _srcFps: 25,
+      _outFps: 25,
+      _gpuName: 'NVIDIA GeForce RTX 4070 SUPER',
+    });
+    fi._updateHud();
+    expect(fi._hudEl.textContent).toBe('SR2× 25→25fps · NVIDIA GeForce RTX 4070 SUPER');
+    fi._enabled = true;
+    fi._outFps = 100;
+    fi._updateHud();
+    expect(fi._hudEl.textContent).toBe('4× SR2× 25→100fps · NVIDIA GeForce RTX 4070 SUPER');
+  });
+
+  it('presents each unique frame once and skips redundant re-presents', () => {
+    const fi = bareInterpolator({
+      _active: true,
+      _presentQ: [{ tex: { t: 'a' }, mid: false }],
+      _lastTex: null,
+      _present: vi.fn(),
+      _boundRaf: () => {},
+      _outCount: 0,
+      _lastRafAt: 0,
+      _aimdAt: 0,
+      _lastOutAt: 0,
+      _lastHudAt: 0,
+      _queueSum: 0,
+      _queueN: 0,
+    });
+    fi._rafLoop(1000);
+    expect(fi._present).toHaveBeenCalledTimes(1);
+    expect(fi._outFps).toBe(1); // out-fps counts unique frames, not refresh ticks
+    fi._rafLoop(1008); // empty queue → no duplicate blit at the refresh rate
+    expect(fi._present).toHaveBeenCalledTimes(1);
+    fi._presentDirty = true; // canvas cleared (resize) → force one redraw
+    fi._rafLoop(1016);
+    expect(fi._present).toHaveBeenCalledTimes(2);
+    expect(fi._presentDirty).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // 7. VideoPlayer integration
 // ---------------------------------------------------------------------------
 

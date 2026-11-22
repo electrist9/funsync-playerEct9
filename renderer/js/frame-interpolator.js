@@ -521,6 +521,10 @@ export class FrameInterpolator {
     const needSr = this._upscale;
     const rtOk = !!this._rt && this._rt.w === W && this._rt.h === H;
     const srOk = !!this._sr && this._srW === W && this._srH === H;
+    // NOTE: a loaded _rt is deliberately NOT released when FI goes off with
+    // upscale on — the capture/present loops are still live and destroying
+    // the model + textures under them throws ("Buffer used in submit while
+    // destroyed"). _afterCopy gates on _enabled, so the idle model is inert.
     if ((!needRt || rtOk) && (!needSr || srOk)) return;
     if (this._modelPromise) return this._modelPromise;
 
@@ -761,7 +765,10 @@ export class FrameInterpolator {
     if (!this._active) return;
     const factor = this._effectiveFactor();
 
-    if (this._curTex && this._rt && factor > 1) {
+    // _enabled gates interpolation even while the overlay stays alive for the
+    // upscale-only pass — turning FI off with upscale on must stop generating
+    // mids immediately, before the async model rebuild releases _rt.
+    if (this._enabled && this._curTex && this._rt && factor > 1) {
       const bank = this._ring[this._parity];
       try {
         this._rt.prepPair(this._curTex, next);
@@ -828,11 +835,28 @@ export class FrameInterpolator {
     this._lastRafAt = now;
 
     const entry = this._presentQ.shift();
-    const tex = entry ? entry.tex : this._lastTex;
-    if (tex) {
-      this._present(tex);
-      this._lastTex = tex;
-      this._outCount++;
+    if (entry) {
+      // A throwing present (e.g. a texture destroyed by a concurrent model
+      // rebuild) must not abort the rest of the frame — that froze the HUD
+      // and the out-fps counter until the next toggle.
+      try {
+        this._present(entry.tex);
+        this._lastTex = entry.tex;
+        this._outCount++;
+      } catch (err) {
+        console.warn('[frame-interp] present failed:', err?.message || err);
+      }
+    } else if (this._lastTex && this._presentDirty) {
+      // Queue empty: the canvas still shows _lastTex, so skip the redundant
+      // blit — re-presenting duplicates at the refresh rate burned GPU in
+      // upscale-only mode (and inflated the HUD out-fps to the refresh rate).
+      // Redraw only after the canvas was cleared (resize/activate).
+      try {
+        this._present(this._lastTex);
+      } catch (err) {
+        console.warn('[frame-interp] present failed:', err?.message || err);
+      }
+      this._presentDirty = false;
     }
 
     this._queueSum += this._presentQ.length;
@@ -863,12 +887,13 @@ export class FrameInterpolator {
 
   _updateHud() {
     if (!this._hudEl) return;
-    const f = this._effectiveFactor();
-    const sr = this._upscale ? ' SR2×' : '';
+    const parts = [];
+    if (this._enabled) parts.push(`${this._effectiveFactor()}×`);
+    if (this._upscale) parts.push('SR2×');
     const src = this._srcFps ? Math.round(this._srcFps) : '?';
     const out = this._outFps ? Math.round(this._outFps) : '?';
     const gpu = this._gpuName ? ` · ${this._gpuName.slice(0, 32)}` : '';
-    this._hudEl.textContent = `${f}×${sr} ${src}→${out}fps${gpu}`;
+    this._hudEl.textContent = `${parts.join(' ')} ${src}→${out}fps${gpu}`;
   }
 
   // ------------------------------------------------------------------
@@ -884,6 +909,7 @@ export class FrameInterpolator {
       this.canvas.width = w;
       this.canvas.height = h;
       this._rect = null;
+      this._presentDirty = true;
     }
   }
 
