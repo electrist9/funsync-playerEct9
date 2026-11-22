@@ -13,6 +13,7 @@ import { buildPreviewSample, drawFillerWaveform } from '../js/filler-preview.js'
 import { isUserEnabled, isToggleLocked, setUserEnabled } from '../js/source-state.js';
 import { eventBus } from '../js/event-bus.js';
 import { openFeedbackModal } from './feedback-modal.js';
+import { FrameInterpolator } from '../js/frame-interpolator.js';
 
 // Canonical default values for each tunable Playback field. Used by the
 // per-field reset-to-default `↻` button (Shneiderman #6 reversibility)
@@ -39,6 +40,10 @@ const SETTINGS_DEFAULTS = {
   'library.autoVariantMode': 'strict',
   'library.useGeneratedVariants': true,
   'player.miniPlayer': true,
+  'player.frameInterpolation.enabled': false,
+  'player.frameInterpolation.factor': 'auto',
+  'player.frameInterpolation.quality': 'auto',
+  'player.frameInterpolation.hud': false,
 };
 
 export class SettingsPanel {
@@ -59,6 +64,7 @@ export class SettingsPanel {
     onLibraryDisplayChanged,
     onAutoVariantChanged,
     onGeneratedVariantsChanged,
+    onFrameInterpChanged,
     onPickOrgasmScript,
     onClearOrgasmScript,
     getOrgasmScriptName,
@@ -97,6 +103,9 @@ export class SettingsPanel {
     // Generated scripts are offered as variations live, from the store — no
     // rescan involved, so app.js just re-looks-up the current video's rows.
     this.onGeneratedVariantsChanged = onGeneratedVariantsChanged || null;
+    // Frame interpolation lives on the player (app.js owns the VideoPlayer),
+    // so the panel persists and notifies; app.js applies it live.
+    this.onFrameInterpChanged = onFrameInterpChanged || null;
     this.onPickOrgasmScript = onPickOrgasmScript || null;
     this.onClearOrgasmScript = onClearOrgasmScript || null;
     this.getOrgasmScriptName = getOrgasmScriptName || null;
@@ -213,6 +222,7 @@ export class SettingsPanel {
         label: t('settingsPanel.tabPlayback'),
         groups: [
           { id: 'sp-sec-playback', label: t('settingsPanel.playback.playbackHeader') },
+          { id: 'sp-sec-frameinterp', label: t('settingsPanel.playback.frameInterpHeader') },
           { id: 'sp-sec-upnext', label: t('settingsPanel.playback.upNextHeader') },
           { id: 'sp-sec-gapskip', label: t('settingsPanel.playback.gapSkipHeader') },
           { id: 'sp-sec-orgasm', label: t('settingsPanel.playback.orgasmHeader') },
@@ -280,6 +290,11 @@ export class SettingsPanel {
 
   _renderBody(body, close, initialTabId) {
     body.innerHTML = '';
+    // Keep a handle on the live modal body so external changes (the Shift+I
+    // hotkey) can repaint the frame-interpolation controls while the panel
+    // is open. The body detaches when the modal closes, so the isConnected
+    // guard in syncFrameInterpControls covers teardown — nothing to clear.
+    this._bodyEl = body;
 
     // Two-column shell: a vertical rail on the left, the active area's
     // panel scrolling on the right. Replaces the old horizontal tab strip,
@@ -500,6 +515,28 @@ export class SettingsPanel {
   /** Repaint the sources list in place (after a re-probe). */
   refreshSources() {
     if (this._renderSources) this._renderSources();
+  }
+
+  /**
+   * Mirror a frame-interpolation setting changed OUTSIDE the panel (the
+   * Shift+I hotkey) into the live controls, if the panel happens to be
+   * open. The panel is rebuilt on every open and reads the persisted
+   * object then, so this only matters for the narrow case of pressing
+   * the hotkey while the settings modal is showing.
+   *
+   * @param {{enabled: boolean, factor: string, quality: string, hud: boolean}} value
+   */
+  syncFrameInterpControls(value) {
+    const body = this._bodyEl;
+    if (!body || !body.isConnected || !value) return;
+    const fiEnabled = body.querySelector('#sp-fi-enabled');
+    const fiFactor = body.querySelector('#sp-fi-factor');
+    const fiQuality = body.querySelector('#sp-fi-quality');
+    const fiHud = body.querySelector('#sp-fi-hud');
+    if (fiEnabled) fiEnabled.checked = value.enabled === true;
+    if (fiFactor) fiFactor.value = value.factor || 'auto';
+    if (fiQuality) fiQuality.value = value.quality || 'auto';
+    if (fiHud) fiHud.checked = value.hud === true;
   }
 
   _buildSourcesTab() {
@@ -1049,6 +1086,46 @@ export class SettingsPanel {
       });
     panel.appendChild(playbackSection);
 
+    // --- Frame interpolation (real-time WebGPU frame generation) ---
+    // Its own section because it's a GPU feature with its own capability
+    // story (WebGPU adapter, 120Hz+ display), not another funscript knob.
+    // The enable checkbox is the master; the factor select "off" mirrors it.
+    const frameInterpSection = document.createElement('div');
+    frameInterpSection.className = 'settings-panel__section';
+    frameInterpSection.id = 'sp-sec-frameinterp';
+    frameInterpSection.innerHTML = `
+      <h2 class="settings-panel__section-header">${t('settingsPanel.playback.frameInterpHeader')}</h2>
+      <div class="settings-panel__field">
+        <label class="settings-panel__field-label" for="sp-fi-enabled">${t('settingsPanel.playback.frameInterpEnableLabel')}</label>
+        <input type="checkbox" id="sp-fi-enabled" class="settings-panel__input settings-panel__input--checkbox" aria-describedby="sp-fi-hint">
+      </div>
+      <div class="settings-panel__field">
+        <label class="settings-panel__field-label" for="sp-fi-factor">${t('settingsPanel.playback.frameInterpFactorLabel')}</label>
+        <select id="sp-fi-factor" class="settings-panel__input settings-panel__input--select" aria-describedby="sp-fi-hint">
+          <option value="off">${t('settingsPanel.playback.frameInterpFactorOff')}</option>
+          <option value="2">${t('settingsPanel.playback.frameInterpFactor2')}</option>
+          <option value="4">${t('settingsPanel.playback.frameInterpFactor4')}</option>
+          <option value="auto">${t('settingsPanel.playback.frameInterpFactorAuto')}</option>
+        </select>
+      </div>
+      <div class="settings-panel__field">
+        <label class="settings-panel__field-label" for="sp-fi-quality">${t('settingsPanel.playback.frameInterpQualityLabel')}</label>
+        <select id="sp-fi-quality" class="settings-panel__input settings-panel__input--select" aria-describedby="sp-fi-hint">
+          <option value="auto">${t('settingsPanel.playback.frameInterpQualityAuto')}</option>
+          <option value="1080p">${t('settingsPanel.playback.frameInterpQuality1080p')}</option>
+          <option value="720p">${t('settingsPanel.playback.frameInterpQuality720p')}</option>
+          <option value="480p">${t('settingsPanel.playback.frameInterpQuality480p')}</option>
+        </select>
+      </div>
+      <div class="settings-panel__field">
+        <label class="settings-panel__field-label" for="sp-fi-hud">${t('settingsPanel.playback.frameInterpHudLabel')}</label>
+        <input type="checkbox" id="sp-fi-hud" class="settings-panel__input settings-panel__input--checkbox" aria-describedby="sp-fi-hint">
+      </div>
+      <div class="settings-panel__hint" id="sp-fi-hint">${t('settingsPanel.playback.frameInterpHint')}</div>
+      <div class="settings-panel__hint" id="sp-fi-unsupported" hidden>${t('settingsPanel.playback.frameInterpUnsupportedHint')}</div>
+    `;
+    panel.appendChild(frameInterpSection);
+
     // --- Orgasm Switch ---
     // Its own home at last. The script picker and the hold/toggle mode were
     // buried in the smoothing section with no heading of their own, which
@@ -1155,6 +1232,7 @@ export class SettingsPanel {
     // most-used first: how playback behaves, then what plays next.
     for (const el of [
       panel.querySelector('#sp-sec-playback'),
+      panel.querySelector('#sp-sec-frameinterp'),
       panel.querySelector('#sp-sec-upnext'),
       panel.querySelector('#sp-sec-gapskip'),
       panel.querySelector('#sp-sec-orgasm'),
@@ -1194,6 +1272,59 @@ export class SettingsPanel {
         this._settings.set('player.gapSkip', { mode, threshold: seconds * 1000 });
         if (this.onGapSkipChanged) this.onGapSkipChanged(mode, seconds * 1000);
       });
+
+      // Frame interpolation — persist the whole object on every change and
+      // notify app.js, which applies it to the live player immediately.
+      const fiEnabled = panel.querySelector('#sp-fi-enabled');
+      const fiFactor = panel.querySelector('#sp-fi-factor');
+      const fiQuality = panel.querySelector('#sp-fi-quality');
+      const fiHud = panel.querySelector('#sp-fi-hud');
+      const fiUnsupported = panel.querySelector('#sp-fi-unsupported');
+
+      const savedFi = this._settings.get('player.frameInterpolation') || {};
+      if (fiFactor) fiFactor.value = savedFi.factor || 'auto';
+      if (fiQuality) fiQuality.value = savedFi.quality || 'auto';
+      if (fiHud) fiHud.checked = savedFi.hud === true;
+      if (fiEnabled) fiEnabled.checked = savedFi.enabled === true;
+
+      const writeFrameInterp = () => {
+        const factor = fiFactor?.value || 'auto';
+        const value = {
+          enabled: (fiEnabled?.checked ?? false) && factor !== 'off',
+          factor,
+          quality: fiQuality?.value || 'auto',
+          hud: fiHud?.checked === true,
+        };
+        this._settings.set('player.frameInterpolation', value);
+        if (this.onFrameInterpChanged) this.onFrameInterpChanged(value);
+      };
+
+      fiEnabled?.addEventListener('change', () => {
+        // The enable checkbox is the master; keep the factor select honest.
+        if (!fiEnabled.checked && fiFactor && fiFactor.value === 'off') {
+          fiFactor.value = 'auto';
+        }
+        writeFrameInterp();
+      });
+      fiFactor?.addEventListener('change', () => {
+        // Picking a real factor implies wanting the feature on.
+        if (fiEnabled && fiFactor.value !== 'off') fiEnabled.checked = true;
+        writeFrameInterp();
+      });
+      fiQuality?.addEventListener('change', writeFrameInterp);
+      fiHud?.addEventListener('change', writeFrameInterp);
+
+      // Capability probe: if WebGPU is unavailable, say so and lock the
+      // master switch rather than letting users toggle a dead feature.
+      FrameInterpolator.probe().then((p) => {
+        if (!p || p.supported) return;
+        if (fiUnsupported) fiUnsupported.hidden = false;
+        if (fiEnabled) {
+          fiEnabled.checked = false;
+          fiEnabled.disabled = true;
+        }
+        if (fiFactor) fiFactor.disabled = true;
+      }).catch(() => {});
 
       // Gap filler — strokes during blank stretches of script.
       const fillerEnabled = panel.querySelector('#sp-filler-enabled');

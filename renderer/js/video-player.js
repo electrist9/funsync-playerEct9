@@ -4,6 +4,7 @@ import { showToast } from './toast.js';
 import { t } from './i18n.js';
 import { eventBus } from './event-bus.js';
 import { VRProjectionRenderer } from './vr-projection-renderer.js';
+import { FrameInterpolator } from './frame-interpolator.js';
 
 export const PLAYBACK_RATE_PRESETS = Object.freeze([0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2]);
 
@@ -849,6 +850,7 @@ export class VideoPlayer {
       this._vrFlattenFormat = format;
       this._vrFlattenEye = eye;
       this._vrFlattenZoom = 1;
+      this._syncFrameInterpSuspension();
       return;
     }
 
@@ -858,7 +860,10 @@ export class VideoPlayer {
       this._setVRProjectingState(false);
     }
 
-    if (!format || format === 'off' || !PLANAR.includes(format)) return;
+    if (!format || format === 'off' || !PLANAR.includes(format)) {
+      this._syncFrameInterpSuspension();
+      return;
+    }
     this.video.classList.add(`player__video--flat-${format}`);
     if (eye === 2) this.video.classList.add('player__video--flat-eye-2');
     const zoom = Number.isFinite(opts.zoom) ? Math.max(1, Math.min(2, opts.zoom)) : 1;
@@ -872,6 +877,7 @@ export class VideoPlayer {
     // the gesture path can update it later without re-running the whole
     // class-swapping dance above.
     this.setVRViewZoom(opts.viewZoom, opts.panX, opts.panY);
+    this._syncFrameInterpSuspension();
   }
 
   /**
@@ -977,6 +983,65 @@ export class VideoPlayer {
       eye: this._vrFlattenEye || 1,
       zoom: this._vrFlattenZoom || 1,
     };
+  }
+
+  // --- Frame interpolation (real-time 60→120fps etc., main window only) ---
+  //
+  // Mirrors the VR renderer's lifecycle: lazily mounted canvas overlay, kept
+  // alive once built, suspended (not destroyed) while a VR mode owns the
+  // presentation path. The interpolator itself gates on playback rate 1.0
+  // via the video's own `ratechange` event.
+
+  /**
+   * @param {{enabled?: boolean, factor?: 'auto'|2|4, quality?: string,
+   *          hud?: boolean, suspended?: boolean}} opts
+   * `suspended` is an EXTERNAL suspend (e.g. the pop-out window is the
+   * playback authority); it ORs with the internal VR suspension.
+   */
+  setFrameInterpolation(opts = {}) {
+    this._frameInterpOpts = { ...(this._frameInterpOpts || {}), ...opts };
+    if (this._frameInterpOpts.enabled && !this._frameInterpolator?.mounted) {
+      this._mountFrameInterpolatorIfNeeded();
+    }
+    const fi = this._frameInterpolator;
+    if (!fi) return;
+    fi.update({
+      enabled: !!this._frameInterpOpts.enabled,
+      factor: this._frameInterpOpts.factor ?? 'auto',
+      quality: this._frameInterpOpts.quality ?? 'auto',
+      hud: !!this._frameInterpOpts.hud,
+      suspended: this._vrFlattenActive() || !!this._frameInterpOpts.suspended,
+    }).catch(() => {});
+  }
+
+  /** Live status for the settings HUD / diagnostics. */
+  get frameInterpolationStatus() {
+    return this._frameInterpolator?.status || null;
+  }
+
+  _vrFlattenActive() {
+    return !!this._vrFlattenFormat || !!this._vrRenderer?.mounted;
+  }
+
+  _syncFrameInterpSuspension() {
+    if (!this._frameInterpolator) return;
+    this._frameInterpolator.update({
+      suspended: this._vrFlattenActive() || !!this._frameInterpOpts?.suspended,
+    }).catch(() => {});
+  }
+
+  _mountFrameInterpolatorIfNeeded() {
+    if (this._frameInterpolator?.mounted) return;
+    if (!this._frameInterpolator) this._frameInterpolator = new FrameInterpolator();
+    const container = this.video.parentElement;
+    if (!container) return;
+    try {
+      this._frameInterpolator.mount(this.video, container);
+    } catch (err) {
+      console.warn('[frame-interp] mount failed:', err?.message || err);
+      showToast(t('frameInterp.unsupported'), 'warn', 4000);
+      this._frameInterpolator = null;
+    }
   }
 
   // --- Playback Speed ---

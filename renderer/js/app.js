@@ -297,6 +297,13 @@ class App {
       () => this.settings?.get?.('player.rememberPlaybackSpeed') === true,
     );
 
+    // Frame interpolation (WebGPU frame generation) — apply the persisted
+    // setting at startup; the settings panel pushes live changes through
+    // onFrameInterpChanged below.
+    this.videoPlayer.setFrameInterpolation(
+      this.settings?.get?.('player.frameInterpolation') || {},
+    );
+
     // Initialize progress bar (thumbnails + heatmap)
     this.progressBar = new ProgressBar({
       containerElement: document.getElementById('progress-container'),
@@ -424,6 +431,9 @@ class App {
         if (this.upNextEngine) {
           this.upNextEngine.setSettings(mode, countdownSec);
         }
+      },
+      onFrameInterpChanged: (value) => {
+        this.videoPlayer.setFrameInterpolation(value || {});
       },
       onPreferMultiAxisChanged: (mode) => {
         // Confirmation modal already gated this; just trigger the
@@ -1264,6 +1274,7 @@ class App {
         onLoadNext: () => this._playNext(),
         onLoadPrev: () => this._playPrev(),
         onToggleSlideshow: () => this.slideshow?.toggle(),
+        onToggleFrameInterp: () => this._toggleFrameInterpolation(),
       });
 
       // Auto-connect if a key is saved
@@ -5851,6 +5862,9 @@ class App {
     if (this.upNextEngine) this.upNextEngine.player = proxyPlayer;
 
     this._playerWindowActive = true;
+    // The pop-out owns the only decoding <video>; the inline canvas overlay
+    // has nothing to present, so park frame interpolation until pop-in.
+    this.videoPlayer.setFrameInterpolation({ suspended: true });
     // Main window returns to the library so it stays browseable (deaf #189).
     if (this._currentView() === 'player') this._navigateTo('library');
   }
@@ -5883,6 +5897,8 @@ class App {
 
     this._playerWinProxy?.reset();
     this._playerWindowActive = false;
+    // Release the frame-interpolation suspension from the pop-in above.
+    this.videoPlayer.setFrameInterpolation({ suspended: false });
 
     // Restart every CONNECTED engine against the local <video>, mirroring the
     // take-over in _activatePlayerWindow. This MUST run before vid.play() so
@@ -6542,6 +6558,30 @@ class App {
     } catch (err) {
       console.warn('[Audience] fan-out failed:', err?.message || err);
     }
+  }
+
+  /**
+   * Shift+I — flip GPU frame interpolation on/off without opening the
+   * settings panel. Mirrors the panel's coupling rules: enabling while the
+   * factor is still "off" picks "auto" (the panel forces the same pairing),
+   * and disabling keeps factor/quality/hud so the next enable restores the
+   * user's chosen mode. Persisted first, then applied live, then mirrored
+   * into the panel controls in case the modal happens to be open.
+   */
+  _toggleFrameInterpolation() {
+    const cur = this.settings?.get?.('player.frameInterpolation') || {};
+    const enabled = cur.enabled !== true;
+    const factor = cur.factor && cur.factor !== 'off' ? cur.factor : 'auto';
+    const value = {
+      enabled,
+      factor,
+      quality: cur.quality || 'auto',
+      hud: cur.hud === true,
+    };
+    this.settings?.set?.('player.frameInterpolation', value);
+    this.videoPlayer?.setFrameInterpolation(value);
+    this.settingsPanel?.syncFrameInterpControls?.(value);
+    showToast(t(enabled ? 'frameInterp.toastOn' : 'frameInterp.toastOff'), 'info', 2000);
   }
 
   /**

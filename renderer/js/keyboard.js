@@ -4,7 +4,7 @@ import { openKeyboardHelp, getPlayerShortcutGroups } from './keyboard-help.js';
 import { t } from './i18n.js';
 
 export class KeyboardHandler {
-  constructor({ videoPlayer, connectionPanel, onOpenFile, scriptEditor, deviceSimulator, gapSkipEngine, onNavigate, onToggleLoop, onToggleQueue, onJumpChapter, onJumpBookmark, onLoadNext, onLoadPrev, onToggleSlideshow }) {
+  constructor({ videoPlayer, connectionPanel, onOpenFile, scriptEditor, deviceSimulator, gapSkipEngine, onNavigate, onToggleLoop, onToggleQueue, onJumpChapter, onJumpBookmark, onLoadNext, onLoadPrev, onToggleSlideshow, onToggleFrameInterp }) {
     this.player = videoPlayer;
     this.connectionPanel = connectionPanel || null;
     this.onOpenFile = onOpenFile || null;
@@ -19,6 +19,7 @@ export class KeyboardHandler {
     this.onLoadNext = onLoadNext || null;
     this.onLoadPrev = onLoadPrev || null;
     this.onToggleSlideshow = onToggleSlideshow || null;
+    this.onToggleFrameInterp = onToggleFrameInterp || null;
     this._bindEvents();
   }
 
@@ -225,8 +226,21 @@ export class KeyboardHandler {
         this.player.captureScreenshot();
         break;
 
+      // I — info overlay. Shift+I toggles GPU frame interpolation
+      // (mnemonic: Interpolation); bare I stays the info overlay. The
+      // shiftKey check disambiguates, same pattern as Shift+L vs plain l.
+      // Gated against the editor like the other player-only toggles —
+      // the editor binds Ctrl+I (invert selection), never Shift+I.
       case 'i':
       case 'I':
+        if (e.shiftKey) {
+          if (this.scriptEditor?.isOpen) break;
+          if (this.onToggleFrameInterp) {
+            e.preventDefault();
+            this.onToggleFrameInterp();
+          }
+          break;
+        }
         e.preventDefault();
         this.player.toggleInfoOverlay();
         break;

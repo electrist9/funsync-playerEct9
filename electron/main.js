@@ -125,13 +125,24 @@ if (process.platform === 'linux') {
     const raw = fs.readFileSync(path.join(app.getPath('userData'), 'config.json'), 'utf8');
     if (JSON.parse(raw)?.settings?.player?.hwVideoDecode === false) hwDecode = false;
   } catch { /* no config yet → default ON */ }
+  // One --enable-features switch: Chromium only honours the FIRST occurrence,
+  // so every Linux feature (VA-API decode, Vulkan for WebGPU) must be merged
+  // into a single comma-separated list.
+  const enableFeatures = [];
   if (hwDecode) {
-    app.commandLine.appendSwitch('enable-features', 'VaapiVideoDecoder,VaapiIgnoreDriverChecks');
+    enableFeatures.push('VaapiVideoDecoder', 'VaapiIgnoreDriverChecks');
   } else {
     // Force software decode. Chromium on Linux can't use NVDEC the way VLC/MPC
     // do, so when VA-API is broken this is the only path that plays at all.
     app.commandLine.appendSwitch('disable-accelerated-video-decode');
   }
+  // WebGPU (frame interpolation) is still opt-in on Linux: Dawn needs the
+  // Vulkan backend enabled and Chromium gates the API behind "unsafe" here,
+  // while Windows/macOS ship it on by default. Harmless when no adapter
+  // exists — the renderer's capability probe just reports unsupported.
+  enableFeatures.push('Vulkan');
+  app.commandLine.appendSwitch('enable-features', enableFeatures.join(','));
+  app.commandLine.appendSwitch('enable-unsafe-webgpu');
 }
 
 let mainWindow = null;

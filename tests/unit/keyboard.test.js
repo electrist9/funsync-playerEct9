@@ -124,6 +124,37 @@ describe('KeyboardHandler', () => {
     expect(player.toggleInfoOverlay).toHaveBeenCalled();
   });
 
+  // --- Frame interpolation toggle (Shift+I) ---
+
+  function fireShiftI() {
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'I', shiftKey: true, bubbles: true }));
+  }
+
+  it('Shift+I toggles frame interpolation, not the info overlay', () => {
+    const onToggleFrameInterp = vi.fn();
+    handler.onToggleFrameInterp = onToggleFrameInterp;
+    fireShiftI();
+    expect(onToggleFrameInterp).toHaveBeenCalledTimes(1);
+    expect(player.toggleInfoOverlay).not.toHaveBeenCalled();
+  });
+
+  it('bare I still toggles the info overlay (frame-interp callback untouched)', () => {
+    const onToggleFrameInterp = vi.fn();
+    handler.onToggleFrameInterp = onToggleFrameInterp;
+    fireKey('i');
+    expect(player.toggleInfoOverlay).toHaveBeenCalled();
+    expect(onToggleFrameInterp).not.toHaveBeenCalled();
+  });
+
+  it('Shift+I is inert while the script editor is open', () => {
+    const onToggleFrameInterp = vi.fn();
+    handler.onToggleFrameInterp = onToggleFrameInterp;
+    scriptEditor.isOpen = true;
+    fireShiftI();
+    expect(onToggleFrameInterp).not.toHaveBeenCalled();
+    expect(player.toggleInfoOverlay).not.toHaveBeenCalled();
+  });
+
   // --- Loop points ---
 
   it('a sets loop point A', () => {
