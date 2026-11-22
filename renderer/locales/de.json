@@ -1246,6 +1246,7 @@
       "frameInterpFactorOff": "Aus",
       "frameInterpFactor2": "2× (Verdopplung)",
       "frameInterpFactor4": "4× (Vervierfachung)",
+      "frameInterpFactor6": "6× (Versechsfachung)",
       "frameInterpFactorAuto": "Auto (an Display anpassen)",
       "frameInterpQualityLabel": "Qualität",
       "frameInterpQualityAuto": "Auto (bis 1080p)",

@@ -1221,6 +1221,7 @@
       "frameInterpFactorOff": "Off",
       "frameInterpFactor2": "2× (double)",
       "frameInterpFactor4": "4× (quadruple)",
+      "frameInterpFactor6": "6× (sextuple)",
       "frameInterpFactorAuto": "Auto (match display)",
       "frameInterpQualityLabel": "Quality",
       "frameInterpQualityAuto": "Auto (up to 1080p)",

@@ -1246,6 +1246,7 @@
       "frameInterpFactorOff": "Выкл.",
       "frameInterpFactor2": "2× (удвоение)",
       "frameInterpFactor4": "4× (учетверение)",
+      "frameInterpFactor6": "6× (ушестерение)",
       "frameInterpFactorAuto": "Авто (по дисплею)",
       "frameInterpQualityLabel": "Качество",
       "frameInterpQualityAuto": "Авто (до 1080p)",

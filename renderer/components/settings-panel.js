@@ -1105,6 +1105,7 @@ export class SettingsPanel {
           <option value="off">${t('settingsPanel.playback.frameInterpFactorOff')}</option>
           <option value="2">${t('settingsPanel.playback.frameInterpFactor2')}</option>
           <option value="4">${t('settingsPanel.playback.frameInterpFactor4')}</option>
+          <option value="6">${t('settingsPanel.playback.frameInterpFactor6')}</option>
           <option value="auto">${t('settingsPanel.playback.frameInterpFactorAuto')}</option>
         </select>
       </div>

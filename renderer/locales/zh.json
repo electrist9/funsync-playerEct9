@@ -1246,6 +1246,7 @@
       "frameInterpFactorOff": "关闭",
       "frameInterpFactor2": "2×（双倍）",
       "frameInterpFactor4": "4×（四倍）",
+      "frameInterpFactor6": "6×（六倍）",
       "frameInterpFactorAuto": "自动（匹配显示器）",
       "frameInterpQualityLabel": "质量",
       "frameInterpQualityAuto": "自动（最高1080p）",

@@ -1246,6 +1246,7 @@
       "frameInterpFactorOff": "Desactivado",
       "frameInterpFactor2": "2× (doble)",
       "frameInterpFactor4": "4× (cuádruple)",
+      "frameInterpFactor6": "6× (séxtuple)",
       "frameInterpFactorAuto": "Auto (según pantalla)",
       "frameInterpQualityLabel": "Calidad",
       "frameInterpQualityAuto": "Auto (hasta 1080p)",

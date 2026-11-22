@@ -993,7 +993,7 @@ export class VideoPlayer {
   // via the video's own `ratechange` event.
 
   /**
-   * @param {{enabled?: boolean, factor?: 'auto'|2|4, quality?: string,
+   * @param {{enabled?: boolean, factor?: 'auto'|2|4|6, quality?: string,
    *          hud?: boolean, suspended?: boolean}} opts
    * `suspended` is an EXTERNAL suspend (e.g. the pop-out window is the
    * playback authority); it ORs with the internal VR suspension.

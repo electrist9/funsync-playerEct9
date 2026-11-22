@@ -90,7 +90,7 @@ export class FrameInterpolator {
 
     // Settings (merged via update()).
     this._enabled = false;
-    this._factor = 'auto'; // 'auto' | 2 | 4
+    this._factor = 'auto'; // 'auto' | 2 | 4 | 6
     this._quality = 'auto'; // 'auto' | '1080p' | '720p' | '480p' | 'native'
     this._hud = false;
     this._hudEl = null;
@@ -261,7 +261,7 @@ export class FrameInterpolator {
   // ------------------------------------------------------------------
 
   /**
-   * @param {{enabled?: boolean, factor?: 'auto'|2|4, quality?: string, hud?: boolean,
+   * @param {{enabled?: boolean, factor?: 'auto'|2|4|6, quality?: string, hud?: boolean,
    *          suspended?: boolean, suspendReason?: string}} opts
    * `suspended` is set by the caller (VideoPlayer) while a VR mode owns the
    * presentation path; the user's own enabled flag is preserved.

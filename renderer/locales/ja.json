@@ -1246,6 +1246,7 @@
       "frameInterpFactorOff": "オフ",
       "frameInterpFactor2": "2倍",
       "frameInterpFactor4": "4倍",
+      "frameInterpFactor6": "6倍",
       "frameInterpFactorAuto": "自動（ディスプレイに合わせる）",
       "frameInterpQualityLabel": "品質",
       "frameInterpQualityAuto": "自動（最大1080p）",
