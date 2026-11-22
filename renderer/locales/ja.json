@@ -1254,6 +1254,8 @@
       "frameInterpQuality720p": "最大720p",
       "frameInterpQuality480p": "最大480p",
       "frameInterpHudLabel": "ステータスオーバーレイを表示",
+      "frameInterpUpscaleLabel": "アップスケール（TinySR・2倍）",
+      "frameInterpUpscaleHint": "GPUで映像を2倍の解像度に高解像度化します（TinySR）。フレーム補間とは個別にオン/オフでき、単独でも同時にでも動作します。WebGPU対応GPUが必要で、再生速度が1倍以外・VR中・ポップアウト再生中は自動的に一時停止します。",
       "frameInterpHint": "GPUで追加フレームを生成し、120Hz以上のディスプレイで動きを滑らかにします。WebGPU対応GPUが必要で、再生速度が1倍以外・VR中・ポップアウト再生中は自動的に一時停止します。",
       "frameInterpUnsupportedHint": "フレーム補間にはWebGPUが必要ですが、このデバイスでは利用できません。",
       "rememberSpeedLabel": "再生速度を記憶",

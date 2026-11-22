@@ -6583,6 +6583,7 @@ class App {
       factor,
       quality: cur.quality || 'auto',
       hud: cur.hud === true,
+      upscale: cur.upscale === true,
     };
     this.settings?.set?.('player.frameInterpolation', value);
     this.videoPlayer?.setFrameInterpolation(value);

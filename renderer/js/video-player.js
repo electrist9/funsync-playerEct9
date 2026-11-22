@@ -1015,13 +1015,14 @@ export class VideoPlayer {
 
   /**
    * @param {{enabled?: boolean, factor?: 'auto'|2|4|6, quality?: string,
-   *          hud?: boolean, suspended?: boolean}} opts
+   *          hud?: boolean, upscale?: boolean, suspended?: boolean}} opts
    * `suspended` is an EXTERNAL suspend (e.g. the pop-out window is the
    * playback authority); it ORs with the internal VR suspension.
+   * `upscale` (TinySR 2×) works independently of `enabled`.
    */
   setFrameInterpolation(opts = {}) {
     this._frameInterpOpts = { ...(this._frameInterpOpts || {}), ...opts };
-    if (this._frameInterpOpts.enabled && !this._frameInterpolator?.mounted) {
+    if ((this._frameInterpOpts.enabled || this._frameInterpOpts.upscale) && !this._frameInterpolator?.mounted) {
       this._mountFrameInterpolatorIfNeeded();
     }
     const fi = this._frameInterpolator;
@@ -1031,6 +1032,7 @@ export class VideoPlayer {
       factor: this._frameInterpOpts.factor ?? 'auto',
       quality: this._frameInterpOpts.quality ?? 'auto',
       hud: !!this._frameInterpOpts.hud,
+      upscale: !!this._frameInterpOpts.upscale,
       suspended: this._vrFlattenActive() || !!this._frameInterpOpts.suspended,
     }).catch(() => {});
   }

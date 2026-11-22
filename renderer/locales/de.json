@@ -1254,6 +1254,8 @@
       "frameInterpQuality720p": "Bis 720p",
       "frameInterpQuality480p": "Bis 480p",
       "frameInterpHudLabel": "Status-Overlay anzeigen",
+      "frameInterpUpscaleLabel": "Bild hochskalieren (TinySR 2×)",
+      "frameInterpUpscaleHint": "Verdoppelt die Videoauflösung mit der GPU (TinySR). Funktioniert allein oder zusammen mit der Bildinterpolation; erfordert eine WebGPU-fähige GPU und pausiert automatisch bei anderen Wiedergabegeschwindigkeiten, in VR und beim Pop-out-Player.",
       "frameInterpHint": "Erzeugt zusätzliche Bilder per GPU für flüssigere Bewegung auf 120-Hz+-Displays. Erfordert eine WebGPU-fähige GPU; pausiert automatisch bei anderen Geschwindigkeiten, in VR und wenn das Pop-out-Playerfenster offen ist.",
       "frameInterpUnsupportedHint": "Bildinterpolation benötigt WebGPU, das auf diesem Gerät nicht verfügbar ist.",
       "rememberSpeedLabel": "Wiedergabegeschwindigkeit merken",

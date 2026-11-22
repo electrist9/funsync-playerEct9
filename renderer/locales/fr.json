@@ -1254,6 +1254,8 @@
       "frameInterpQuality720p": "Jusqu'à 720p",
       "frameInterpQuality480p": "Jusqu'à 480p",
       "frameInterpHudLabel": "Afficher la superposition d'état",
+      "frameInterpUpscaleLabel": "Suréchantillonnage (TinySR 2×)",
+      "frameInterpUpscaleHint": "Double la résolution de l'image avec le GPU (TinySR). Fonctionne seul ou avec l'interpolation d'images ; nécessite un GPU compatible WebGPU et se met automatiquement en pause à d'autres vitesses de lecture, en RV et pendant la lecture en fenêtre détachée.",
       "frameInterpHint": "Génère des images supplémentaires via le GPU pour un mouvement plus fluide sur les écrans 120 Hz et plus. Nécessite un GPU compatible WebGPU ; s'arrête automatiquement à d'autres vitesses, en RV et lorsque le lecteur détaché est ouvert.",
       "frameInterpUnsupportedHint": "L'interpolation d'images nécessite WebGPU, indisponible sur cet appareil.",
       "rememberSpeedLabel": "Mémoriser la vitesse de lecture",

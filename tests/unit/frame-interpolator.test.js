@@ -22,6 +22,9 @@ vi.mock('../../renderer/js/interpolation/rt.js', () => ({
   createRT: vi.fn(),
   tuneConvRB: vi.fn(),
 }));
+vi.mock('../../renderer/js/interpolation/sr.js', () => ({
+  createSR: vi.fn(),
+}));
 
 import { showToast } from '../../renderer/js/toast.js';
 import { FrameInterpolator } from '../../renderer/js/frame-interpolator.js';
@@ -38,6 +41,7 @@ function bareInterpolator(overrides = {}) {
     _mounted: true,
     _active: false,
     _enabled: false,
+    _upscale: false,
     _factor: 'auto',
     _quality: 'auto',
     _hud: false,
@@ -222,6 +226,20 @@ describe('FrameInterpolator gate', () => {
     expect(fi._deactivate).not.toHaveBeenCalled();
   });
 
+  it('activates on upscale alone (TinySR without frame interpolation)', async () => {
+    const fi = bareInterpolator({ _upscale: true });
+    await fi._applyGate();
+    expect(fi._activate).toHaveBeenCalledTimes(1);
+    expect(fi._deactivate).not.toHaveBeenCalled();
+  });
+
+  it('deactivates when both interpolation and upscale are off', async () => {
+    const fi = bareInterpolator({ _enabled: false, _upscale: false });
+    await fi._applyGate();
+    expect(fi._activate).not.toHaveBeenCalled();
+    expect(fi._deactivate).toHaveBeenCalledTimes(1);
+  });
+
   it('stays off while playback rate is not exactly 1.0', async () => {
     const fi = bareInterpolator({ _enabled: true, _video: { playbackRate: 1.5 } });
     await fi._applyGate();
@@ -262,21 +280,24 @@ describe('FrameInterpolator gate', () => {
 
   it('update() merges settings and re-runs the gate', async () => {
     const fi = bareInterpolator();
-    await fi.update({ enabled: true, factor: 4, quality: '720p', hud: true, suspended: false });
+    await fi.update({ enabled: true, factor: 4, quality: '720p', hud: true, upscale: true, suspended: false });
     expect(fi._enabled).toBe(true);
     expect(fi._factor).toBe(4);
     expect(fi._quality).toBe('720p');
     expect(fi._hud).toBe(true);
+    expect(fi._upscale).toBe(true);
     expect(fi._activate).toHaveBeenCalledTimes(1);
 
     await fi.update({ suspended: true });
     expect(fi._enabled).toBe(true); // user setting preserved across suspension
+    expect(fi._upscale).toBe(true);
     expect(fi._deactivate).toHaveBeenCalledTimes(1);
   });
 
   it('status exposes the gate + stats surface', () => {
     const fi = bareInterpolator({
       _enabled: true,
+      _upscale: true,
       _factor: 'auto',
       _autoFactor: 4,
       _srcFps: 29.9,
@@ -285,6 +306,7 @@ describe('FrameInterpolator gate', () => {
     });
     expect(fi.status).toMatchObject({
       enabled: true,
+      upscale: true,
       active: false,
       factor: 'auto',
       effectiveFactor: 4,
@@ -441,6 +463,7 @@ describe('VideoPlayer frame-interpolation integration', () => {
       factor: '4',
       quality: '720p',
       hud: true,
+      upscale: false,
       suspended: false,
     });
   });
@@ -452,8 +475,32 @@ describe('VideoPlayer frame-interpolation integration', () => {
       factor: 'auto',
       quality: 'auto',
       hud: false,
+      upscale: false,
       suspended: false,
     });
+  });
+
+  it('upscale passes through to update() and persists across calls', () => {
+    player.setFrameInterpolation({ upscale: true });
+    expect(fi.update.mock.calls.at(-1)[0]).toMatchObject({ enabled: false, upscale: true });
+    player.setFrameInterpolation({ suspended: true });
+    expect(fi.update.mock.calls.at(-1)[0]).toMatchObject({ upscale: true, suspended: true });
+  });
+
+  it('upscale-only mounts the interpolator even with interpolation off', () => {
+    player._frameInterpolator = null;
+    const mount = vi.fn();
+    player._mountFrameInterpolatorIfNeeded = mount;
+    player.setFrameInterpolation({ enabled: false, upscale: true });
+    expect(mount).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not mount when both interpolation and upscale are off', () => {
+    player._frameInterpolator = null;
+    const mount = vi.fn();
+    player._mountFrameInterpolatorIfNeeded = mount;
+    player.setFrameInterpolation({ enabled: false, upscale: false });
+    expect(mount).not.toHaveBeenCalled();
   });
 
   it('external suspension (pop-out) ORs into the update payload', () => {

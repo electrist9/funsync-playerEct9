@@ -1254,6 +1254,8 @@
       "frameInterpQuality720p": "최대 720p",
       "frameInterpQuality480p": "최대 480p",
       "frameInterpHudLabel": "상태 오버레이 표시",
+      "frameInterpUpscaleLabel": "업스케일 (TinySR 2배)",
+      "frameInterpUpscaleHint": "GPU로 영상을 2배 해상도로 업스케일링합니다(TinySR). 프레임 보간과 독립적으로 켜거나 동시에 사용할 수 있습니다. WebGPU 지원 GPU가 필요하며, 재생 속도가 1배가 아닌 경우·VR 중·팝아웃 재생 중에는 자동으로 일시 중지됩니다.",
       "frameInterpHint": "GPU로 추가 프레임을 생성해 120Hz 이상 디스플레이에서 움직임을 부드럽게 합니다. WebGPU 지원 GPU가 필요하며, 배속 재생, VR, 팝아웃 플레이어 사용 중에는 자동으로 일시 중지됩니다.",
       "frameInterpUnsupportedHint": "프레임 보간에는 WebGPU가 필요하지만 이 기기에서는 사용할 수 없습니다.",
       "rememberSpeedLabel": "재생 속도 기억",

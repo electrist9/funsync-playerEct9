@@ -1254,6 +1254,8 @@
       "frameInterpQuality720p": "最高720p",
       "frameInterpQuality480p": "最高480p",
       "frameInterpHudLabel": "显示状态叠加层",
+      "frameInterpUpscaleLabel": "画面放大（TinySR 2倍）",
+      "frameInterpUpscaleHint": "使用GPU将画面分辨率放大至2倍（TinySR）。可独立于插帧开启，也可与插帧同时使用；需要支持WebGPU的GPU，在非1倍速播放、VR中和弹出播放窗口打开时会自动暂停。",
       "frameInterpHint": "使用 GPU 生成额外帧，让 120Hz 以上显示器的画面更流畅。需要支持 WebGPU 的显卡；在倍速播放、VR 和弹出播放器打开时会自动暂停。",
       "frameInterpUnsupportedHint": "帧插帧需要 WebGPU，此设备不支持。",
       "rememberSpeedLabel": "记住播放速度",

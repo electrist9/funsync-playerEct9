@@ -44,6 +44,7 @@ const SETTINGS_DEFAULTS = {
   'player.frameInterpolation.factor': 'auto',
   'player.frameInterpolation.quality': 'auto',
   'player.frameInterpolation.hud': false,
+  'player.frameInterpolation.upscale': false,
 };
 
 export class SettingsPanel {
@@ -524,7 +525,7 @@ export class SettingsPanel {
    * object then, so this only matters for the narrow case of pressing
    * the hotkey while the settings modal is showing.
    *
-   * @param {{enabled: boolean, factor: string, quality: string, hud: boolean}} value
+   * @param {{enabled: boolean, factor: string, quality: string, hud: boolean, upscale: boolean}} value
    */
   syncFrameInterpControls(value) {
     const body = this._bodyEl;
@@ -533,10 +534,12 @@ export class SettingsPanel {
     const fiFactor = body.querySelector('#sp-fi-factor');
     const fiQuality = body.querySelector('#sp-fi-quality');
     const fiHud = body.querySelector('#sp-fi-hud');
+    const fiUpscale = body.querySelector('#sp-fi-upscale');
     if (fiEnabled) fiEnabled.checked = value.enabled === true;
     if (fiFactor) fiFactor.value = value.factor || 'auto';
     if (fiQuality) fiQuality.value = value.quality || 'auto';
     if (fiHud) fiHud.checked = value.hud === true;
+    if (fiUpscale) fiUpscale.checked = value.upscale === true;
   }
 
   _buildSourcesTab() {
@@ -1122,7 +1125,12 @@ export class SettingsPanel {
         <label class="settings-panel__field-label" for="sp-fi-hud">${t('settingsPanel.playback.frameInterpHudLabel')}</label>
         <input type="checkbox" id="sp-fi-hud" class="settings-panel__input settings-panel__input--checkbox" aria-describedby="sp-fi-hint">
       </div>
+      <div class="settings-panel__field">
+        <label class="settings-panel__field-label" for="sp-fi-upscale">${t('settingsPanel.playback.frameInterpUpscaleLabel')}</label>
+        <input type="checkbox" id="sp-fi-upscale" class="settings-panel__input settings-panel__input--checkbox" aria-describedby="sp-fi-upscale-hint">
+      </div>
       <div class="settings-panel__hint" id="sp-fi-hint">${t('settingsPanel.playback.frameInterpHint')}</div>
+      <div class="settings-panel__hint" id="sp-fi-upscale-hint">${t('settingsPanel.playback.frameInterpUpscaleHint')}</div>
       <div class="settings-panel__hint" id="sp-fi-unsupported" hidden>${t('settingsPanel.playback.frameInterpUnsupportedHint')}</div>
     `;
     panel.appendChild(frameInterpSection);
@@ -1280,12 +1288,14 @@ export class SettingsPanel {
       const fiFactor = panel.querySelector('#sp-fi-factor');
       const fiQuality = panel.querySelector('#sp-fi-quality');
       const fiHud = panel.querySelector('#sp-fi-hud');
+      const fiUpscale = panel.querySelector('#sp-fi-upscale');
       const fiUnsupported = panel.querySelector('#sp-fi-unsupported');
 
       const savedFi = this._settings.get('player.frameInterpolation') || {};
       if (fiFactor) fiFactor.value = savedFi.factor || 'auto';
       if (fiQuality) fiQuality.value = savedFi.quality || 'auto';
       if (fiHud) fiHud.checked = savedFi.hud === true;
+      if (fiUpscale) fiUpscale.checked = savedFi.upscale === true;
       if (fiEnabled) fiEnabled.checked = savedFi.enabled === true;
 
       const writeFrameInterp = () => {
@@ -1295,6 +1305,7 @@ export class SettingsPanel {
           factor,
           quality: fiQuality?.value || 'auto',
           hud: fiHud?.checked === true,
+          upscale: fiUpscale?.checked === true,
         };
         this._settings.set('player.frameInterpolation', value);
         if (this.onFrameInterpChanged) this.onFrameInterpChanged(value);
@@ -1314,6 +1325,7 @@ export class SettingsPanel {
       });
       fiQuality?.addEventListener('change', writeFrameInterp);
       fiHud?.addEventListener('change', writeFrameInterp);
+      fiUpscale?.addEventListener('change', writeFrameInterp);
 
       // Capability probe: if WebGPU is unavailable, say so and lock the
       // master switch rather than letting users toggle a dead feature.
@@ -1325,6 +1337,10 @@ export class SettingsPanel {
           fiEnabled.disabled = true;
         }
         if (fiFactor) fiFactor.disabled = true;
+        if (fiUpscale) {
+          fiUpscale.checked = false;
+          fiUpscale.disabled = true;
+        }
       }).catch(() => {});
 
       // Gap filler — strokes during blank stretches of script.

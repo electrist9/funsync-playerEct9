@@ -29,11 +29,18 @@
 import { showToast } from './toast.js';
 import { t } from './i18n.js';
 import { createRT, tuneConvRB } from './interpolation/rt.js';
+import { createSR } from './interpolation/sr.js';
 
 const MAX_MIDS = 5; // factor 6 → 5 inserted mids per pair
 const INPUT_SLOTS = 3; // ping-pong + one spare so an async bitmap copy can't race the next rvfc
 const RING_BANKS = 2; // double-buffered mid textures: a bank is only reused 2 pairs later
 const MAX_PRESENT_QUEUE = 8; // backlog beyond this → drop oldest mids to resync
+// TinySR upscale: output ring slots + a shallower present queue while SR is on
+// (each queued texture is a full 2× frame, and the SR pass itself adds latency).
+// SR_RING must exceed SR_MAX_QUEUE + _lastTex + margin so a slot is never
+// overwritten while still referenced by the queue.
+const SR_MAX_QUEUE = 5;
+const SR_RING = 8;
 const AIMD_WINDOW_MS = 2000;
 const TUNE_CACHE_PREFIX = 'fsInterpTune:';
 
@@ -95,6 +102,7 @@ export class FrameInterpolator {
     this._hud = false;
     this._hudEl = null;
     this._suspended = false;
+    this._upscale = false; // TinySR 2× super-resolution pass (independent of _enabled)
 
     // GPU state.
     this._adapter = null;
@@ -102,10 +110,15 @@ export class FrameInterpolator {
     this._ctx = null;
     this._sampler = null;
     this._rt = null;
+    this._sr = null; // createSR() handle — no destroy(); freed by device.destroy()
+    this._srW = 0;
+    this._srH = 0;
     this._initPromise = null;
     this._modelPromise = null;
     this._weightsBin = null;
     this._weightsManifest = null;
+    this._srWeightsBin = null;
+    this._srWeightsManifest = null;
     this._gpuLost = false;
     this._unsupported = false;
 
@@ -114,6 +127,8 @@ export class FrameInterpolator {
     this._inIdx = 0;
     this._ring = []; // [bank][mid]
     this._parity = 0;
+    this._srRing = []; // 2W×2H upscale outputs, rotated per pushed frame
+    this._srIdx = 0;
     this._prevTex = null;
     this._curTex = null;
 
@@ -262,9 +277,10 @@ export class FrameInterpolator {
 
   /**
    * @param {{enabled?: boolean, factor?: 'auto'|2|4|6, quality?: string, hud?: boolean,
-   *          suspended?: boolean, suspendReason?: string}} opts
+   *          upscale?: boolean, suspended?: boolean, suspendReason?: string}} opts
    * `suspended` is set by the caller (VideoPlayer) while a VR mode owns the
    * presentation path; the user's own enabled flag is preserved.
+   * `upscale` toggles the TinySR 2× pass; it works with interpolation off.
    */
   async update(opts = {}) {
     if (opts.enabled !== undefined) this._enabled = !!opts.enabled;
@@ -273,6 +289,7 @@ export class FrameInterpolator {
     if (opts.hud !== undefined) {
       this._hud = !!opts.hud;
     }
+    if (opts.upscale !== undefined) this._upscale = !!opts.upscale;
     if (opts.suspended !== undefined) this._suspended = !!opts.suspended;
     // HUD only makes sense while frames are actually being presented.
     if (this._hudEl) this._hudEl.hidden = !(this._hud && this._active);
@@ -286,6 +303,7 @@ export class FrameInterpolator {
       factor: this._factor,
       effectiveFactor: this._effectiveFactor(),
       quality: this._quality,
+      upscale: this._upscale,
       suspended: !!this._suspended,
       gpuLost: this._gpuLost,
       unsupported: this._unsupported,
@@ -331,7 +349,8 @@ export class FrameInterpolator {
       return;
     }
     const rateOk = Math.abs((video.playbackRate ?? 1) - 1) < 1e-6;
-    const gateOk = this._enabled && !this._suspended && !this._gpuLost && !this._unsupported && rateOk;
+    // Upscale is independent: either pass keeps the overlay + loops alive.
+    const gateOk = (this._enabled || this._upscale) && !this._suspended && !this._gpuLost && !this._unsupported && rateOk;
     if (!gateOk) {
       this._deactivate();
       return;
@@ -435,6 +454,16 @@ export class FrameInterpolator {
         this._weightsBin = bin;
         this._weightsManifest = manifest;
       }
+      // TinySR weights (27 KB, fetched once per session).
+      if (!this._srWeightsBin) {
+        const srBase = new URL('./interpolation/weights/rt_sr', import.meta.url);
+        const [srBin, srManifest] = await Promise.all([
+          fetch(srBase.href + '.bin').then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error('sr weights bin ' + r.status)))),
+          fetch(srBase.href + '.json').then((r) => (r.ok ? r.json() : Promise.reject(new Error('sr weights json ' + r.status)))),
+        ]);
+        this._srWeightsBin = srBin;
+        this._srWeightsManifest = srManifest;
+      }
     })();
     try {
       await this._initPromise;
@@ -443,7 +472,7 @@ export class FrameInterpolator {
     }
   }
 
-  /** (Re)build the rt model for the current video dimensions + quality rung. */
+  /** (Re)build the rt model and/or SR pass for the current video dimensions + quality rung. */
   async _ensureModel() {
     const video = this._video;
     if (!video || !this._device) return;
@@ -454,57 +483,89 @@ export class FrameInterpolator {
     const cap = QUALITY_CAPS[this._quality] || QUALITY_CAPS.auto;
     const W = r16(Math.min(vw, cap[0]));
     const H = r16(Math.min(vh, cap[1]));
-    if (this._rt && this._rt.w === W && this._rt.h === H) return;
+    const needRt = this._enabled;
+    const needSr = this._upscale;
+    const rtOk = !!this._rt && this._rt.w === W && this._rt.h === H;
+    const srOk = !!this._sr && this._srW === W && this._srH === H;
+    if ((!needRt || rtOk) && (!needSr || srOk)) return;
     if (this._modelPromise) return this._modelPromise;
 
     this._modelPromise = (async () => {
       const device = this._device;
-      const manifest = this._weightsManifest;
-      const C1 = manifest['block0.conv0.0.0.weight'].shape[0];
-      const C2 = manifest['block0.conv0.1.0.weight'].shape[0];
-
-      // Autotuned conv tile — cached per GPU + channel count + dims (upstream
-      // pattern; tuneConvRB costs ~1-2s on first build).
-      let convTune = null;
-      try {
-        const info = await this._adapter.requestAdapterInfo?.();
-        const gpuKey = [info?.vendor, info?.architecture, info?.description].filter(Boolean).join('|') || 'unknown';
-        const key = `${TUNE_CACHE_PREFIX}${gpuKey}:${C2}:${W}x${H}`;
-        const cached = localStorage.getItem(key);
-        if (cached) {
-          convTune = JSON.parse(cached);
-        } else {
-          convTune = await tuneConvRB(device, { ci: C2, co: C2, w16: W / 16, h16: H / 16, s2ci: C1 });
-          localStorage.setItem(key, JSON.stringify(convTune));
-        }
-      } catch (err) {
-        console.warn('[frame-interp] conv tune cache failed, tuning fresh:', err?.message || err);
-        convTune = await tuneConvRB(device, { ci: C2, co: C2, w16: W / 16, h16: H / 16, s2ci: C1 });
-      }
 
       this._rt?.destroy?.();
+      // sr.js has no destroy(): its per-size buffers/textures are freed only
+      // via device.destroy() (on unmount). Rebuilds leak them until then —
+      // dimension changes are rare and the TinySR states are tiny.
+      this._sr = null;
       this._destroyTextures();
 
-      this._rt = await createRT(device, {
-        w: W,
-        h: H,
-        weightsBin: this._weightsBin,
-        weightsManifest: this._weightsManifest,
-        convTune,
-        textureInput: true,
-        textureOutput: true,
-      });
+      if (needRt) {
+        const manifest = this._weightsManifest;
+        const C1 = manifest['block0.conv0.0.0.weight'].shape[0];
+        const C2 = manifest['block0.conv0.1.0.weight'].shape[0];
+
+        // Autotuned conv tile — cached per GPU + channel count + dims (upstream
+        // pattern; tuneConvRB costs ~1-2s on first build).
+        let convTune = null;
+        try {
+          const info = await this._adapter.requestAdapterInfo?.();
+          const gpuKey = [info?.vendor, info?.architecture, info?.description].filter(Boolean).join('|') || 'unknown';
+          const key = `${TUNE_CACHE_PREFIX}${gpuKey}:${C2}:${W}x${H}`;
+          const cached = localStorage.getItem(key);
+          if (cached) {
+            convTune = JSON.parse(cached);
+          } else {
+            convTune = await tuneConvRB(device, { ci: C2, co: C2, w16: W / 16, h16: H / 16, s2ci: C1 });
+            localStorage.setItem(key, JSON.stringify(convTune));
+          }
+        } catch (err) {
+          console.warn('[frame-interp] conv tune cache failed, tuning fresh:', err?.message || err);
+          convTune = await tuneConvRB(device, { ci: C2, co: C2, w16: W / 16, h16: H / 16, s2ci: C1 });
+        }
+
+        this._rt = await createRT(device, {
+          w: W,
+          h: H,
+          weightsBin: this._weightsBin,
+          weightsManifest: this._weightsManifest,
+          convTune,
+          textureInput: true,
+          textureOutput: true,
+        });
+      }
+
+      if (needSr) {
+        // TinySR 2×: residual-vs-bilinear detail pass, full rung resolution.
+        // No convTune for now — the c=16 kernels are tiny next to the rt trunk;
+        // tune later if hardware checks show a perf problem.
+        this._sr = await createSR(device, {
+          weightsBin: this._srWeightsBin,
+          weightsManifest: this._srWeightsManifest,
+        });
+        this._srW = W;
+        this._srH = H;
+      }
 
       // rt_v7s is tfact+refine → texture in/out mode is mandatory.
       // Input textures need COPY_DST + RENDER_ATTACHMENT (Dawn requires both
       // on copyExternalImageToTexture destinations — learned in the spike).
+      // The input pool is needed for SR-only mode too (video lands there).
       for (let i = 0; i < INPUT_SLOTS; i++) {
         this._inPool.push(this._makeTex(W, H, false));
       }
-      for (let b = 0; b < RING_BANKS; b++) {
-        const bank = [];
-        for (let m = 0; m < MAX_MIDS; m++) bank.push(this._makeTex(W, H, true));
-        this._ring.push(bank);
+      if (needRt) {
+        for (let b = 0; b < RING_BANKS; b++) {
+          const bank = [];
+          for (let m = 0; m < MAX_MIDS; m++) bank.push(this._makeTex(W, H, true));
+          this._ring.push(bank);
+        }
+      }
+      if (needSr) {
+        const S = this._sr.scale || 2;
+        for (let i = 0; i < SR_RING; i++) {
+          this._srRing.push(this._makeTex(W * S, H * S, true));
+        }
       }
       this._resetPairState();
     })();
@@ -524,15 +585,14 @@ export class FrameInterpolator {
     });
   }
 
-  _isMidTex(tex) {
-    return this._ring.some((bank) => bank.includes(tex));
-  }
-
   _destroyTextures() {
     for (const t of this._inPool) t?.destroy?.();
     for (const bank of this._ring) for (const t of bank) t?.destroy?.();
+    for (const t of this._srRing) t?.destroy?.();
     this._inPool = [];
     this._ring = [];
+    this._srRing = [];
+    this._srIdx = 0;
     this._presentBgCache.clear();
     this._prevTex = null;
     this._curTex = null;
@@ -543,6 +603,10 @@ export class FrameInterpolator {
   _destroyGpu() {
     this._rt?.destroy?.();
     this._rt = null;
+    // sr.js has no destroy(); its GPU resources go away with device.destroy().
+    this._sr = null;
+    this._srW = 0;
+    this._srH = 0;
     this._destroyTextures();
     this._device?.destroy?.();
     this._device = null;
@@ -598,13 +662,17 @@ export class FrameInterpolator {
     this._lastMediaTime = mt;
 
     // Dimension change (new video) → rebuild model in the background; until
-    // it lands, present real frames only.
-    if (this._rt && (r16(video.videoWidth) !== this._rt.w || r16(video.videoHeight) !== this._rt.h)) {
+    // it lands, present real frames only. (With a quality cap the r16 dims
+    // differ from the rung dims on purpose; _ensureModel's own skip check
+    // makes the repeat call a cheap no-op — same pattern as the rt check.)
+    const stale = (this._rt && (r16(video.videoWidth) !== this._rt.w || r16(video.videoHeight) !== this._rt.h))
+      || (this._sr && (r16(video.videoWidth) !== this._srW || r16(video.videoHeight) !== this._srH));
+    if (stale) {
       this._ensureModel().catch((err) => {
         console.warn('[frame-interp] model rebuild failed:', err?.message || err);
       });
     }
-    if (!this._rt) {
+    if ((!this._rt && this._enabled) || (!this._sr && this._upscale)) {
       this._ensureModel().catch(() => {});
     }
 
@@ -626,8 +694,8 @@ export class FrameInterpolator {
   _copyVideoInto(tex) {
     const video = this._video;
     const rt = this._rt;
-    const W = rt ? rt.w : r16(video.videoWidth);
-    const H = rt ? rt.h : r16(video.videoHeight);
+    const W = rt ? rt.w : (this._sr ? this._srW : r16(video.videoWidth));
+    const H = rt ? rt.h : (this._sr ? this._srH : r16(video.videoHeight));
 
     if (video.videoWidth === W && video.videoHeight === H) {
       let vf = null;
@@ -666,23 +734,48 @@ export class FrameInterpolator {
           this._rt.runT(k / factor, bank[k - 1]);
         }
         this._parity ^= 1;
-        for (let k = 1; k < factor; k++) this._presentQ.push(bank[k - 1]);
+        for (let k = 1; k < factor; k++) this._pushPresent(bank[k - 1], true);
       } catch (err) {
         console.warn('[frame-interp] runT failed:', err?.message || err);
       }
     }
-    this._presentQ.push(next);
+    this._pushPresent(next, false);
 
     // Backlog guard: drop oldest generated mids — never a real source frame,
     // so resyncing costs softness (a duplicated real frame), not a dropped one.
-    while (this._presentQ.length > MAX_PRESENT_QUEUE) {
-      const dropIdx = this._presentQ.findIndex((t) => this._isMidTex(t));
+    // SR outputs are 2× the size, so the queue runs shallower when upscale is
+    // on (SR_RING is sized against SR_MAX_QUEUE + _lastTex + margin).
+    const maxQ = this._upscale ? SR_MAX_QUEUE : MAX_PRESENT_QUEUE;
+    while (this._presentQ.length > maxQ) {
+      const dropIdx = this._presentQ.findIndex((e) => e.mid);
       if (dropIdx < 0) break;
       this._presentQ.splice(dropIdx, 1);
     }
 
     this._prevTex = this._curTex;
     this._curTex = next;
+  }
+
+  /**
+   * Push a texture onto the present queue, running the TinySR pass first when
+   * upscale is on. process() returns false while its per-size pipelines are
+   * still compiling (or after a failed build) — then the original texture is
+   * pushed as-is, which is exactly the bilinear base TinySR builds on.
+   */
+  _pushPresent(tex, mid) {
+    if (this._upscale && this._sr && this._srRing.length) {
+      const out = this._srRing[this._srIdx % SR_RING];
+      this._srIdx++;
+      try {
+        if (this._sr.process(tex, out, this._srW, this._srH)) {
+          this._presentQ.push({ tex: out, mid });
+          return;
+        }
+      } catch (err) {
+        console.warn('[frame-interp] SR pass failed:', err?.message || err);
+      }
+    }
+    this._presentQ.push({ tex, mid });
   }
 
   _rafLoop(now) {
@@ -699,7 +792,8 @@ export class FrameInterpolator {
     }
     this._lastRafAt = now;
 
-    const tex = this._presentQ.shift() ?? this._lastTex;
+    const entry = this._presentQ.shift();
+    const tex = entry ? entry.tex : this._lastTex;
     if (tex) {
       this._present(tex);
       this._lastTex = tex;
@@ -735,10 +829,11 @@ export class FrameInterpolator {
   _updateHud() {
     if (!this._hudEl) return;
     const f = this._effectiveFactor();
+    const sr = this._upscale ? ' SR2×' : '';
     const src = this._srcFps ? Math.round(this._srcFps) : '?';
     const out = this._outFps ? Math.round(this._outFps) : '?';
     const gpu = this._gpuName ? ` · ${this._gpuName.slice(0, 24)}` : '';
-    this._hudEl.textContent = `${f}× ${src}→${out}fps${gpu}`;
+    this._hudEl.textContent = `${f}×${sr} ${src}→${out}fps${gpu}`;
   }
 
   // ------------------------------------------------------------------
