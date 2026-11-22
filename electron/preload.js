@@ -68,6 +68,18 @@ contextBridge.exposeInMainWorld('funsync', {
   setPlaylistBalance: (id, balance) => ipcRenderer.invoke('set-playlist-balance', id, balance),
   setPlaylistPreferUnwatched: (id, prefer) => ipcRenderer.invoke('set-playlist-prefer-unwatched', id, prefer),
   updateWindowChrome: (theme, opts) => ipcRenderer.invoke('update-window-chrome', theme, opts),
+
+  // Borderless-window fullscreen. Main answers for the window that ASKED, so
+  // the player pop-out toggles itself. The push event also covers toggles
+  // made through the menu's F11 `role: 'togglefullscreen'`.
+  setWindowFullscreen: (on) => ipcRenderer.invoke('window:set-fullscreen', on),
+  getWindowFullscreen: () => ipcRenderer.invoke('window:is-fullscreen'),
+  onWindowFullscreenChanged: (callback) => {
+    const handler = (_e, on) => callback(on);
+    ipcRenderer.on('window:fullscreen-changed', handler);
+    return () => ipcRenderer.removeListener('window:fullscreen-changed', handler);
+  },
+
   deletePlaylist: (id) => ipcRenderer.invoke('delete-playlist', id),
   addVideoToPlaylist: (id, videoPath) => ipcRenderer.invoke('add-video-to-playlist', id, videoPath),
   removeVideoFromPlaylist: (id, videoPath) => ipcRenderer.invoke('remove-video-from-playlist', id, videoPath),

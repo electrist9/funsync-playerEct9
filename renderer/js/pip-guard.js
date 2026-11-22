@@ -19,6 +19,8 @@
 // references they need and operate on it. Makes them straightforward to
 // test without instantiating the full App.
 
+import { isWindowFullscreen, exitWindowFullscreen } from './window-fullscreen.js';
+
 /**
  * Is the supplied video element currently the document's PiP element?
  * Defensive against missing video (e.g. test setup) and undefined document.
@@ -61,6 +63,9 @@ export function teardownPlayback(deps) {
   if (deps?.tcodeManager?.connected) deps.tcodeManager.stop();
   if (deps?.autoblowManager?.connected) deps.autoblowManager.syncStop();
 
+  // Drop fullscreen on the way out — both DOM fullscreen and borderless
+  // window fullscreen (Electron), which isn't visible on `doc`.
+  if (isWindowFullscreen()) exitWindowFullscreen(); // never throws
   const doc = (typeof document !== 'undefined') ? document : null;
   if (doc && doc.fullscreenElement) {
     doc.exitFullscreen().catch(() => {});

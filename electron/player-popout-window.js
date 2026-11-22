@@ -122,6 +122,11 @@ function open(parent, store) {
 
   popoutWindow.loadFile(path.join(__dirname, '..', 'renderer', 'player-popout.html'));
 
+  // Same borderless-fullscreen push as the main window — F / the fullscreen
+  // button in the pop-out toggle THIS window, and the renderer tracks it via
+  // the shared preload bridge.
+  require('./window-fullscreen').wireWindowFullscreenEvents(popoutWindow);
+
   popoutWindow.on('resize', persistBounds);
 
   popoutWindow.on('closed', () => {

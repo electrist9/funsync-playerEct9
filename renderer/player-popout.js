@@ -18,6 +18,7 @@ import {
   Activity, Thermometer,
 } from './js/icons.js';
 import { VideoPlayer } from './js/video-player.js';
+import { installWindowFullscreenWatch, isWindowFullscreen, exitWindowFullscreen } from './js/window-fullscreen.js';
 import { ProgressBar } from './js/progress-bar.js';
 import { InlineViz } from './components/inline-viz.js';
 import { UpNextCard } from './components/up-next-card.js';
@@ -31,6 +32,9 @@ import {
 try { installConsoleForwarding(); } catch { /* non-fatal */ }
 // Frameless window → the page owns the drag region (.ppo-dragstrip).
 applyWcoClass();
+// Borderless window fullscreen (F / the fullscreen button): this window
+// toggles ITSELF fullscreen — main answers for the window that asked.
+installWindowFullscreenWatch();
 
 const $ = (id) => document.getElementById(id);
 const loadingEl = $('player-popout-loading');
@@ -103,7 +107,7 @@ function _captionRect() {
 function syncCaptionOverlay(visible = null) {
   if (!window.funsync?.updateWindowChrome) return;
   // Fullscreen has no caption strip at all — nothing to sync.
-  if (document.fullscreenElement) return;
+  if (document.fullscreenElement || isWindowFullscreen()) return;
   const shown = visible === null
     ? !!containerEl?.classList.contains('controls-visible')
     : !!visible;
@@ -213,6 +217,10 @@ function setupPlayer() {
   videoPlayer.onControlsVisibilityChanged = (visible) => syncCaptionOverlay(visible);
   document.addEventListener('fullscreenchange', () => {
     // Leaving fullscreen brings the strip back — re-assert the current state.
+    _captionState = null;
+    syncCaptionOverlay();
+  });
+  window.addEventListener('window-fullscreen-changed', () => {
     _captionState = null;
     syncCaptionOverlay();
   });
@@ -356,6 +364,15 @@ function setupPlayer() {
     switch (e.key) {
       case ' ': case 'k': e.preventDefault(); videoPlayer.togglePlay(); break;
       case 'f': case 'F': videoPlayer.toggleFullscreen(); break;
+      case 'Escape':
+        // Esc leaves borderless window fullscreen — the DOM Fullscreen API
+        // used to swallow Esc, and users read it as "get me out of
+        // fullscreen" (same priority as the main window's keyboard handler).
+        if (isWindowFullscreen()) {
+          e.preventDefault();
+          exitWindowFullscreen();
+        }
+        break;
       case 'm': case 'M': videoPlayer.toggleMute(); break;
       case 'ArrowLeft': e.preventDefault(); video.currentTime = Math.max(0, video.currentTime - 5); break;
       case 'ArrowRight': e.preventDefault(); video.currentTime = Math.min(video.duration || 1e9, video.currentTime + 5); break;

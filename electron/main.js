@@ -55,6 +55,7 @@ const log = require('./logger');
 const { setRedactionEnabled } = require('./log-redact');
 const { startBackend, stopBackend, setHealthListener, startHealthMonitor, restartBackend, getHealthState, getHealthDetail } = require('./python-bridge');
 const { resolveWindowColors } = require('./window-bg');
+const { wireWindowFullscreenEvents } = require('./window-fullscreen');
 const store = require('./store');
 const dataBackup = require('./data-backup');
 const dataMigration = require('./data-migration');
@@ -275,6 +276,12 @@ function createWindow() {
       initAutoUpdater(mainWindow);
     }
   });
+
+  // Borderless-window fullscreen (F / F11 / the fullscreen button): mirror
+  // enter/leave into the renderer so its button icon, Esc handling and
+  // caption-overlay sync track the real window state — including the menu's
+  // F11 `role: 'togglefullscreen'`, which bypasses the renderer entirely.
+  wireWindowFullscreenEvents(mainWindow);
 
   const _mainWinId = mainWindow.id;
   mainWindow.on('closed', () => {
@@ -848,6 +855,24 @@ ipcMain.handle('update-window-chrome', (event, theme, opts = {}) => {
   }
 
   apply(!!opts.hideSymbols);
+});
+
+// Borderless-window fullscreen (F / the fullscreen button, routed through
+// the renderer). Targets the window that ASKED — the player pop-out goes
+// fullscreen as itself, not the main window. The menu's F11
+// `role: 'togglefullscreen'` lands on the same window state, and the
+// enter/leave-full-screen push (window-fullscreen.js) keeps every renderer
+// in sync either way.
+ipcMain.handle('window:set-fullscreen', (event, on) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  if (!win || win.isDestroyed()) return false;
+  win.setFullScreen(!!on);
+  return win.isFullScreen();
+});
+
+ipcMain.handle('window:is-fullscreen', (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  return !!win && !win.isDestroyed() && win.isFullScreen();
 });
 
 ipcMain.handle('set-playlist-video-paths', (_event, id, videoPaths) => {

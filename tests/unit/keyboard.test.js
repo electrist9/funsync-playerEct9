@@ -1,6 +1,7 @@
 // Unit tests for KeyboardHandler — imports from real source
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { KeyboardHandler } from '../../renderer/js/keyboard.js';
+import { setWindowFullscreen, isWindowFullscreen } from '../../renderer/js/window-fullscreen.js';
 
 function createMockPlayer() {
   return {
@@ -200,6 +201,30 @@ describe('KeyboardHandler', () => {
     scriptEditor.isOpen = true;
     fireKey('Escape');
     expect(scriptEditor.hide).toHaveBeenCalled();
+  });
+
+  it('Escape exits window fullscreen FIRST — other Esc handlers stay idle', async () => {
+    // Borderless window fullscreen ignores Esc at the OS level, so the
+    // renderer owns it — and it outranks Up Next / editor / A-B / panel.
+    window.funsync = {
+      setWindowFullscreen: vi.fn(async (on) => !!on),
+      getWindowFullscreen: vi.fn(async () => false),
+      onWindowFullscreenChanged: vi.fn(() => () => {}),
+    };
+    try {
+      await setWindowFullscreen(true);
+      expect(isWindowFullscreen()).toBe(true);
+      scriptEditor.isOpen = true;
+      fireKey('Escape');
+      expect(window.funsync.setWindowFullscreen).toHaveBeenLastCalledWith(false);
+      expect(scriptEditor.hide).not.toHaveBeenCalled();
+      expect(player.clearAbLoop).not.toHaveBeenCalled();
+      expect(connectionPanel.hide).not.toHaveBeenCalled();
+      await setWindowFullscreen(false);
+      expect(isWindowFullscreen()).toBe(false);
+    } finally {
+      delete window.funsync;
+    }
   });
 
   // --- INPUT guard ---

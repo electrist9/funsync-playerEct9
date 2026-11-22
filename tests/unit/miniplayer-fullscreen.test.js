@@ -22,12 +22,67 @@
 //   2. Pressing F while mini docked → toggleFullscreen() refuses
 //      (the keyboard handler has NO view gating, so F fires while the user
 //      is browsing the library with a video docked in the corner)
+//
+// F / F11 now toggle BORDERLESS WINDOW fullscreen (BrowserWindow) instead of
+// the DOM Fullscreen API, so the same guards must also cover the window
+// state — the third describe block covers that path.
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { exitFullscreenForNav } from '../../renderer/js/miniplayer.js';
 import { VideoPlayer } from '../../renderer/js/video-player.js';
+import { setWindowFullscreen } from '../../renderer/js/window-fullscreen.js';
 
 const MINI = 'player-container--mini';
+
+// Shared scaffold — mirrors video-player.test.js; VideoPlayer caches all of
+// these in its constructor and throws on a missing one.
+function buildPlayerFixture() {
+  document.body.innerHTML = `
+    <div id="player-container">
+      <video id="video"></video>
+      <div id="center-play-btn">
+        <span class="center-play__icon--play"></span>
+        <span class="center-play__icon--pause"></span>
+      </div>
+      <div id="player-controls">
+        <button id="btn-play">
+          <span class="icon-play"></span>
+          <span class="icon-pause"></span>
+        </button>
+        <button id="btn-mute">
+          <span class="icon-volume"></span>
+          <span class="icon-muted"></span>
+        </button>
+        <input id="volume-slider" type="range" min="0" max="100" value="80" />
+        <button id="btn-fullscreen">
+          <span class="icon-expand"></span>
+          <span class="icon-compress"></span>
+        </button>
+        <button id="btn-pip"></button>
+        <span id="time-current">0:00</span>
+        <span id="time-duration">0:00</span>
+        <div id="progress-container" role="slider" aria-valuenow="0">
+          <div id="buffered-bar"></div>
+          <div id="progress-bar"></div>
+          <div id="progress-thumb"></div>
+          <div id="progress-tooltip"><span id="tooltip-time"></span></div>
+        </div>
+        <span id="resolution-badge" hidden></span>
+      </div>
+    </div>`;
+  const container = document.getElementById('player-container');
+  const requestFullscreen = vi.fn(() => Promise.resolve());
+  container.requestFullscreen = requestFullscreen;
+  Object.defineProperty(document, 'fullscreenElement', {
+    configurable: true, writable: true, value: null,
+  });
+  const player = new VideoPlayer({
+    videoElement: document.getElementById('video'),
+    controlsElement: document.getElementById('player-controls'),
+    containerElement: container,
+  });
+  return { player, container, requestFullscreen };
+}
 
 describe('exitFullscreenForNav — route 1: leaving the player view', () => {
   it('exits when the document is in fullscreen', () => {
@@ -70,52 +125,7 @@ describe('toggleFullscreen — route 2: F pressed while the mini-player is docke
   let requestFullscreen;
 
   beforeEach(() => {
-    // Mirrors the scaffold in video-player.test.js — VideoPlayer caches all
-    // of these in its constructor and throws on a missing one.
-    document.body.innerHTML = `
-      <div id="player-container">
-        <video id="video"></video>
-        <div id="center-play-btn">
-          <span class="center-play__icon--play"></span>
-          <span class="center-play__icon--pause"></span>
-        </div>
-        <div id="player-controls">
-          <button id="btn-play">
-            <span class="icon-play"></span>
-            <span class="icon-pause"></span>
-          </button>
-          <button id="btn-mute">
-            <span class="icon-volume"></span>
-            <span class="icon-muted"></span>
-          </button>
-          <input id="volume-slider" type="range" min="0" max="100" value="80" />
-          <button id="btn-fullscreen">
-            <span class="icon-expand"></span>
-            <span class="icon-compress"></span>
-          </button>
-          <button id="btn-pip"></button>
-          <span id="time-current">0:00</span>
-          <span id="time-duration">0:00</span>
-          <div id="progress-container" role="slider" aria-valuenow="0">
-            <div id="buffered-bar"></div>
-            <div id="progress-bar"></div>
-            <div id="progress-thumb"></div>
-            <div id="progress-tooltip"><span id="tooltip-time"></span></div>
-          </div>
-          <span id="resolution-badge" hidden></span>
-        </div>
-      </div>`;
-    container = document.getElementById('player-container');
-    requestFullscreen = vi.fn(() => Promise.resolve());
-    container.requestFullscreen = requestFullscreen;
-    Object.defineProperty(document, 'fullscreenElement', {
-      configurable: true, writable: true, value: null,
-    });
-    player = new VideoPlayer({
-      videoElement: document.getElementById('video'),
-      controlsElement: document.getElementById('player-controls'),
-      containerElement: container,
-    });
+    ({ player, container, requestFullscreen } = buildPlayerFixture());
   });
 
   it('REFUSES to fullscreen while docked as the mini-player', async () => {
@@ -141,5 +151,64 @@ describe('toggleFullscreen — route 2: F pressed while the mini-player is docke
     container.classList.add(MINI);
     await player.toggleFullscreen();
     expect(exitFullscreen).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('borderless window fullscreen — the Electron path (F / F11 / button)', () => {
+  // No vi.resetModules here: this drives the SAME window-fullscreen module
+  // instance the app code imports, so the guards in miniplayer.js and
+  // video-player.js read exactly the state set here.
+  let player;
+  let container;
+  let requestFullscreen;
+  let setFs;
+
+  beforeEach(() => {
+    ({ player, container, requestFullscreen } = buildPlayerFixture());
+    setFs = vi.fn(async (on) => !!on);
+    window.funsync = {
+      setWindowFullscreen: setFs,
+      getWindowFullscreen: vi.fn(async () => false),
+      onWindowFullscreenChanged: vi.fn(() => () => {}),
+    };
+  });
+  afterEach(async () => {
+    await setWindowFullscreen(false); // reset the shared singleton
+    delete window.funsync;
+  });
+
+  it('exitFullscreenForNav exits window fullscreen even with no DOM fullscreen', async () => {
+    await setWindowFullscreen(true);
+    expect(exitFullscreenForNav(null)).toBe(true);
+    expect(setFs).toHaveBeenLastCalledWith(false);
+  });
+
+  it('the button toggles the WINDOW, not the element', async () => {
+    await player.toggleFullscreen();
+    expect(setFs).toHaveBeenCalledWith(true);
+    expect(requestFullscreen).not.toHaveBeenCalled();
+    // The button icon follows the window state via the change event.
+    expect(player.iconExpand.hidden).toBe(true);
+    expect(player.iconCompress.hidden).toBe(false);
+
+    await player.toggleFullscreen();
+    expect(setFs).toHaveBeenLastCalledWith(false);
+    expect(player.iconExpand.hidden).toBe(false);
+    expect(player.iconCompress.hidden).toBe(true);
+  });
+
+  it('mini guard: docked mini + window fullscreen → EXIT (the toggle), never enter', async () => {
+    await setWindowFullscreen(true);
+    container.classList.add(MINI);
+    await player.toggleFullscreen();
+    expect(setFs).toHaveBeenLastCalledWith(false);
+    expect(requestFullscreen).not.toHaveBeenCalled();
+  });
+
+  it('mini guard still refuses to ENTER while docked (no window fullscreen)', async () => {
+    container.classList.add(MINI);
+    await player.toggleFullscreen();
+    expect(setFs).not.toHaveBeenCalled();
+    expect(requestFullscreen).not.toHaveBeenCalled();
   });
 });

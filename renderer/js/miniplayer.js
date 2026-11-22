@@ -11,6 +11,8 @@
 //
 // Kept pure so the enter/skip rules are unit-testable without the App/DOM.
 
+import { isWindowFullscreen, exitWindowFullscreen } from './window-fullscreen.js';
+
 /**
  * Should leaving the player view dock into the mini-player instead of
  * tearing playback down?
@@ -56,17 +58,27 @@ export function shouldEnterMiniplayer({ enabled, hasVideo, paused, ended }) {
  * document isn't in fullscreen, and this runs on a teardown path where a
  * rejection must not break navigation.
  *
+ * Borderless window fullscreen (Electron — the primary mode now) isn't
+ * visible on `doc`, so the tracked mirror in window-fullscreen.js is checked
+ * too: the #229 stuck state applies identically there (a fullscreen window
+ * covering the library, mini docked on top, back arrow hidden).
+ *
  * @param {Document} [doc=document]
  * @returns {boolean} true if an exit was requested
  */
 export function exitFullscreenForNav(doc = (typeof document !== 'undefined' ? document : null)) {
-  if (!doc || !doc.fullscreenElement) return false;
-  if (typeof doc.exitFullscreen !== 'function') return false;
+  let exited = false;
+  if (isWindowFullscreen()) {
+    exitWindowFullscreen(); // never throws; fire-and-forget on a teardown path
+    exited = true;
+  }
+  if (!doc || !doc.fullscreenElement) return exited;
+  if (typeof doc.exitFullscreen !== 'function') return exited;
   try {
     const p = doc.exitFullscreen();
     if (p && typeof p.catch === 'function') p.catch(() => {});
     return true;
   } catch {
-    return false;
+    return exited;
   }
 }

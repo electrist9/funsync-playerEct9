@@ -5,6 +5,7 @@ import { t } from './i18n.js';
 import { eventBus } from './event-bus.js';
 import { VRProjectionRenderer } from './vr-projection-renderer.js';
 import { FrameInterpolator } from './frame-interpolator.js';
+import { isWindowFullscreen, hasWindowFullscreenBridge, setWindowFullscreen } from './window-fullscreen.js';
 
 export const PLAYBACK_RATE_PRESETS = Object.freeze([0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2]);
 
@@ -149,6 +150,7 @@ export class VideoPlayer {
     // Fullscreen
     this.btnFullscreen.addEventListener('click', () => this.toggleFullscreen());
     document.addEventListener('fullscreenchange', () => this._updateFullscreenButton());
+    window.addEventListener('window-fullscreen-changed', () => this._updateFullscreenButton());
 
     // PiP
     this.btnPip.addEventListener('click', () => this.togglePip());
@@ -420,8 +422,27 @@ export class VideoPlayer {
     // bar, so it would do so with no back arrow and no way out but killing
     // the app. Same stuck state as the Back-while-fullscreen bug
     // (zaikechi, EroScripts #229); this is its second route in.
-    if (!document.fullscreenElement
+    //
+    // Window fullscreen counts as "already fullscreen" here: F pressed
+    // while the mini is docked but the window is fullscreen should EXIT
+    // fullscreen (the toggle), not be swallowed by the mini guard.
+    const isFs = !!document.fullscreenElement || isWindowFullscreen();
+    if (!isFs
         && this.container?.classList?.contains('player-container--mini')) {
+      return;
+    }
+    // Borderless window fullscreen (Electron): the whole window goes
+    // fullscreen instead of one element. The player view already hides the
+    // nav bar and sizes the container to 100vw/100vh, so this looks the
+    // same as the old DOM fullscreen while behaving like a normal window
+    // (alt-tab, taskbar). Falls back to the DOM API outside Electron.
+    if (hasWindowFullscreenBridge()) {
+      try {
+        await setWindowFullscreen(!isWindowFullscreen());
+      } catch (err) {
+        const msg = (err && err.message) || t('toast.fullscreenUnavailable');
+        showToast(t('toast.fullscreenBlocked', { error: msg }), 'warn');
+      }
       return;
     }
     // Fullscreen can be denied by browser policy (no user gesture, or
@@ -511,7 +532,7 @@ export class VideoPlayer {
   }
 
   _updateFullscreenButton() {
-    const isFs = !!document.fullscreenElement;
+    const isFs = !!document.fullscreenElement || isWindowFullscreen();
     this.iconExpand.hidden = isFs;
     this.iconCompress.hidden = !isFs;
     this.btnFullscreen.setAttribute('aria-label', isFs ? t('player.exitFullscreen') : t('player.fullscreen'));

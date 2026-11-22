@@ -80,6 +80,7 @@ import { startInit, span, mark, logSummary } from './startup-timer.js';
 import { installConsoleForwarding } from './logger.js';
 import { isVideoInPip, teardownPlayback, beginDeferredPipTeardown } from './pip-guard.js';
 import { shouldEnterMiniplayer, exitFullscreenForNav } from './miniplayer.js';
+import { installWindowFullscreenWatch, isWindowFullscreen } from './window-fullscreen.js';
 import { pickRehomeCandidate, findMovedFile } from './association-rehome.js';
 import { classifyStereoFormat, isFlattenableStereo, isVRVideo } from './vr-detect.js';
 import {
@@ -755,9 +756,14 @@ class App {
     this.videoPlayer.onControlsVisibilityChanged = (visible) => {
       this._syncCaptionOverlay(visible);
     };
+    // Borderless window fullscreen (F / F11 / the fullscreen button): track
+    // the window state pushed from main so Esc, the mini-player guard and
+    // the button icon can read `isWindowFullscreen()`.
+    installWindowFullscreenWatch();
     // Fullscreen has no caption strip; re-sync on the way back out so the
     // normal chrome (or the over-video chrome) is restored correctly.
     document.addEventListener('fullscreenchange', () => this._syncCaptionOverlay());
+    window.addEventListener('window-fullscreen-changed', () => this._syncCaptionOverlay());
 
     // Redraw heatmap on resize
     window.addEventListener('resize', () => this.progressBar.redraw());
@@ -9844,7 +9850,7 @@ class App {
   _syncCaptionOverlay(visible = null) {
     if (!window.funsync?.updateWindowChrome) return;
     const theme = this.settings?.get?.('player.theme') || 'dark';
-    const inPlayer = this._currentView?.() === 'player' && !document.fullscreenElement;
+    const inPlayer = this._currentView?.() === 'player' && !document.fullscreenElement && !isWindowFullscreen();
     if (!inPlayer) {
       // Back to the normal themed chrome (idempotent).
       if (this._captionOverlayState !== 'normal') {

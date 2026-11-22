@@ -2,6 +2,7 @@
 
 import { openKeyboardHelp, getPlayerShortcutGroups } from './keyboard-help.js';
 import { t } from './i18n.js';
+import { isWindowFullscreen, exitWindowFullscreen } from './window-fullscreen.js';
 
 export class KeyboardHandler {
   constructor({ videoPlayer, connectionPanel, onOpenFile, scriptEditor, deviceSimulator, gapSkipEngine, onNavigate, onToggleLoop, onToggleQueue, onJumpChapter, onJumpBookmark, onLoadNext, onLoadPrev, onToggleSlideshow, onToggleFrameInterp }) {
@@ -425,6 +426,16 @@ export class KeyboardHandler {
         break;
 
       case 'Escape':
+        // Window fullscreen exits on Esc FIRST. The DOM Fullscreen API used
+        // to swallow Esc and leave fullscreen, so users read Esc as "get me
+        // out of fullscreen" in the player; borderless window fullscreen
+        // ignores Esc at the OS level, so mirror that here — ahead of the
+        // Up Next / editor / A-B handlers (user-approved priority).
+        if (isWindowFullscreen()) {
+          e.preventDefault();
+          exitWindowFullscreen();
+          break;
+        }
         // Up Next dismiss runs FIRST so a visible card can be cleared
         // without also clearing the user's A-B loop. Other Esc handlers
         // only run when the card isn't showing.
