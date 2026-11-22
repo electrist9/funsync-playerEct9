@@ -27,7 +27,7 @@ vi.mock('../../renderer/js/interpolation/sr.js', () => ({
 }));
 
 import { showToast } from '../../renderer/js/toast.js';
-import { FrameInterpolator } from '../../renderer/js/frame-interpolator.js';
+import { FrameInterpolator, webglGpuName } from '../../renderer/js/frame-interpolator.js';
 import { VideoPlayer } from '../../renderer/js/video-player.js';
 
 // ---------------------------------------------------------------------------
@@ -137,6 +137,71 @@ describe('FrameInterpolator.probe', () => {
     const a = await FrameInterpolator.probe();
     const b = await FrameInterpolator.probe();
     expect(b).toBe(a);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// webglGpuName — HUD GPU-name fallback via the ANGLE renderer string
+// (Chromium 131+ blanks adapter.info without DevTools attached)
+// ---------------------------------------------------------------------------
+
+describe('webglGpuName', () => {
+  const origCreate = document.createElement;
+  afterEach(() => { document.createElement = origCreate; });
+
+  function stubGl(gl) {
+    document.createElement = () => ({
+      width: 0,
+      height: 0,
+      getContext: (kind) => (kind === 'webgl2' || kind === 'webgl' ? gl : null),
+    });
+  }
+
+  it('extracts the device from an unmasked ANGLE string', () => {
+    stubGl({
+      RENDERER: 7937,
+      getExtension: () => ({ UNMASKED_RENDERER_WEBGL: 37445 }),
+      getParameter: (p) => (p === 37445
+        ? 'ANGLE (NVIDIA GeForce RTX 4070 SUPER Direct3D11 vs_5_0 ps_5_0, D3D11)'
+        : 'OpenGL ES 3.0 (ANGLE 2.1)'),
+    });
+    expect(webglGpuName()).toBe('NVIDIA GeForce RTX 4070 SUPER');
+  });
+
+  it('drops the ANGLE vendor prefix from newer Chromium strings', () => {
+    stubGl({
+      RENDERER: 7937,
+      getExtension: () => ({ UNMASKED_RENDERER_WEBGL: 37445 }),
+      getParameter: (p) => (p === 37445
+        ? 'ANGLE (NVIDIA, NVIDIA GeForce RTX 4070 Direct3D11 vs_5_0 ps_5_0, D3D11-9-1)'
+        : 'OpenGL ES 3.0 (ANGLE 2.1)'),
+    });
+    expect(webglGpuName()).toBe('NVIDIA GeForce RTX 4070');
+  });
+
+  it('drops a trailing PCI device id suffix', () => {
+    stubGl({
+      RENDERER: 7937,
+      getExtension: () => ({ UNMASKED_RENDERER_WEBGL: 37445 }),
+      getParameter: (p) => (p === 37445
+        ? 'ANGLE (NVIDIA, NVIDIA GeForce RTX 4070 SUPER (0x2621-10DE) Direct3D11 vs_5_0 ps_5_0, D3D11-9-1)'
+        : 'OpenGL ES 3.0 (ANGLE 2.1)'),
+    });
+    expect(webglGpuName()).toBe('NVIDIA GeForce RTX 4070 SUPER');
+  });
+
+  it('falls back to the masked RENDERER and strips (R)/(TM)', () => {
+    stubGl({
+      RENDERER: 7937,
+      getExtension: () => null,
+      getParameter: () => 'ANGLE (Intel(R) UHD Graphics 630 Direct3D11 vs_5_0 ps_5_0, D3D11)',
+    });
+    expect(webglGpuName()).toBe('Intel UHD Graphics 630');
+  });
+
+  it('returns empty string when no WebGL context is available', () => {
+    stubGl(null);
+    expect(webglGpuName()).toBe('');
   });
 });
 

@@ -49,6 +49,34 @@ function r16(n) {
   return Math.max(16, Math.floor(n / 16) * 16);
 }
 
+/**
+ * GPU name via a throwaway WebGL context's ANGLE renderer string.
+ * WebGPU's adapter.info only exposes vendor + architecture codenames
+ * ("nvidia lovelace"), and older Chromium blanked even those without
+ * DevTools attached. WEBGL_debug_renderer_info still reports the full
+ * commercial device name, which is the same GPU enumeration the
+ * compositor sees. Exported for tests.
+ */
+export function webglGpuName() {
+  try {
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = 1;
+    const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
+    if (!gl) return '';
+    const ext = gl.getExtension('WEBGL_debug_renderer_info');
+    const raw = String((ext && gl.getParameter(ext.UNMASKED_RENDERER_WEBGL)) || gl.getParameter(gl.RENDERER) || '');
+    const m = /ANGLE \((.+?) (?:Direct3D\d+|OpenGL|Vulkan|Metal)/i.exec(raw);
+    let name = m ? m[1] : raw;
+    // Newer ANGLE strings prefix the vendor: "NVIDIA, NVIDIA GeForce RTX 4070 …"
+    if (m && name.includes(',')) name = name.slice(name.indexOf(',') + 1);
+    // …and some append the PCI device id: "… RTX 4070 SUPER (0x2621-10DE)".
+    name = name.replace(/\s*\([^)]*0x[0-9a-fA-F]{4}[^)]*\)\s*$/, '');
+    return name.replace(/\((?:R|TM)\)/gi, '').replace(/\s+/g, ' ').trim();
+  } catch {
+    return '';
+  }
+}
+
 /** Quality preset → model rung cap (mids computed at ≤ this size, upscaled on present). */
 const QUALITY_CAPS = Object.freeze({
   auto: [1920, 1080],
@@ -416,12 +444,18 @@ export class FrameInterpolator {
         showToast(t('frameInterp.gpuLost'), 'warn', 5000);
       });
 
+      // adapter.info only carries vendor + architecture codename ("nvidia
+      // lovelace" for RTX 40-series) — never the commercial product name. The
+      // ANGLE renderer string does ("NVIDIA GeForce RTX 4070 SUPER"), so prefer
+      // it and keep adapter.info as the fallback.
+      let infoName = '';
       try {
-        const info = await this._adapter.requestAdapterInfo?.();
-        this._gpuName = [info?.vendor, info?.architecture, info?.description].filter(Boolean).join(' ') || '';
+        const info = this._adapter.info ?? await this._adapter.requestAdapterInfo?.();
+        infoName = [info?.vendor, info?.architecture, info?.description].filter(Boolean).join(' ') || '';
       } catch {
-        this._gpuName = '';
+        infoName = '';
       }
+      this._gpuName = webglGpuName() || infoName;
 
       this._ctx = this.canvas.getContext('webgpu');
       this._ctx.configure({
@@ -509,8 +543,9 @@ export class FrameInterpolator {
         // pattern; tuneConvRB costs ~1-2s on first build).
         let convTune = null;
         try {
-          const info = await this._adapter.requestAdapterInfo?.();
-          const gpuKey = [info?.vendor, info?.architecture, info?.description].filter(Boolean).join('|') || 'unknown';
+          // _gpuName was resolved in _ensureGpu (adapter.info is blanked in
+          // Chromium 131+, so keying off requestAdapterInfo() is dead code now).
+          const gpuKey = this._gpuName || 'unknown';
           const key = `${TUNE_CACHE_PREFIX}${gpuKey}:${C2}:${W}x${H}`;
           const cached = localStorage.getItem(key);
           if (cached) {
@@ -832,7 +867,7 @@ export class FrameInterpolator {
     const sr = this._upscale ? ' SR2×' : '';
     const src = this._srcFps ? Math.round(this._srcFps) : '?';
     const out = this._outFps ? Math.round(this._outFps) : '?';
-    const gpu = this._gpuName ? ` · ${this._gpuName.slice(0, 24)}` : '';
+    const gpu = this._gpuName ? ` · ${this._gpuName.slice(0, 32)}` : '';
     this._hudEl.textContent = `${f}×${sr} ${src}→${out}fps${gpu}`;
   }
 
