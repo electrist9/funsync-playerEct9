@@ -16,6 +16,23 @@ A local desktop video player with device synchronization for funscript playback.
 - A-B loop points for repeat sections
 - Replay button when video ends
 - Script gap auto-skip with configurable countdown or skip button
+- **Borderless fullscreen** — the F key and the fullscreen button use borderless-window fullscreen, unified with F11
+
+### Frame Interpolation & Upscale (new in 1.5.0)
+- **WebGPU frame interpolation** — real-time frame generation, toggled with **Shift+I**
+  - Multipliers: off / 2× / 4× / 6× / **auto** (auto caps at your display's refresh rate — 6× matches 24 fps content to a 144 Hz display)
+  - Quality presets, an optional HUD (shows your GPU's full name), and a settings-panel section persisted across sessions
+  - Auto-pauses where it can't run: playback speed ≠ 1×, VR, pop-out playback, or no WebGPU-capable GPU
+- **Upscale (TinySR 2×)** — GPU 2× resolution boost, toggled independently of interpolation; works standalone or alongside it
+- Note: the bundled interpolation weights are **non-commercial** (research / personal use only) — see `renderer/js/interpolation/weights/WEIGHTS_LICENSE.md`
+
+### Photo Slideshow (new in 1.5.0)
+- Rhythmslide-style slideshow: photos from a folder cycle in the main area **in time with the funscript's strokes** while the video shrinks to a clickable corner window (click it to restore the full video)
+- Toggle from the player's overflow menu or with **C**; requires a funscript
+- Presets group the switch rule — per up-stroke, at direction changes (peaks), or cumulative travel — with amplitude threshold and step size; add and edit presets in the settings panel
+- Photo order: forward or ping-pong; one shared photo folder is remembered and applies to every video
+- Transitions: crossfade, wipe left/right, slide left/right, zoom, or random per switch; the backdrop can use each photo's **dominant color**
+- Portrait photos keep their aspect ratio when the window is resized
 
 ### Library
 - Browse and organize your video collection from one or more source folders
@@ -105,7 +122,7 @@ A local desktop video player with device synchronization for funscript playback.
 ### Data
 - Settings, playlists, and categories stored locally (no cloud, no account)
 - Export/import backups as .funsync-backup zip files
-- Automatic updates — notified when a new version is available; **you control download AND install** (no silent install on app quit)
+- **Auto-update is disabled in this fork** — download new versions from the [Releases page](https://github.com/electrist9/funsync-playerEct9/releases/latest) (see Install above)
 - All user data preserved across updates
 
 ---
@@ -136,6 +153,8 @@ Your library, settings and logs live in a `data/` folder next to the exe (portab
 | H | Device panel |
 | S | Screenshot |
 | I | Info overlay |
+| Shift+I | Toggle frame interpolation |
+| C | Toggle photo slideshow |
 | A / B | Loop points |
 | Escape | Clear loop / close panels |
 | R | Cycle aspect ratio |
