@@ -45,6 +45,8 @@ const SETTINGS_DEFAULTS = {
   'player.frameInterpolation.quality': 'auto',
   'player.frameInterpolation.hud': false,
   'player.frameInterpolation.upscale': false,
+  'player.frameInterpolation.maxFiRes': 0,
+  'player.frameInterpolation.maxSrRes': 0,
 };
 
 export class SettingsPanel {
@@ -525,7 +527,8 @@ export class SettingsPanel {
    * object then, so this only matters for the narrow case of pressing
    * the hotkey while the settings modal is showing.
    *
-   * @param {{enabled: boolean, factor: string, quality: string, hud: boolean, upscale: boolean}} value
+   * @param {{enabled: boolean, factor: string, quality: string, hud: boolean, upscale: boolean,
+   *          maxFiRes?: number, maxSrRes?: number}} value
    */
   syncFrameInterpControls(value) {
     const body = this._bodyEl;
@@ -535,11 +538,15 @@ export class SettingsPanel {
     const fiQuality = body.querySelector('#sp-fi-quality');
     const fiHud = body.querySelector('#sp-fi-hud');
     const fiUpscale = body.querySelector('#sp-fi-upscale');
+    const fiMaxRes = body.querySelector('#sp-fi-maxres');
+    const fiMaxResSr = body.querySelector('#sp-fi-maxres-sr');
     if (fiEnabled) fiEnabled.checked = value.enabled === true;
     if (fiFactor) fiFactor.value = value.factor || 'auto';
     if (fiQuality) fiQuality.value = value.quality || 'auto';
     if (fiHud) fiHud.checked = value.hud === true;
     if (fiUpscale) fiUpscale.checked = value.upscale === true;
+    if (fiMaxRes) fiMaxRes.value = String(Number(value.maxFiRes) || 0);
+    if (fiMaxResSr) fiMaxResSr.value = String(Number(value.maxSrRes) || 0);
   }
 
   _buildSourcesTab() {
@@ -1129,8 +1136,29 @@ export class SettingsPanel {
         <label class="settings-panel__field-label" for="sp-fi-upscale">${t('settingsPanel.playback.frameInterpUpscaleLabel')}</label>
         <input type="checkbox" id="sp-fi-upscale" class="settings-panel__input settings-panel__input--checkbox" aria-describedby="sp-fi-upscale-hint">
       </div>
+      <div class="settings-panel__field">
+        <label class="settings-panel__field-label" for="sp-fi-maxres">${t('settingsPanel.playback.frameInterpMaxFiLabel')}</label>
+        <select id="sp-fi-maxres" class="settings-panel__input settings-panel__input--select" aria-describedby="sp-fi-maxres-hint">
+          <option value="0">${t('settingsPanel.playback.frameInterpMaxResUnlimited')}</option>
+          <option value="2160">${t('settingsPanel.playback.frameInterpMaxRes2160')}</option>
+          <option value="1440">${t('settingsPanel.playback.frameInterpMaxRes1440')}</option>
+          <option value="1080">${t('settingsPanel.playback.frameInterpMaxRes1080')}</option>
+          <option value="720">${t('settingsPanel.playback.frameInterpMaxRes720')}</option>
+        </select>
+      </div>
+      <div class="settings-panel__field">
+        <label class="settings-panel__field-label" for="sp-fi-maxres-sr">${t('settingsPanel.playback.frameInterpMaxSrLabel')}</label>
+        <select id="sp-fi-maxres-sr" class="settings-panel__input settings-panel__input--select" aria-describedby="sp-fi-maxres-hint">
+          <option value="0">${t('settingsPanel.playback.frameInterpMaxResUnlimited')}</option>
+          <option value="2160">${t('settingsPanel.playback.frameInterpMaxRes2160')}</option>
+          <option value="1440">${t('settingsPanel.playback.frameInterpMaxRes1440')}</option>
+          <option value="1080">${t('settingsPanel.playback.frameInterpMaxRes1080')}</option>
+          <option value="720">${t('settingsPanel.playback.frameInterpMaxRes720')}</option>
+        </select>
+      </div>
       <div class="settings-panel__hint" id="sp-fi-hint">${t('settingsPanel.playback.frameInterpHint')}</div>
       <div class="settings-panel__hint" id="sp-fi-upscale-hint">${t('settingsPanel.playback.frameInterpUpscaleHint')}</div>
+      <div class="settings-panel__hint" id="sp-fi-maxres-hint">${t('settingsPanel.playback.frameInterpMaxResHint')}</div>
       <div class="settings-panel__hint" id="sp-fi-unsupported" hidden>${t('settingsPanel.playback.frameInterpUnsupportedHint')}</div>
     `;
     panel.appendChild(frameInterpSection);
@@ -1296,6 +1324,8 @@ export class SettingsPanel {
       const fiQuality = panel.querySelector('#sp-fi-quality');
       const fiHud = panel.querySelector('#sp-fi-hud');
       const fiUpscale = panel.querySelector('#sp-fi-upscale');
+      const fiMaxRes = panel.querySelector('#sp-fi-maxres');
+      const fiMaxResSr = panel.querySelector('#sp-fi-maxres-sr');
       const fiUnsupported = panel.querySelector('#sp-fi-unsupported');
 
       const savedFi = this._settings.get('player.frameInterpolation') || {};
@@ -1303,6 +1333,8 @@ export class SettingsPanel {
       if (fiQuality) fiQuality.value = savedFi.quality || 'auto';
       if (fiHud) fiHud.checked = savedFi.hud === true;
       if (fiUpscale) fiUpscale.checked = savedFi.upscale === true;
+      if (fiMaxRes) fiMaxRes.value = String(Number(savedFi.maxFiRes) || 0);
+      if (fiMaxResSr) fiMaxResSr.value = String(Number(savedFi.maxSrRes) || 0);
       if (fiEnabled) fiEnabled.checked = savedFi.enabled === true;
 
       const writeFrameInterp = () => {
@@ -1313,6 +1345,8 @@ export class SettingsPanel {
           quality: fiQuality?.value || 'auto',
           hud: fiHud?.checked === true,
           upscale: fiUpscale?.checked === true,
+          maxFiRes: Number(fiMaxRes?.value) || 0,
+          maxSrRes: Number(fiMaxResSr?.value) || 0,
         };
         this._settings.set('player.frameInterpolation', value);
         if (this.onFrameInterpChanged) this.onFrameInterpChanged(value);
@@ -1333,6 +1367,8 @@ export class SettingsPanel {
       fiQuality?.addEventListener('change', writeFrameInterp);
       fiHud?.addEventListener('change', writeFrameInterp);
       fiUpscale?.addEventListener('change', writeFrameInterp);
+      fiMaxRes?.addEventListener('change', writeFrameInterp);
+      fiMaxResSr?.addEventListener('change', writeFrameInterp);
 
       // Capability probe: if WebGPU is unavailable, say so and lock the
       // master switch rather than letting users toggle a dead feature.
@@ -1348,6 +1384,8 @@ export class SettingsPanel {
           fiUpscale.checked = false;
           fiUpscale.disabled = true;
         }
+        if (fiMaxRes) fiMaxRes.disabled = true;
+        if (fiMaxResSr) fiMaxResSr.disabled = true;
       }).catch(() => {});
 
       // Gap filler — strokes during blank stretches of script.

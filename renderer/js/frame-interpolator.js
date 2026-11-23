@@ -131,6 +131,10 @@ export class FrameInterpolator {
     this._hudEl = null;
     this._suspended = false;
     this._upscale = false; // TinySR 2× super-resolution pass (independent of _enabled)
+    // Resolution ceilings (pixel-class value, 0 = unlimited): when the video
+    // exceeds its ceiling the matching pass stays inert for that video.
+    this._maxFiRes = 0;
+    this._maxSrRes = 0;
 
     // GPU state.
     this._adapter = null;
@@ -260,7 +264,15 @@ export class FrameInterpolator {
     on('loadedmetadata', () => {
       this._resetPairState();
       this._rect = null;
-      if (this._active) this._ensureModel().catch(() => {});
+      if (this._active) {
+        // A new source can cross a resolution ceiling mid-session: drop the
+        // overlay (real <video> shows through) instead of rebuilding models.
+        if (!(this._fiOn || this._srOn)) this._deactivate();
+        else this._ensureModel().catch(() => {});
+      } else {
+        // An over-ceiling video kept the pass inert — re-evaluate for this source.
+        void this._applyGate();
+      }
     });
   }
 
@@ -305,10 +317,13 @@ export class FrameInterpolator {
 
   /**
    * @param {{enabled?: boolean, factor?: 'auto'|2|4|6, quality?: string, hud?: boolean,
-   *          upscale?: boolean, suspended?: boolean, suspendReason?: string}} opts
+   *          upscale?: boolean, maxFiRes?: number, maxSrRes?: number,
+   *          suspended?: boolean, suspendReason?: string}} opts
    * `suspended` is set by the caller (VideoPlayer) while a VR mode owns the
    * presentation path; the user's own enabled flag is preserved.
    * `upscale` toggles the TinySR 2× pass; it works with interpolation off.
+   * `maxFiRes`/`maxSrRes` are per-pass resolution ceilings (pixel-class,
+   * 0 = unlimited): videos above the ceiling leave that pass inert.
    */
   async update(opts = {}) {
     if (opts.enabled !== undefined) this._enabled = !!opts.enabled;
@@ -318,6 +333,8 @@ export class FrameInterpolator {
       this._hud = !!opts.hud;
     }
     if (opts.upscale !== undefined) this._upscale = !!opts.upscale;
+    if (opts.maxFiRes !== undefined) this._maxFiRes = Number(opts.maxFiRes) || 0;
+    if (opts.maxSrRes !== undefined) this._maxSrRes = Number(opts.maxSrRes) || 0;
     if (opts.suspended !== undefined) this._suspended = !!opts.suspended;
     // HUD only makes sense while frames are actually being presented.
     if (this._hudEl) this._hudEl.hidden = !(this._hud && this._active);
@@ -347,6 +364,26 @@ export class FrameInterpolator {
     const n = Number(this._factor);
     return Number.isFinite(n) && n >= 2 ? Math.min(6, Math.round(n)) : 1;
   }
+
+  /**
+   * True when the current video's pixel class exceeds `cap` (0 = unlimited).
+   * Compares the SHORT edge so portrait videos fall in the same class as
+   * landscape ones (1080×1920 is a "1080p" workload, not a 1920p one).
+   */
+  _overResCap(cap) {
+    if (!(cap > 0)) return false;
+    const vw = this._video?.videoWidth;
+    const vh = this._video?.videoHeight;
+    if (!vw || !vh) return false;
+    return Math.min(vw, vh) > cap;
+  }
+
+  // Per-pass effective flags: the user switch AND the resolution ceiling
+  // for the video currently loaded. Every render-path decision uses these,
+  // never the raw _enabled/_upscale, so an over-ceiling video leaves the
+  // matching pass inert (like toggled off — the GPU state stays loaded).
+  get _fiOn() { return this._enabled && !this._overResCap(this._maxFiRes); }
+  get _srOn() { return this._upscale && !this._overResCap(this._maxSrRes); }
 
   /** Target factor from measured source fps vs display refresh (30→120 ⇒ 4×). */
   _desiredAutoFactor() {
@@ -378,7 +415,7 @@ export class FrameInterpolator {
     }
     const rateOk = Math.abs((video.playbackRate ?? 1) - 1) < 1e-6;
     // Upscale is independent: either pass keeps the overlay + loops alive.
-    const gateOk = (this._enabled || this._upscale) && !this._suspended && !this._gpuLost && !this._unsupported && rateOk;
+    const gateOk = (this._fiOn || this._srOn) && !this._suspended && !this._gpuLost && !this._unsupported && rateOk;
     if (!gateOk) {
       this._deactivate();
       return;
@@ -517,14 +554,14 @@ export class FrameInterpolator {
     const cap = QUALITY_CAPS[this._quality] || QUALITY_CAPS.auto;
     const W = r16(Math.min(vw, cap[0]));
     const H = r16(Math.min(vh, cap[1]));
-    const needRt = this._enabled;
-    const needSr = this._upscale;
+    const needRt = this._fiOn;
+    const needSr = this._srOn;
     const rtOk = !!this._rt && this._rt.w === W && this._rt.h === H;
     const srOk = !!this._sr && this._srW === W && this._srH === H;
     // NOTE: a loaded _rt is deliberately NOT released when FI goes off with
     // upscale on — the capture/present loops are still live and destroying
     // the model + textures under them throws ("Buffer used in submit while
-    // destroyed"). _afterCopy gates on _enabled, so the idle model is inert.
+    // destroyed"). _afterCopy gates on _fiOn, so the idle model is inert.
     if ((!needRt || rtOk) && (!needSr || srOk)) return;
     if (this._modelPromise) return this._modelPromise;
 
@@ -711,7 +748,7 @@ export class FrameInterpolator {
         console.warn('[frame-interp] model rebuild failed:', err?.message || err);
       });
     }
-    if ((!this._rt && this._enabled) || (!this._sr && this._upscale)) {
+    if ((!this._rt && this._fiOn) || (!this._sr && this._srOn)) {
       this._ensureModel().catch(() => {});
     }
 
@@ -765,10 +802,11 @@ export class FrameInterpolator {
     if (!this._active) return;
     const factor = this._effectiveFactor();
 
-    // _enabled gates interpolation even while the overlay stays alive for the
-    // upscale-only pass — turning FI off with upscale on must stop generating
-    // mids immediately, before the async model rebuild releases _rt.
-    if (this._enabled && this._curTex && this._rt && factor > 1) {
+    // _fiOn gates interpolation even while the overlay stays alive for the
+    // upscale-only pass — turning FI off (or an over-ceiling video) with
+    // upscale on must stop generating mids immediately, before the async
+    // model rebuild releases _rt.
+    if (this._fiOn && this._curTex && this._rt && factor > 1) {
       const bank = this._ring[this._parity];
       try {
         this._rt.prepPair(this._curTex, next);
@@ -787,7 +825,7 @@ export class FrameInterpolator {
     // so resyncing costs softness (a duplicated real frame), not a dropped one.
     // SR outputs are 2× the size, so the queue runs shallower when upscale is
     // on (SR_RING is sized against SR_MAX_QUEUE + _lastTex + margin).
-    const maxQ = this._upscale ? SR_MAX_QUEUE : MAX_PRESENT_QUEUE;
+    const maxQ = this._srOn ? SR_MAX_QUEUE : MAX_PRESENT_QUEUE;
     while (this._presentQ.length > maxQ) {
       const dropIdx = this._presentQ.findIndex((e) => e.mid);
       if (dropIdx < 0) break;
@@ -805,7 +843,7 @@ export class FrameInterpolator {
    * pushed as-is, which is exactly the bilinear base TinySR builds on.
    */
   _pushPresent(tex, mid) {
-    if (this._upscale && this._sr && this._srRing.length) {
+    if (this._srOn && this._sr && this._srRing.length) {
       const out = this._srRing[this._srIdx % SR_RING];
       this._srIdx++;
       try {
@@ -888,8 +926,8 @@ export class FrameInterpolator {
   _updateHud() {
     if (!this._hudEl) return;
     const parts = [];
-    if (this._enabled) parts.push(`${this._effectiveFactor()}×`);
-    if (this._upscale) parts.push('SR2×');
+    if (this._fiOn) parts.push(`${this._effectiveFactor()}×`);
+    if (this._srOn) parts.push('SR2×');
     const src = this._srcFps ? Math.round(this._srcFps) : '?';
     const out = this._outFps ? Math.round(this._outFps) : '?';
     const gpu = this._gpuName ? ` · ${this._gpuName.slice(0, 32)}` : '';

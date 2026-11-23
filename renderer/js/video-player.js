@@ -1015,10 +1015,13 @@ export class VideoPlayer {
 
   /**
    * @param {{enabled?: boolean, factor?: 'auto'|2|4|6, quality?: string,
-   *          hud?: boolean, upscale?: boolean, suspended?: boolean}} opts
+   *          hud?: boolean, upscale?: boolean, maxFiRes?: number,
+   *          maxSrRes?: number, suspended?: boolean}} opts
    * `suspended` is an EXTERNAL suspend (e.g. the pop-out window is the
    * playback authority); it ORs with the internal VR suspension.
    * `upscale` (TinySR 2×) works independently of `enabled`.
+   * `maxFiRes`/`maxSrRes`: per-pass resolution ceilings (pixel-class,
+   * 0 = unlimited); over-ceiling videos leave that pass inert.
    */
   setFrameInterpolation(opts = {}) {
     this._frameInterpOpts = { ...(this._frameInterpOpts || {}), ...opts };
@@ -1033,6 +1036,8 @@ export class VideoPlayer {
       quality: this._frameInterpOpts.quality ?? 'auto',
       hud: !!this._frameInterpOpts.hud,
       upscale: !!this._frameInterpOpts.upscale,
+      maxFiRes: Number(this._frameInterpOpts.maxFiRes) || 0,
+      maxSrRes: Number(this._frameInterpOpts.maxSrRes) || 0,
       suspended: this._frameInterpSuspension(),
     }).catch(() => {});
   }

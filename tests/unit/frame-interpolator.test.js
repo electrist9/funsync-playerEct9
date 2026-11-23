@@ -42,6 +42,8 @@ function bareInterpolator(overrides = {}) {
     _active: false,
     _enabled: false,
     _upscale: false,
+    _maxFiRes: 0,
+    _maxSrRes: 0,
     _factor: 'auto',
     _quality: 'auto',
     _hud: false,
@@ -272,6 +274,89 @@ describe('FrameInterpolator AIMD controller', () => {
     const fi = bareInterpolator({ _srcFps: 60, _refreshFps: 120, _autoFactor: 2 });
     fi._aimdAdjust(0);
     expect(fi._autoFactor).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 3b. Resolution ceilings — per-pass caps on frame interpolation / upscale
+// ---------------------------------------------------------------------------
+
+describe('FrameInterpolator resolution ceilings', () => {
+  const vid = (w, h) => ({ playbackRate: 1, videoWidth: w, videoHeight: h });
+
+  it('_overResCap compares the SHORT edge; 0 is unlimited', () => {
+    const fi = bareInterpolator({ _video: vid(3840, 2160) });
+    expect(fi._overResCap(0)).toBe(false);
+    expect(fi._overResCap(2160)).toBe(false); // boundary counts as within
+    expect(fi._overResCap(1440)).toBe(true);
+    // Unknown dimensions never count as over the cap.
+    expect(bareInterpolator()._overResCap(720)).toBe(false);
+    expect(bareInterpolator({ _video: null })._overResCap(720)).toBe(false);
+  });
+
+  it('portrait videos share the landscape pixel class', () => {
+    const fi = bareInterpolator({ _video: vid(1080, 1920) });
+    expect(fi._overResCap(1080)).toBe(false);
+    expect(fi._overResCap(720)).toBe(true);
+  });
+
+  it('effective flags combine the switches with their own ceiling', () => {
+    const fi = bareInterpolator({
+      _enabled: true, _upscale: true, _maxFiRes: 1080, _maxSrRes: 0,
+      _video: vid(1920, 1080),
+    });
+    expect(fi._fiOn).toBe(true);
+    expect(fi._srOn).toBe(true);
+    fi._video = vid(2560, 1440);
+    expect(fi._fiOn).toBe(false); // 1440p crosses the 1080p FI ceiling
+    expect(fi._srOn).toBe(true);  // upscale ceiling is unlimited
+  });
+
+  it('gate deactivates when the video crosses BOTH ceilings', async () => {
+    const fi = bareInterpolator({
+      _enabled: true, _upscale: true, _active: true,
+      _maxFiRes: 1080, _maxSrRes: 1080, _video: vid(3840, 2160),
+    });
+    await fi._applyGate();
+    expect(fi._activate).not.toHaveBeenCalled();
+    expect(fi._deactivate).toHaveBeenCalledTimes(1);
+  });
+
+  it('gate keeps the pass alive when only the FI ceiling is crossed', async () => {
+    const fi = bareInterpolator({
+      _enabled: true, _upscale: true,
+      _maxFiRes: 1080, _maxSrRes: 2160, _video: vid(3840, 2160),
+    });
+    await fi._applyGate();
+    expect(fi._activate).toHaveBeenCalledTimes(1); // TinySR alone still runs
+    expect(fi._deactivate).not.toHaveBeenCalled();
+  });
+
+  it('gate activates when the video is within the ceilings', async () => {
+    const fi = bareInterpolator({
+      _enabled: true, _maxFiRes: 2160, _video: vid(3840, 2160),
+    });
+    await fi._applyGate();
+    expect(fi._activate).toHaveBeenCalledTimes(1);
+    expect(fi._deactivate).not.toHaveBeenCalled();
+  });
+
+  it('update() parses maxFiRes/maxSrRes (string selects included)', async () => {
+    const fi = bareInterpolator();
+    await fi.update({ enabled: true, maxFiRes: '1080', maxSrRes: '0' });
+    expect(fi._maxFiRes).toBe(1080);
+    expect(fi._maxSrRes).toBe(0);
+  });
+
+  it('HUD reflects the EFFECTIVE state, not the raw switches', () => {
+    const fi = bareInterpolator({
+      _enabled: true, _upscale: true, _factor: '4',
+      _maxFiRes: 1080, _maxSrRes: 0, _video: vid(3840, 2160),
+      _hudEl: { textContent: '' },
+    });
+    fi._updateHud();
+    expect(fi._hudEl.textContent).toContain('SR2×');
+    expect(fi._hudEl.textContent).not.toContain('4×');
   });
 });
 
@@ -617,6 +702,8 @@ describe('VideoPlayer frame-interpolation integration', () => {
       quality: '720p',
       hud: true,
       upscale: false,
+      maxFiRes: 0,
+      maxSrRes: 0,
       suspended: false,
     });
   });
@@ -629,8 +716,17 @@ describe('VideoPlayer frame-interpolation integration', () => {
       quality: 'auto',
       hud: false,
       upscale: false,
+      maxFiRes: 0,
+      maxSrRes: 0,
       suspended: false,
     });
+  });
+
+  it('resolution ceilings pass through and persist across calls', () => {
+    player.setFrameInterpolation({ enabled: true, maxFiRes: 1080, maxSrRes: '1440' });
+    expect(fi.update.mock.calls.at(-1)[0]).toMatchObject({ maxFiRes: 1080, maxSrRes: 1440 });
+    player.setFrameInterpolation({ suspended: true });
+    expect(fi.update.mock.calls.at(-1)[0]).toMatchObject({ maxFiRes: 1080, maxSrRes: 1440, suspended: true });
   });
 
   it('upscale passes through to update() and persists across calls', () => {
