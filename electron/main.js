@@ -85,6 +85,7 @@ const {
 const {
   collectSlideshowImages,
   isWithinFolder,
+  fitSlideshowSize,
   imageMimeForExt,
 } = require('./slideshow-images');
 
@@ -1740,9 +1741,10 @@ ipcMain.handle('read-slideshow-image', async (_event, opts) => {
     const img = nativeImage.createFromBuffer(bytes);
     if (!img.isEmpty()) {
       const size = img.getSize();
-      const resized = (size.width > maxDim || size.height > maxDim)
-        ? img.resize({ width: maxDim, height: maxDim, quality: 'good' })
-        : img;
+      // Proportional target — nativeImage.resize() stretches when given
+      // BOTH dimensions, which squashed portrait photos.
+      const fit = fitSlideshowSize(size, maxDim);
+      const resized = fit ? img.resize({ width: fit.width, height: fit.height, quality: 'good' }) : img;
       const jpeg = resized.toJPEG(82);
       return `data:image/jpeg;base64,${jpeg.toString('base64')}`;
     }

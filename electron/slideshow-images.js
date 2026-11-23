@@ -109,6 +109,29 @@ function isWithinFolder(folder, filePath) {
   return file.startsWith(dir + path.sep);
 }
 
+/**
+ * Aspect-ratio-preserving downscale target for read-slideshow-image.
+ *
+ * nativeImage.resize() keeps the aspect ratio ONLY when a single dimension
+ * is given — passing both width and height stretches the image to exactly
+ * that box (community report 2026-11-23: portrait photos arrived squashed
+ * because the handler passed { width: 1920, height: 1920 }). So compute the
+ * proportional dimensions ourselves. Returns { width, height } or null when
+ * the image already fits under maxDim (no resize needed).
+ */
+function fitSlideshowSize(size, maxDim) {
+  const w = Number(size && size.width) || 0;
+  const h = Number(size && size.height) || 0;
+  if (w <= 0 || h <= 0) return null; // undecodable size — leave as-is
+  const cap = Number(maxDim) > 0 ? Number(maxDim) : 1920;
+  if (w <= cap && h <= cap) return null;
+  const scale = cap / Math.max(w, h);
+  return {
+    width: Math.max(1, Math.round(w * scale)),
+    height: Math.max(1, Math.round(h * scale)),
+  };
+}
+
 /** MIME type for a raw (nativeImage-undecodable) image fallback. */
 function imageMimeForExt(ext) {
   const e = String(ext || '').toLowerCase().replace(/^\./, '');
@@ -127,5 +150,6 @@ module.exports = {
   naturalCompare,
   collectSlideshowImages,
   isWithinFolder,
+  fitSlideshowSize,
   imageMimeForExt,
 };

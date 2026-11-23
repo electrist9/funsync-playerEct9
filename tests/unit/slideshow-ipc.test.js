@@ -16,6 +16,7 @@ import {
   naturalCompare,
   collectSlideshowImages,
   isWithinFolder,
+  fitSlideshowSize,
   imageMimeForExt,
 } from '../../electron/slideshow-images.js';
 
@@ -151,5 +152,53 @@ describe('imageMimeForExt', () => {
     expect(imageMimeForExt('.avif')).toBe('image/avif');
     expect(imageMimeForExt('.jpg')).toBe('image/jpeg');
     expect(imageMimeForExt('')).toBe('image/jpeg');
+  });
+});
+
+describe('fitSlideshowSize', () => {
+  it('scales portrait photos proportionally (no squash)', () => {
+    // The 2026-11-23 bug: { width: 1920, height: 1920 } stretched a tall
+    // photo to a square box — the renderer showed it squashed vertically.
+    expect(fitSlideshowSize({ width: 1800, height: 2700 }, 1920))
+      .toEqual({ width: 1280, height: 1920 });
+  });
+
+  it('scales landscape photos proportionally', () => {
+    expect(fitSlideshowSize({ width: 4000, height: 2250 }, 1920))
+      .toEqual({ width: 1920, height: 1080 });
+  });
+
+  it('returns null when the image already fits', () => {
+    expect(fitSlideshowSize({ width: 1920, height: 1920 }, 1920)).toBeNull();
+    expect(fitSlideshowSize({ width: 640, height: 480 }, 1920)).toBeNull();
+  });
+
+  it('caps the longest side at maxDim for any aspect ratio', () => {
+    for (const [w, h] of [[3000, 1000], [1000, 3000], [5000, 5000], [2560, 1440]]) {
+      const fit = fitSlideshowSize({ width: w, height: h }, 1920);
+      expect(Math.max(fit.width, fit.height)).toBe(1920);
+      const srcRatio = w / h;
+      const fitRatio = fit.width / fit.height;
+      expect(Math.abs(fitRatio - srcRatio) / srcRatio).toBeLessThan(0.01);
+      expect(fit.width).toBeGreaterThanOrEqual(1);
+      expect(fit.height).toBeGreaterThanOrEqual(1);
+    }
+  });
+
+  it('never returns a zero dimension (degenerate aspect clamps to 1px)', () => {
+    const fit = fitSlideshowSize({ width: 9999, height: 1 }, 1920);
+    expect(fit).toEqual({ width: 1920, height: 1 });
+  });
+
+  it('falls back to the 1920 default for a missing/invalid maxDim', () => {
+    expect(fitSlideshowSize({ width: 3840, height: 2160 }, 0))
+      .toEqual({ width: 1920, height: 1080 });
+    expect(fitSlideshowSize({ width: 3840, height: 2160 }, undefined))
+      .toEqual({ width: 1920, height: 1080 });
+  });
+
+  it('returns null for an undecodable size', () => {
+    expect(fitSlideshowSize({ width: 0, height: 0 }, 1920)).toBeNull();
+    expect(fitSlideshowSize(null, 1920)).toBeNull();
   });
 });
