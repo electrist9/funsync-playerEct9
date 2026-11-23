@@ -1,0 +1,275 @@
+/* Photo folder browser (shopping-style picker) — opened via Modal with
+   panelClass 'photo-browser'. Rides the same CSS-variable tokens as
+   modal.css so it follows the active theme (default + modern skin). */
+
+.modal-panel.photo-browser {
+  width: min(920px, 94vw);
+  max-width: 94vw;
+  height: min(76vh, 720px);
+}
+
+.photo-browser .modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow: hidden;
+  min-height: 0;
+}
+
+/* ---- toolbar: up / breadcrumbs / search ---- */
+.photo-browser__bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.photo-browser__up {
+  background: var(--surface-overlay);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  color: var(--text-primary);
+  width: 32px;
+  height: 32px;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background var(--transition-fast);
+}
+
+.photo-browser__up:hover:not(:disabled) { background: var(--surface-overlay-strong); }
+.photo-browser__up:disabled { opacity: 0.4; cursor: default; }
+
+.photo-browser__crumbs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  white-space: nowrap;
+  scrollbar-width: thin;
+}
+
+.photo-browser__crumb {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-family: var(--font-family);
+  font-size: 13px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.photo-browser__crumb:hover { background: var(--control-hover); }
+
+.photo-browser__crumb--current {
+  color: var(--text-primary);
+  font-weight: 600;
+  font-size: 13px;
+  padding: 4px 6px;
+}
+
+.photo-browser__crumb-sep {
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.photo-browser__search {
+  flex-shrink: 0;
+  width: 200px;
+  background: var(--surface-overlay);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  padding: 7px 10px;
+  color: var(--text-primary);
+  font-family: var(--font-family);
+  font-size: 13px;
+  outline: none;
+}
+
+.photo-browser__search:focus { border-color: var(--accent); }
+
+/* ---- scrollable grid ---- */
+.photo-browser__scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.photo-browser__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 12px;
+  align-content: start;
+  padding: 2px;
+}
+
+/* ---- folder + photo tiles ---- */
+.photo-browser__tile {
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-overlay);
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  padding: 0;
+  overflow: hidden;
+  cursor: pointer;
+  text-align: left;
+  color: var(--text-primary);
+  font-family: var(--font-family);
+  transition: transform var(--transition-fast), box-shadow var(--transition-fast),
+    border-color var(--transition-fast);
+}
+
+.photo-browser__tile:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-modal);
+  border-color: var(--border-strong);
+}
+
+.photo-browser__tile:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* Photo tiles are previews, not targets — kill pointer affordances. */
+.photo-browser__tile--photo {
+  cursor: default;
+  background: none;
+  border: none;
+}
+
+.photo-browser__tile--photo:hover {
+  transform: none;
+  box-shadow: none;
+  border: none;
+}
+
+.photo-browser__dir-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px 10px;
+  min-width: 0;
+}
+
+.photo-browser__dir-name {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.photo-browser__dir-count {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.photo-browser__drive-name {
+  padding: 14px 12px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+/* ---- thumbnails (square covers, lazy data-URL backgrounds) ---- */
+.photo-browser__thumb {
+  aspect-ratio: 1 / 1;
+  width: 100%;
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
+  border-radius: 0;
+}
+
+.photo-browser__cover {
+  border-radius: 0;
+}
+
+/* Shimmer skeleton while the thumbnail IPC is in flight. */
+.photo-browser__thumb--loading {
+  background-image: linear-gradient(
+    100deg,
+    var(--surface-overlay) 30%,
+    var(--surface-overlay-strong) 50%,
+    var(--surface-overlay) 70%
+  );
+  background-size: 200% 100%;
+  animation: photo-browser-shimmer 1.2s ease-in-out infinite;
+}
+
+.photo-browser__thumb--broken {
+  background: var(--surface-card);
+  border: 1px solid var(--border-subtle);
+}
+
+.photo-browser__cover--empty {
+  background: var(--surface-card);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+@keyframes photo-browser-shimmer {
+  from { background-position: 120% 0; }
+  to { background-position: -120% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .photo-browser__thumb--loading { animation: none; }
+  .photo-browser__tile { transition: none; }
+  .photo-browser__tile:hover { transform: none; }
+}
+
+/* ---- status lines + footer ---- */
+.photo-browser__empty,
+.photo-browser__error,
+.photo-browser__note {
+  grid-column: 1 / -1;
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 13px;
+  padding: 24px 0;
+  margin: 0;
+}
+
+.photo-browser__error { color: #e57373; padding-bottom: 8px; }
+
+.photo-browser__actions {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 10px;
+  padding: 0 0 24px;
+}
+
+.photo-browser__note { padding: 8px 0; font-size: 12px; opacity: 0.8; }
+
+.photo-browser__footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 12px;
+}
+
+.photo-browser__count {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.photo-browser__select:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.photo-browser__select:disabled:hover { background: var(--accent); }

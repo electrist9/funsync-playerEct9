@@ -85,9 +85,16 @@ const {
 const {
   collectSlideshowImages,
   isWithinFolder,
+  isSlideshowImageName,
   fitSlideshowSize,
   imageMimeForExt,
 } = require('./slideshow-images');
+// In-app photo folder browser (browse-photo-directory) helpers. Same
+// plain-CJS, test-importable shape as ./slideshow-images.
+const {
+  enumerateRoots,
+  browseDirectory,
+} = require('./photo-browser');
 
 const eroScripts = new EroScriptsAPI();
 
@@ -1730,30 +1737,77 @@ ipcMain.handle('list-slideshow-images', async (_event, folderPath) => {
   }
 });
 
+// Shared data-URL builder for slideshow photos AND browser-grid
+// thumbnails: decode with nativeImage, proportional fit into maxDim,
+// JPEG-encode. CSP img-src allows data:, not file: (same idiom as
+// custom thumbs). nativeImage can't decode some webp/avif encodes —
+// fall back to the raw bytes; Chromium's <img> still renders them.
+async function slideshowDataUrl(filePath, maxDim, quality) {
+  const bytes = await fs.promises.readFile(path.resolve(String(filePath)));
+  const { nativeImage } = require('electron');
+  const img = nativeImage.createFromBuffer(bytes);
+  if (!img.isEmpty()) {
+    const size = img.getSize();
+    // Proportional target — nativeImage.resize() stretches when given
+    // BOTH dimensions, which squashed portrait photos.
+    const fit = fitSlideshowSize(size, maxDim);
+    const resized = fit ? img.resize({ width: fit.width, height: fit.height, quality: 'good' }) : img;
+    const jpeg = resized.toJPEG(quality);
+    return `data:image/jpeg;base64,${jpeg.toString('base64')}`;
+  }
+  const mime = imageMimeForExt(path.extname(String(filePath)));
+  return `data:${mime};base64,${bytes.toString('base64')}`;
+}
+
 ipcMain.handle('read-slideshow-image', async (_event, opts) => {
   try {
     const folder = opts && opts.folder;
     const filePath = opts && opts.filePath;
     if (!isWithinFolder(folder, filePath)) return null;
     const maxDim = Number(opts.maxDim) > 0 ? Number(opts.maxDim) : 1920;
-    const bytes = await fs.promises.readFile(path.resolve(String(filePath)));
-    const { nativeImage } = require('electron');
-    const img = nativeImage.createFromBuffer(bytes);
-    if (!img.isEmpty()) {
-      const size = img.getSize();
-      // Proportional target — nativeImage.resize() stretches when given
-      // BOTH dimensions, which squashed portrait photos.
-      const fit = fitSlideshowSize(size, maxDim);
-      const resized = fit ? img.resize({ width: fit.width, height: fit.height, quality: 'good' }) : img;
-      const jpeg = resized.toJPEG(82);
-      return `data:image/jpeg;base64,${jpeg.toString('base64')}`;
-    }
-    // Format nativeImage can't decode (e.g. some webp/avif encodes) — hand
-    // back the raw bytes; Chromium's <img> still renders it from a data URL.
-    const mime = imageMimeForExt(path.extname(String(filePath)));
-    return `data:${mime};base64,${bytes.toString('base64')}`;
+    return await slideshowDataUrl(filePath, maxDim, 82);
   } catch (err) {
     log.warn('[Slideshow] read-slideshow-image failed:', err.message);
+    return null;
+  }
+});
+
+// In-app photo folder browser — one SHALLOW listing per hop (folder
+// tiles carry a bounded recursive photoCount + coverPath, see
+// ./photo-browser). Empty dirPath = drive/root list.
+ipcMain.handle('browse-photo-directory', async (_event, dirPath) => {
+  try {
+    const dir = String(dirPath || '');
+    if (!dir) {
+      const roots = enumerateRoots((p) => {
+        try { return fs.statSync(p).isDirectory(); } catch { return false; }
+      }, process.platform);
+      return { roots };
+    }
+    const dirStat = await fs.promises.stat(dir);
+    if (!dirStat.isDirectory()) {
+      log.warn('[Slideshow] browse-photo-directory: not a directory:', dir);
+      return { error: 'not-a-directory' };
+    }
+    return await browseDirectory(fs.promises, dir);
+  } catch (err) {
+    log.warn('[Slideshow] browse-photo-directory failed:', err.message);
+    return { error: 'read-failed' };
+  }
+});
+
+// Grid thumbnail for the folder browser — same data-URL idiom at a much
+// smaller maxDim. Guarded to stay inside the browsed root.
+ipcMain.handle('read-slideshow-thumbnail', async (_event, opts) => {
+  try {
+    const root = opts && opts.root;
+    const filePath = opts && opts.filePath;
+    if (!isWithinFolder(root, filePath)) return null;
+    if (!isSlideshowImageName(path.basename(String(filePath || '')))) return null;
+    const maxDim = Number(opts.maxDim) > 0 ? Number(opts.maxDim) : 256;
+    return await slideshowDataUrl(filePath, maxDim, 72);
+  } catch (err) {
+    log.warn('[Slideshow] read-slideshow-thumbnail failed:', err.message);
     return null;
   }
 });

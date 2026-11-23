@@ -77,7 +77,11 @@ const DEFAULTS = {
       //   (absolute path, persisted app-wide; '' = not chosen yet, the
       //   next enable asks). Replaces the old per-video map
       //   (library.slideshowFolders), dropped 2026-11-21.
+      // slideshowFolderPicker: how the folder gets chosen — 'inapp'
+      //   (default: shopping-style thumbnail browser modal) or 'os'
+      //   (the OS folder dialog). Unknown values fall back to 'inapp'.
       slideshowFolder: '',
+      slideshowFolderPicker: 'inapp',
       slideshowCorner: 'bottom_right',
       slideshowSizeDenom: 8,
       slideshowImageOrder: 'name',

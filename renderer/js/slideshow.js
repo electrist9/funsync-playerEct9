@@ -153,6 +153,25 @@ export class SlideshowController {
     this._folder = folder;
   }
 
+  /**
+   * Ask the user for a photo folder using the configured picker mode
+   * (player.slideshowFolderPicker): 'os' = native folder dialog, anything
+   * else (default 'inapp') = the shopping-style thumbnail browser modal.
+   * Resolves to an absolute path or null on cancel/failure. Dynamic import
+   * keeps the browser component out of the startup bundle.
+   */
+  async _pickFolder() {
+    let mode = 'inapp';
+    try { mode = this.settings.get('player.slideshowFolderPicker') || 'inapp'; } catch { mode = 'inapp'; }
+    if (mode === 'os') {
+      try { return (await window.funsync.selectDirectory()) || null; } catch { return null; }
+    }
+    try {
+      const { openPhotoFolderBrowser } = await import('../components/photo-folder-browser.js');
+      return (await openPhotoFolderBrowser(this.resolveFolder())) || null;
+    } catch { return null; }
+  }
+
   async toggle() {
     if (this._active) { this.disable(); return false; }
     return this.enable();
@@ -166,8 +185,9 @@ export class SlideshowController {
     }
     let folder = this.resolveFolder();
     if (!folder) {
-      // No folder chosen yet (ever): ask for the shared photo folder now.
-      try { folder = await window.funsync.selectDirectory(); } catch { folder = null; }
+      // No folder chosen yet (ever): ask for the shared photo folder now
+      // (in-app thumbnail browser by default; OS dialog if configured).
+      folder = await this._pickFolder();
       if (!folder) return false;
     }
     const seq = ++this._enableSeq;
@@ -692,8 +712,7 @@ export function createSlideshowPopover({ controller, popoverEl, t }) {
     folderRow.appendChild(folderVal);
     folderRow.appendChild(btn(tt('player.slideshow.changeFolder'), {
       onClick: async () => {
-        let dir = null;
-        try { dir = await window.funsync.selectDirectory(); } catch { dir = null; }
+        const dir = await controller._pickFolder();
         if (dir) controller.setFolder(dir);
       },
     }));

@@ -1230,6 +1230,13 @@ export class SettingsPanel {
           <option value="dominant">${t('player.slideshow.backgroundDominant')}</option>
         </select>
       </div>
+      <div class="settings-panel__field">
+        <label class="settings-panel__field-label" for="sp-slideshow-picker">${t('settingsPanel.playback.slideshowPickerLabel')}</label>
+        <select id="sp-slideshow-picker" class="settings-panel__input settings-panel__input--select">
+          <option value="inapp">${t('settingsPanel.playback.slideshowPickerInApp')}</option>
+          <option value="os">${t('settingsPanel.playback.slideshowPickerOs')}</option>
+        </select>
+      </div>
       <div id="sp-slideshow-presets"></div>
       <button type="button" id="sp-slideshow-add" class="settings-panel__add-btn" style="border-style:solid">${t('settingsPanel.playback.slideshowAddPreset')}</button>
     `;
@@ -1812,6 +1819,7 @@ export class SettingsPanel {
       const ssOrderSel = panel.querySelector('#sp-slideshow-order');
       const ssTransSel = panel.querySelector('#sp-slideshow-transition');
       const ssBgSel = panel.querySelector('#sp-slideshow-background');
+      const ssPickerSel = panel.querySelector('#sp-slideshow-picker');
       const ssList = panel.querySelector('#sp-slideshow-presets');
       const ssAddBtn = panel.querySelector('#sp-slideshow-add');
 
@@ -2036,6 +2044,15 @@ export class SettingsPanel {
         ssBgSel.value = sanitizeBackground(this._settings.get('player.slideshowBackground'));
         ssBgSel.addEventListener('change', () => {
           this._settings.set('player.slideshowBackground', sanitizeBackground(ssBgSel.value));
+        });
+      }
+      if (ssPickerSel) {
+        // Folder picker mode: only 'os' opts into the native dialog;
+        // anything else (including junk in the store) = in-app browser.
+        const sanitizePicker = (v) => (v === 'os' ? 'os' : 'inapp');
+        ssPickerSel.value = sanitizePicker(this._settings.get('player.slideshowFolderPicker'));
+        ssPickerSel.addEventListener('change', () => {
+          this._settings.set('player.slideshowFolderPicker', sanitizePicker(ssPickerSel.value));
         });
       }
       ssAddBtn?.addEventListener('click', () => {

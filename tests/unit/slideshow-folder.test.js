@@ -6,8 +6,15 @@
  * shared app-wide and persisted. library.slideshowLastFolder is only ever
  * READ once as a migration seed for pre-2026-11-21 stores.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { SlideshowController } from '../../renderer/js/slideshow.js';
+import { openPhotoFolderBrowser } from '../../renderer/components/photo-folder-browser.js';
+
+// slideshow.js lazy-imports the browser only when the picker mode is
+// 'inapp'; the factory keeps that dynamic import off the jsdom component.
+vi.mock('../../renderer/components/photo-folder-browser.js', () => ({
+  openPhotoFolderBrowser: vi.fn(),
+}));
 
 const el = () => ({ addEventListener() {} });
 
@@ -142,5 +149,66 @@ describe('SlideshowController folder switch while running', () => {
       await new Promise((r) => setTimeout(r, 0));
       expect(h.visibleSrc()).toBe('urlB');
     } finally { h.restore(); }
+  });
+});
+
+/**
+ * Picker mode (player.slideshowFolderPicker): 'inapp' (default) opens the
+ * thumbnail-browser modal, 'os' keeps the native folder dialog.
+ */
+describe('SlideshowController._pickFolder picker mode', () => {
+  beforeEach(() => {
+    openPhotoFolderBrowser.mockReset();
+  });
+
+  it('defaults to the in-app browser and seeds it with the current folder', async () => {
+    openPhotoFolderBrowser.mockResolvedValue('C:\\Picked');
+    const { controller } = makeController({ 'player.slideshowFolder': 'C:\\Pictures\\trip' });
+    const picked = await controller._pickFolder();
+    expect(picked).toBe('C:\\Picked');
+    expect(openPhotoFolderBrowser).toHaveBeenCalledWith('C:\\Pictures\\trip');
+  });
+
+  it('opens the browser with a null start path when no folder is set', async () => {
+    openPhotoFolderBrowser.mockResolvedValue(null);
+    const { controller } = makeController({});
+    expect(await controller._pickFolder()).toBeNull();
+    expect(openPhotoFolderBrowser).toHaveBeenCalledWith(null);
+  });
+
+  it('uses window.funsync.selectDirectory when the mode is "os"', async () => {
+    const prev = globalThis.window;
+    globalThis.window = { funsync: { selectDirectory: async () => 'D:\\OS\\Pics' } };
+    try {
+      const { controller } = makeController({ 'player.slideshowFolderPicker': 'os' });
+      expect(await controller._pickFolder()).toBe('D:\\OS\\Pics');
+      expect(openPhotoFolderBrowser).not.toHaveBeenCalled();
+    } finally {
+      globalThis.window = prev;
+    }
+  });
+
+  it('"os" mode cancels to null', async () => {
+    const prev = globalThis.window;
+    globalThis.window = { funsync: { selectDirectory: async () => null } };
+    try {
+      const { controller } = makeController({ 'player.slideshowFolderPicker': 'os' });
+      expect(await controller._pickFolder()).toBeNull();
+    } finally {
+      globalThis.window = prev;
+    }
+  });
+
+  it('unknown mode values fall back to the in-app browser', async () => {
+    openPhotoFolderBrowser.mockResolvedValue('C:\\Picked');
+    const { controller } = makeController({ 'player.slideshowFolderPicker': 'bogus' });
+    expect(await controller._pickFolder()).toBe('C:\\Picked');
+    expect(openPhotoFolderBrowser).toHaveBeenCalledTimes(1);
+  });
+
+  it('a browser failure is swallowed to null', async () => {
+    openPhotoFolderBrowser.mockRejectedValue(new Error('modal blew up'));
+    const { controller } = makeController({});
+    expect(await controller._pickFolder()).toBeNull();
   });
 });

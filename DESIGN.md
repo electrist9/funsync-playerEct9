@@ -143,6 +143,7 @@ funsync-player/
 | プレイリスト | `getPlaylists` `addPlaylist` `renamePlaylist` `setPlaylistLoop/Shuffle/Balance/PreferUnwatched` `addVideoToPlaylist` `removeVideoFromPlaylist` `setPlaylistVideoPaths` … |
 | カテゴリ | `getCategories` `addCategory` `renameCategory` `setCategoryIcon/Color` `assignCategory` `unassignCategory` `getVideosByCategory` … |
 | ライブラリ | `selectDirectory` `scanDirectory` `selectFunscript` `readFunscript` `selectSubtitle` `enumerateFolderVideos` `getPathForFile`（Electron v32 で削除された `File.path` の代替、`webUtils.getPathForFile`） |
+| スライドショー | `listSlideshowImages` `readSlideshowImage`（data URL 化、`isWithinFolder` ガード） `browsePhotoDirectory` `readSlideshowThumbnail` |
 | サムネイル | `selectThumbnailImage` `importCustomThumbnail` `getCustomThumbsDir` `readCustomThumbnail` |
 | バックエンドプロキシ | `generateThumbnails` `generateSingleThumbnail` `remuxVideo` `resolveRemoteVideo` `getSpeedStats` `getDurations` `convertFunscript` |
 | ファイル/エディタ | `openFileDialog` `saveFile` `saveFunscript` `writeFunscript` `fileExists` `filesExist` `openExternal`（http/https のみ） `showInFolder` |
@@ -155,13 +156,14 @@ funsync-player/
 | アップデータ | `updaterCheck/Download/Install` `onUpdateEvent`（6 チャネル購読、クリーンアップ関数返却） |
 | 診断 | `collectDiagnostics(rendererState)` |
 
-### 4.3 IPC チャネル（`ipcMain.handle` 計 112 個）
+### 4.3 IPC チャネル（`ipcMain.handle` 計 118 個）
 
 `ipcMain.on` は electron ディレクトリ全体に存在しない（invoke/handle のみ）。代表例:
 
 - アプリ/診断: `get-backend-port` `get-backend-health` `restart-backend` `get-app-version` `get-portable-info` `collect-diagnostics` `log-line` `open-log-file/folder`
 - ストア: `get-all-data` `get-setting` `set-setting` `add-recent-file` + プレイリスト 12 + カテゴリ 10 + `update-window-chrome` `migrate-local-storage`
 - ライブラリ: `select-directory` `scan-directory` `enumerate-folder-videos` `read-funscript` `save-funscript` `write-funscript` + セレクトダイアログ 4 + カスタムサムネイル 4
+- スライドショー: `list-slideshow-images`（再帰走査・5000 件上限） `read-slideshow-image` `browse-photo-directory`（`electron/photo-browser.js` 経由。ドライブ列挙/1 階層browse+各サブフォルダの写真切手数。上限 dirs 500・images 1000・count 500・stat budget 2000） `read-slideshow-thumbnail`（256px JPEG data URL、品質 72。`isWithinFolder` + 拡張子ガード）
 - バックエンドプロキシ: `fetch-metadata` `generate-thumbnails` `generate-single-thumbnail` `remux-video` `resolve-remote-video` `get-speed-stats` `get-durations` `convert-funscript`
 - データ: `export-data` `import-data` `backup:*`（6）
 - デバイス: `tcode-*`（5） `vr-*`（3） `autoblow-*`（8）

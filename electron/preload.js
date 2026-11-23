@@ -119,6 +119,10 @@ contextBridge.exposeInMainWorld('funsync', {
   listSlideshowImages: (folderPath) => ipcRenderer.invoke('list-slideshow-images', folderPath),
   readSlideshowImage: (opts) => ipcRenderer.invoke('read-slideshow-image', opts),
 
+  // In-app photo folder browser (shallow browse + grid thumbnails)
+  browsePhotoDirectory: (dirPath) => ipcRenderer.invoke('browse-photo-directory', dirPath),
+  readSlideshowThumbnail: (opts) => ipcRenderer.invoke('read-slideshow-thumbnail', opts),
+
   // Script editor
   saveFunscript: (content, name) => ipcRenderer.invoke('save-funscript', content, name),
   writeFunscript: (content, filePath) => ipcRenderer.invoke('write-funscript', content, filePath),

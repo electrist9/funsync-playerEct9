@@ -27,6 +27,9 @@ export class Modal {
       // (Nielsen #4 standards; a11y).
       const panel = document.createElement('div');
       panel.className = 'modal-panel';
+      // Optional extra class for dialogs that need bespoke panel sizing /
+      // layout (e.g. the photo folder browser's wide grid modal).
+      if (opts.panelClass) panel.classList.add(opts.panelClass);
       panel.setAttribute('role', 'dialog');
       panel.setAttribute('aria-modal', 'true');
       const titleId = `modal-title-${Math.random().toString(36).slice(2, 9)}`;
