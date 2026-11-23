@@ -7419,6 +7419,10 @@ class App {
     const item = document.getElementById('btn-slideshow');
     if (item) item.setAttribute('aria-checked', String(!!this.slideshow?.active));
     if (this._slideshowPopover?.isOpen()) this._slideshowPopover.refresh();
+    // The FI canvas paints the video full-size over the wrapper, so the
+    // corner wipe can't show while it runs — suspend (not destroy) the
+    // interpolator for the duration of the slideshow.
+    this.videoPlayer?.setFrameInterpSlideshowActive(!!this.slideshow?.active);
   }
 
   /** Toast for a slideshow enable/continue failure (kind from the controller). */

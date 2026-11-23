@@ -1033,8 +1033,28 @@ export class VideoPlayer {
       quality: this._frameInterpOpts.quality ?? 'auto',
       hud: !!this._frameInterpOpts.hud,
       upscale: !!this._frameInterpOpts.upscale,
-      suspended: this._vrFlattenActive() || !!this._frameInterpOpts.suspended,
+      suspended: this._frameInterpSuspension(),
     }).catch(() => {});
+  }
+
+  /**
+   * The photo slideshow owns the wrapper while it runs: the <video> shrinks
+   * to a corner wipe and the photo layer fills the rest. The FI canvas is a
+   * full-size opaque overlay that paints the video, and the frame-interp
+   * wrapper class hides the real <video> — so with the slideshow on, the
+   * wipe never appears unless we suspend (not destroy) the interpolator.
+   * Same keep-alive pattern as the VR suspension.
+   */
+  _frameInterpSuspension() {
+    return this._vrFlattenActive()
+      || !!this._frameInterpOpts?.suspended
+      || !!this._frameInterpSlideshow;
+  }
+
+  /** Called by app.js whenever the slideshow's active state changes. */
+  setFrameInterpSlideshowActive(active) {
+    this._frameInterpSlideshow = !!active;
+    this._syncFrameInterpSuspension();
   }
 
   /** Live status for the settings HUD / diagnostics. */
@@ -1049,7 +1069,7 @@ export class VideoPlayer {
   _syncFrameInterpSuspension() {
     if (!this._frameInterpolator) return;
     this._frameInterpolator.update({
-      suspended: this._vrFlattenActive() || !!this._frameInterpOpts?.suspended,
+      suspended: this._frameInterpSuspension(),
     }).catch(() => {});
   }
 

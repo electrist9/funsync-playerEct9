@@ -665,6 +665,25 @@ describe('VideoPlayer frame-interpolation integration', () => {
     expect(fi.update.mock.calls.at(-1)[0]).toMatchObject({ suspended: false });
   });
 
+  it('photo slideshow active suspends interpolation, inactive releases it', () => {
+    player.setFrameInterpolation({ enabled: true, upscale: true });
+    fi.update.mockClear();
+
+    player.setFrameInterpSlideshowActive(true);
+    expect(fi.update).toHaveBeenCalledWith({ suspended: true });
+
+    player.setFrameInterpSlideshowActive(false);
+    expect(fi.update).toHaveBeenCalledWith({ suspended: false });
+  });
+
+  it('slideshow suspension ORs into later setFrameInterpolation payloads', () => {
+    player.setFrameInterpSlideshowActive(true);
+    player.setFrameInterpolation({ enabled: true });
+    expect(fi.update.mock.calls.at(-1)[0]).toMatchObject({ enabled: true, suspended: true });
+    player.setFrameInterpSlideshowActive(false);
+    expect(fi.update.mock.calls.at(-1)[0]).toMatchObject({ suspended: false });
+  });
+
   it('planar VR flatten suspends interpolation, off releases it', () => {
     player.setFrameInterpolation({ enabled: true });
     fi.update.mockClear();
