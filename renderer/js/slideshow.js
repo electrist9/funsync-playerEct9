@@ -87,6 +87,7 @@ export class SlideshowController {
     this._actionsRef = null;    // identity of the actions array last compiled
     this._segment = 0;          // number of switches at/before currentTime
     this._shownIdx = -1;        // photo currently visible
+    this._shownPath = null;     // path backing _shownIdx (lists get replaced)
     this._targetIdx = -1;       // photo we want visible (may still be loading)
     this._front = this.imgA;    // currently visible img
     this._back = this.imgB;     // next img (gets new src, then fades in)
@@ -187,6 +188,7 @@ export class SlideshowController {
     this._compileTiming();
     this._segment = this._segmentAt(this.video.currentTime || 0);
     this._shownIdx = -1;
+    this._shownPath = null;
     this._targetIdx = -1;
     this._active = true;
     this._scriptGraceUntil = 0;
@@ -221,6 +223,7 @@ export class SlideshowController {
     this._front = this.imgA;
     this._back = this.imgB;
     this._shownIdx = -1;
+    this._shownPath = null;
     this._targetIdx = -1;
     this._segment = 0;
     this._cache.clear();
@@ -247,6 +250,7 @@ export class SlideshowController {
     this._actionsRef = null;
     this._segment = 0;
     this._shownIdx = -1;
+    this._shownPath = null;
     this._targetIdx = -1;
     if (!this._active) return;
     const folder = this.resolveFolder();
@@ -424,13 +428,19 @@ export class SlideshowController {
 
   _showPhoto(idx) {
     if (idx < 0 || idx >= this._images.length) return;
-    if (idx === this._shownIdx) return;
-    this._targetIdx = idx;
     const path = this._images[idx];
+    // Same index can now mean a DIFFERENT photo (folder re-listed, order
+    // rearranged). Compare the actual path, otherwise a folder change
+    // mid-playback keeps the previous folder's photo visible until the
+    // next segment boundary happens to pick another index.
+    if (idx === this._shownIdx && path === this._shownPath) return;
+    this._targetIdx = idx;
     const url = this._cache.get(path);
     if (url) { this._swap(url, idx); return; }
     this._loadImage(path).then((u) => {
-      if (!this._active || this._targetIdx !== idx || !u) return;
+      // The list may have been replaced while loading — re-check that idx
+      // still resolves to this exact path before swapping it in.
+      if (!this._active || this._targetIdx !== idx || this._images[idx] !== path || !u) return;
       this._swap(u, idx);
     });
   }
@@ -471,6 +481,7 @@ export class SlideshowController {
     this._front = this._back;
     this._back = tmp;
     this._shownIdx = idx;
+    this._shownPath = this._images[idx];
     this._applyBackground();
   }
 
