@@ -30,6 +30,7 @@ A local desktop video player with device synchronization for funscript playback.
 - Rhythmslide-style slideshow: photos from a folder cycle in the main area **in time with the funscript's strokes** while the video shrinks to a clickable corner window (click it to restore the full video)
 - Toggle from the player's overflow menu or with **C**; requires a funscript
 - Presets group the switch rule — per up-stroke, at direction changes (peaks), or cumulative travel — with amplitude threshold and step size; add and edit presets in the settings panel
+- Official sample presets (8 presets) with an import guide (Japanese): [docs/SAMPLE-slideshow-presets.md](docs/SAMPLE-slideshow-presets.md)
 - Photo order: forward or ping-pong; one shared photo folder is remembered and applies to every video
 - Transitions: crossfade, wipe left/right, slide left/right, zoom, or random per switch; the backdrop can use each photo's **dominant color**
 - Portrait photos keep their aspect ratio when the window is resized
