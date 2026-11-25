@@ -266,6 +266,12 @@ export class VideoPlayer {
     this.video.style.visibility = 'hidden';
     const vrCanvas = this._vrRenderer?.canvas || null;
     if (vrCanvas) vrCanvas.style.visibility = 'hidden';
+    // The frame-gen overlay paints ON TOP of the hidden <video> and keeps
+    // showing the previous video's last composited frame while the new
+    // source decodes — park it too, until the first new-source frame
+    // presents (re-arms inside FrameInterpolator itself, so the pop-out
+    // player's loadSource is covered the same way).
+    this._frameInterpolator?.noteSourceChange?.();
     const revealOnFirstFrame = () => {
       this.video.style.visibility = '';
       if (vrCanvas) vrCanvas.style.visibility = '';

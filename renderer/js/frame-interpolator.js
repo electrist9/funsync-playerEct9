@@ -167,6 +167,18 @@ export class FrameInterpolator {
     // Present path.
     this._presentQ = [];
     this._lastTex = null;
+    // Source-swap tracking. `_srcGen` bumps whenever a new source starts
+    // loading (noteSourceChange); present-queue entries carry the gen they
+    // were pushed under. While the new source decodes its first frame, the
+    // opaque overlay canvas still paints the PREVIOUS video's last
+    // composited frame and the queue may still hold old-source frames —
+    // showing those is the stale-frame leak when opening a video from the
+    // library. `_revealGen` parks the overlay until the first new-gen frame
+    // presents; `_awaitFrame` stays true across inactivity so activating the
+    // pass mid-load doesn't paint stale canvas contents either.
+    this._srcGen = 0;
+    this._revealGen = null;
+    this._awaitFrame = false;
     this._presentPipeline = null;
     this._presentBgl = null;
     this._presentBgCache = new Map();
@@ -262,8 +274,9 @@ export class FrameInterpolator {
     on('seeked', () => this._resetPairState());
     on('ratechange', () => this._applyGate());
     on('loadedmetadata', () => {
-      this._resetPairState();
-      this._rect = null;
+      // Belt-and-braces source-change reset (VideoPlayer.loadSource also
+      // calls noteSourceChange synchronously before touching the element).
+      this.noteSourceChange();
       if (this._active) {
         // A new source can cross a resolution ceiling mid-session: drop the
         // overlay (real <video> shows through) instead of rebuilding models.
@@ -273,6 +286,13 @@ export class FrameInterpolator {
         // An over-ceiling video kept the pass inert — re-evaluate for this source.
         void this._applyGate();
       }
+    });
+    // A failed load never delivers a new frame — un-park the overlay so the
+    // screen isn't left blank while the pass stays active.
+    on('error', () => {
+      this._revealGen = null;
+      this._awaitFrame = false;
+      if (this.canvas?.style) this.canvas.style.visibility = '';
     });
   }
 
@@ -437,6 +457,13 @@ export class FrameInterpolator {
     if (this._active || !this._mounted) return;
     this._active = true;
     if (this.canvas) this.canvas.hidden = false;
+    if (this.canvas?.style) {
+      // Activating while the current source still awaits its first frame
+      // would paint the PREVIOUS source's canvas contents (the opaque
+      // canvas retains them across hidden) — park until a fresh frame.
+      this.canvas.style.visibility = this._awaitFrame ? 'hidden' : '';
+    }
+    if (this._awaitFrame) this._revealGen = this._srcGen;
     if (this._hudEl) this._hudEl.hidden = !this._hud;
     this._container.classList.add('player__video-wrapper--frame-interp');
     this._resetPairState();
@@ -448,6 +475,7 @@ export class FrameInterpolator {
     if (!this._active) return;
     this._active = false;
     this._stopLoops();
+    this._revealGen = null;
     if (this.canvas) this.canvas.hidden = true;
     if (this._hudEl) this._hudEl.hidden = true;
     this._container?.classList.remove('player__video-wrapper--frame-interp');
@@ -719,6 +747,47 @@ export class FrameInterpolator {
     this._lastMediaTime = 0;
   }
 
+  /**
+   * A new source is starting to load. VideoPlayer.loadSource calls this
+   * synchronously BEFORE touching the element's src (the mount()
+   * loadedmetadata listener repeats it as a fallback).
+   *
+   * The opaque present canvas keeps painting the previous video's last
+   * composited frame, and the queue may still hold old-source frames — on a
+   * slow first-frame decode that stale tail is what the user sees when
+   * opening a video from the library. Park the overlay (inline
+   * `visibility: hidden`, kept separate from the activate/deactivate
+   * `hidden` attribute) and drop everything queued; the first frame stamped
+   * with the new gen reveals it again from _rafLoop. Dropping queue entries
+   * is safe — the textures come from persistent rings. GPU/model state is
+   * untouched (same "inert, never teardown" rule as the resolution caps).
+   */
+  noteSourceChange() {
+    if (!this._mounted) return;
+    this._srcGen++;
+    this._resetPairState();
+    this._rect = null;
+    this._awaitFrame = true;
+    if (this._active) {
+      this._lastTex = null;
+      this._presentDirty = false;
+      this._revealGen = this._srcGen;
+      if (this.canvas?.style) this.canvas.style.visibility = 'hidden';
+    } else {
+      this._revealGen = null;
+    }
+  }
+
+  // Lift the source-change park once a frame from the CURRENT source has
+  // been presented — only gen-stamped queue entries count; re-blits of
+  // _lastTex (old pixels) never reveal.
+  _revealIfFresh(entry) {
+    if (this._revealGen === null || !(entry.gen >= this._revealGen)) return;
+    this._revealGen = null;
+    this._awaitFrame = false;
+    if (this.canvas?.style) this.canvas.style.visibility = '';
+  }
+
   _onFrame(now, meta) {
     if (!this._active) return;
     this._rvfcHandle = this._video.requestVideoFrameCallback(this._boundOnFrame);
@@ -848,14 +917,14 @@ export class FrameInterpolator {
       this._srIdx++;
       try {
         if (this._sr.process(tex, out, this._srW, this._srH)) {
-          this._presentQ.push({ tex: out, mid });
+          this._presentQ.push({ tex: out, mid, gen: this._srcGen });
           return;
         }
       } catch (err) {
         console.warn('[frame-interp] SR pass failed:', err?.message || err);
       }
     }
-    this._presentQ.push({ tex, mid });
+    this._presentQ.push({ tex, mid, gen: this._srcGen });
   }
 
   _rafLoop(now) {
@@ -881,6 +950,7 @@ export class FrameInterpolator {
         this._present(entry.tex);
         this._lastTex = entry.tex;
         this._outCount++;
+        this._revealIfFresh(entry);
       } catch (err) {
         console.warn('[frame-interp] present failed:', err?.message || err);
       }

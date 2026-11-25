@@ -663,6 +663,163 @@ describe('FrameInterpolator upscale-only mode', () => {
 });
 
 // ---------------------------------------------------------------------------
+// 6c. Source-swap park — regression guard for the stale last-frame leak
+//     (library → open video: the overlay kept painting the PREVIOUS video's
+//     final composited frame while the new source decoded its first frame)
+// ---------------------------------------------------------------------------
+
+describe('FrameInterpolator source-swap stale-frame guard', () => {
+  function swapFixture(active) {
+    const canvas = { hidden: !active, style: {} };
+    const fi = bareInterpolator({
+      _active: active,
+      canvas,
+      _presentQ: [{ tex: { t: 'old' }, mid: false, gen: 0 }],
+      _lastTex: { t: 'old' },
+      _prevTex: { t: 'p' },
+      _curTex: { t: 'c' },
+      _rect: [1, 2, 3, 4],
+      _srcGen: 0,
+      _revealGen: null,
+      _awaitFrame: false,
+      _presentDirty: true,
+      _startLoops: vi.fn(),
+      _stopLoops: vi.fn(),
+    });
+    return { fi, canvas };
+  }
+
+  it('active swap: parks the canvas, drops old-source frames, arms reveal', () => {
+    const { fi, canvas } = swapFixture(true);
+    fi.noteSourceChange();
+    expect(fi._srcGen).toBe(1);
+    expect(canvas.style.visibility).toBe('hidden');
+    expect(fi._presentQ).toEqual([]);
+    expect(fi._lastTex).toBeNull();
+    expect(fi._presentDirty).toBe(false);
+    expect(fi._revealGen).toBe(1);
+    expect(fi._awaitFrame).toBe(true);
+    expect(fi._rect).toBeNull();
+    expect(fi._prevTex).toBeNull();
+    expect(fi._curTex).toBeNull();
+  });
+
+  it('inactive swap: bumps the gen and marks await without parking', () => {
+    const { fi, canvas } = swapFixture(false);
+    fi.noteSourceChange();
+    expect(fi._srcGen).toBe(1);
+    expect(canvas.style.visibility).toBeUndefined(); // canvas already hidden via attr
+    expect(fi._revealGen).toBeNull();
+    expect(fi._awaitFrame).toBe(true);
+  });
+
+  it('unmounted swap is a no-op', () => {
+    const fi = bareInterpolator({ _mounted: false, _srcGen: 0 });
+    fi.noteSourceChange();
+    expect(fi._srcGen).toBe(0);
+    expect(fi._revealGen).toBeUndefined();
+  });
+
+  it('queue entries carry the source gen on both raw and SR push paths', () => {
+    const raw = { t: 'raw' };
+    const srOut = { t: 'sr' };
+    // _srOn is a getter over (_upscale && !over-cap), so drive the path via _upscale.
+    const fi = bareInterpolator({ _srcGen: 7, _upscale: false, _maxSrRes: 0, _sr: null, _srRing: [], _srIdx: 0, _presentQ: [] });
+    fi._pushPresent(raw, false);
+    fi._upscale = true;
+    fi._sr = { process: () => true };
+    fi._srRing = [srOut];
+    fi._srW = 10;
+    fi._srH = 10;
+    fi._pushPresent({ t: 'in' }, true);
+    expect(fi._presentQ[0]).toEqual({ tex: raw, mid: false, gen: 7 });
+    expect(fi._presentQ[1]).toMatchObject({ tex: srOut, mid: true, gen: 7 });
+  });
+
+  it('_revealIfFresh lifts the park only for new-gen frames', () => {
+    const canvas = { hidden: false, style: { visibility: 'hidden' } };
+    const fi = bareInterpolator({ _active: true, canvas, _srcGen: 3, _revealGen: 3, _awaitFrame: true });
+    fi._revealIfFresh({ gen: 2 }); // old-source entry — stays parked
+    expect(canvas.style.visibility).toBe('hidden');
+    expect(fi._revealGen).toBe(3);
+    fi._revealIfFresh({ gen: 3 }); // first new-source frame — revealed
+    expect(canvas.style.visibility).toBe('');
+    expect(fi._revealGen).toBeNull();
+    expect(fi._awaitFrame).toBe(false);
+    fi._revealIfFresh({ gen: 4 }); // already revealed — no-op
+    expect(fi._revealGen).toBeNull();
+  });
+
+  it('_rafLoop reveals after a new-gen present, never for an old-gen one', () => {
+    const canvas = { hidden: false, style: { visibility: 'hidden' } };
+    const fi = bareInterpolator({
+      _active: true,
+      canvas,
+      _srcGen: 2,
+      _revealGen: 2,
+      _awaitFrame: true,
+      _presentQ: [{ tex: { t: 'stale' }, mid: false, gen: 1 }],
+      _lastTex: null,
+      _present: vi.fn(),
+      _boundRaf: () => {},
+      _outCount: 0,
+      _lastRafAt: 0,
+      _aimdAt: 0,
+      _lastOutAt: 0,
+      _lastHudAt: 0,
+      _queueSum: 0,
+      _queueN: 0,
+    });
+    fi._rafLoop(1000); // an old-gen frame presents but must NOT reveal
+    expect(fi._present).toHaveBeenCalledTimes(1);
+    expect(canvas.style.visibility).toBe('hidden');
+    fi._presentQ.push({ tex: { t: 'fresh' }, mid: false, gen: 2 });
+    fi._rafLoop(1016); // first new-source frame — revealed
+    expect(fi._present).toHaveBeenCalledTimes(2);
+    expect(canvas.style.visibility).toBe('');
+  });
+
+  it('activating mid-load parks the canvas; normal activate leaves it visible', () => {
+    const canvas = { hidden: true, style: {} };
+    const fi = bareInterpolator({
+      canvas,
+      _awaitFrame: true,
+      _srcGen: 5,
+      _revealGen: null,
+      _startLoops: vi.fn(),
+      _stopLoops: vi.fn(),
+      _activate: FrameInterpolator.prototype._activate,
+    });
+    fi._activate();
+    expect(canvas.hidden).toBe(false); // attr reveal (activate semantics)
+    expect(canvas.style.visibility).toBe('hidden'); // inline park until fresh
+    expect(fi._revealGen).toBe(5);
+
+    const fi2 = bareInterpolator({
+      canvas: { ...canvas, style: { visibility: 'hidden' } },
+      _awaitFrame: false,
+      _srcGen: 5,
+      _revealGen: null,
+      _startLoops: vi.fn(),
+      _stopLoops: vi.fn(),
+      _activate: FrameInterpolator.prototype._activate,
+    });
+    fi2._activate();
+    expect(fi2.canvas.style.visibility).toBe(''); // stale park cleared
+    expect(fi2._revealGen).toBeNull();
+  });
+
+  it('deactivate clears the pending reveal arm', () => {
+    const { fi } = swapFixture(true);
+    fi._deactivate = FrameInterpolator.prototype._deactivate; // bareInterpolator stubs it
+    fi.noteSourceChange();
+    expect(fi._revealGen).toBe(1);
+    fi._deactivate();
+    expect(fi._revealGen).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // 7. VideoPlayer integration
 // ---------------------------------------------------------------------------
 
@@ -727,6 +884,35 @@ describe('VideoPlayer frame-interpolation integration', () => {
     expect(fi.update.mock.calls.at(-1)[0]).toMatchObject({ maxFiRes: 1080, maxSrRes: 1440 });
     player.setFrameInterpolation({ suspended: true });
     expect(fi.update.mock.calls.at(-1)[0]).toMatchObject({ maxFiRes: 1080, maxSrRes: 1440, suspended: true });
+  });
+
+  it('loadSource parks the overlay via noteSourceChange BEFORE touching the element', () => {
+    const order = [];
+    fi.noteSourceChange = vi.fn(() => order.push('park'));
+    player.video = {
+      style: {},
+      crossOrigin: 'x',
+      src: '',
+      load: vi.fn(() => order.push('load')),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      classList: classListStub(),
+    };
+    player.progressBar = { style: {} };
+    player.progressThumb = { style: {} };
+    player.progressContainer = { setAttribute: vi.fn(), classList: classListStub() };
+    player.timeCurrent = { textContent: '' };
+    player.timeDuration = { textContent: '' };
+    player._showControls = vi.fn();
+    player._updateCenterPlay = vi.fn();
+    player._destroyHls = vi.fn();
+    player.loadSource('file:///x.mp4', 'x.mp4');
+    // Same synchronous task, park first — the overlay hide must land before
+    // any paint that the view-switch triggers, so media events (async) can't
+    // race a stale frame onto the screen.
+    expect(order).toEqual(['park', 'load']);
+    expect(player.video.style.visibility).toBe('hidden');
+    expect(player.video.src).toBe('file:///x.mp4');
   });
 
   it('upscale passes through to update() and persists across calls', () => {
