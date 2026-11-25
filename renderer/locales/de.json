@@ -246,7 +246,10 @@
       "notFound": "Der Auftrag wurde nicht gefunden.",
       "storedGone": "Dieses Script wurde bereits entfernt.",
       "writeFailed": "Die Datei konnte nicht geschrieben werden.",
-      "offline": "Der lokale Hintergrunddienst ist nicht erreichbar."
+      "offline": "Der lokale Hintergrunddienst ist nicht erreichbar.",
+      "invalidPath": "Dieser Ordner kann nicht verwendet werden. Wählen Sie einen beschreibbaren Ordner.",
+      "nested": "Dieser Ordner liegt bereits innerhalb des aktuellen Skriptordners.",
+      "notWritable": "In diesen Ordner kann nicht geschrieben werden."
     }
   },
   "player": {
@@ -1142,6 +1145,22 @@
       "recheckedSome": "{count, plural, one {# Quelle ist weiterhin nicht erreichbar} other {# Quellen sind weiterhin nicht erreichbar}}",
       "working": "Arbeite ...",
       "scanning": "Bibliothek wird durchsucht ..."
+    },
+    "generated": {
+      "header": "Generierte Skripte",
+      "folderDefault": "Standardordner",
+      "folderCustom": "Eigener Ordner",
+      "unknown": "Skriptordner",
+      "hint": "Automatisch erzeugte FunScripts werden hier gespeichert. Ein neuer Ordner kopiert die vorhandenen Skripte hinein; die Originale bleiben erhalten, ein Wechsel zurück stellt sie wieder bereit.",
+      "choose": "Ordner wählen",
+      "working": "Kopiere ...",
+      "useDefault": "Standardordner verwenden",
+      "unreachable": "Der lokale Hintergrunddienst ist nicht erreichbar, der Skriptordner kann nicht geändert werden.",
+      "fellBack": "Der gespeicherte Ordner kann nicht verwendet werden; Skripte werden im Standardordner gespeichert.",
+      "notWritableWarning": "In diesen Ordner kann zurzeit nicht geschrieben werden.",
+      "moved": "{count, plural, one {# Skript in den neuen Ordner kopiert} other {# Skripte in den neuen Ordner kopiert}}",
+      "movedNone": "Skripte werden im neuen Ordner gespeichert.",
+      "alreadyThere": "Skripte werden bereits in diesem Ordner gespeichert."
     },
     "multiAxisConfirm": {
       "title": "Auf Mehrachsig-Standard umstellen?",

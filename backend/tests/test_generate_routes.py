@@ -1,9 +1,10 @@
 """Tests for the generation routes (routes/generate.py).
 
 These exercise the HTTP contract the renderer depends on: job start, polling,
-cancel, the busy guard, and the generated-script store. The happy paths run
-the real engines on a synthetic clip, which is also the end-to-end check that
-analysis -> build -> store -> fetch actually hangs together.
+cancel, the busy guard, the generated-script store, and the folder that store
+lives in. The happy paths run the real engines on a synthetic clip, which is
+also the end-to-end check that analysis -> build -> store -> fetch actually
+hangs together.
 
 The job table is module state, so every test starts from reset_jobs_for_tests()
 and the store is pointed at a scratch directory instead of the user's data dir.
@@ -15,6 +16,7 @@ import shutil
 import subprocess
 import sys
 import time
+import uuid
 
 import pytest
 from fastapi import FastAPI
@@ -24,7 +26,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import routes.generate as gen  # noqa: E402
 from services.ffmpeg import FFMPEG  # noqa: E402
-from services.generated_store import FileGeneratedScriptStore, set_store  # noqa: E402
+from services.generated_store import (  # noqa: E402
+    FileGeneratedScriptStore,
+    get_store,
+    set_store,
+    video_identity,
+)
 
 pytestmark = pytest.mark.skipif(not FFMPEG, reason="ffmpeg is not available")
 
@@ -390,3 +397,100 @@ class TestExportToSidecar:
         response = client.post(f"/api/generate/store/{script_id}/export")
         assert response.status_code == 404
         assert response.json()["detail"]["code"] == "noVideo"
+
+
+def _store_a_script(media_dir, name="folder-clip.mp4", engine="audio"):
+    """Put one record in the pinned store without running an engine.
+
+    The folder routes only care about the store, so they do not need ffmpeg.
+    """
+    video = os.path.join(media_dir, name)
+    with open(video, "wb") as handle:
+        handle.write(b"not really a video")
+    record = get_store().save(
+        engine=engine, video=video_identity(video), params={},
+        script={"version": 1, "actions": [{"at": 0, "pos": 10}]},
+        duration_ms=500,
+    )
+    return record
+
+
+class TestStoreFolder:
+    """The folder generated scripts are kept in is the user's choice."""
+
+    @pytest.fixture(autouse=True)
+    def own_store(self, client, media_dir):
+        """Re-pin the store to a folder this class alone uses.
+
+        The tests in this module share one store, and others leave records in
+        it — one even deletes a script file and keeps the record — so a copy
+        would report counts that depend on which tests ran first. Asking for
+        `client` makes sure the app fixture has pinned its store already.
+        """
+        self.store_root = os.path.join(media_dir, "folder-store-" + uuid.uuid4().hex[:8])
+        set_store(FileGeneratedScriptStore(self.store_root))
+
+    def test_the_panel_asks_where_the_store_is(self, client):
+        # /store/dir is declared before /store/{script_id}: if that ordering
+        # ever slips, this reads as a 404 for a script called "dir".
+        response = client.get("/api/generate/store/dir")
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert set(payload) == {"configured", "effective", "default", "writable"}
+        assert payload["configured"] is None
+        assert payload["default"].endswith("generated-scripts")
+        assert payload["writable"] is True
+
+    def test_moving_the_store_copies_scripts_and_keeps_the_originals(self, client, media_dir):
+        record = _store_a_script(media_dir)
+        old_dir = self.store_root
+        chosen = os.path.join(media_dir, "chosen-" + uuid.uuid4().hex[:8])
+
+        response = client.post("/api/generate/store/dir", json={"path": chosen})
+        assert response.status_code == 200, response.text
+        assert response.json() == {"ok": True, "path": chosen, "copied": 1, "skipped": 0}
+        assert os.path.isfile(os.path.join(chosen, record["filename"]))
+        # The old folder keeps its copy — pointing the setting back at it
+        # brings the scripts back, so nothing here is a move.
+        assert os.path.isfile(os.path.join(old_dir, record["filename"]))
+        # And the backend does not write the Electron config: the renderer
+        # saves the setting after this answers ok, so until then the store is
+        # still the folder this class pinned.
+        assert client.get(f"/api/generate/store/{record['id']}").status_code == 200
+
+    def test_a_folder_nested_in_the_store_is_refused(self, client):
+        response = client.post("/api/generate/store/dir",
+                               json={"path": os.path.join(self.store_root, "inside")})
+        assert response.status_code == 409
+        assert response.json()["detail"]["code"] == "nested"
+
+    def test_a_path_that_cannot_be_a_folder_is_refused(self, client, media_dir):
+        a_file = os.path.join(media_dir, "not-a-folder.txt")
+        with open(a_file, "w", encoding="utf-8") as handle:
+            handle.write("x")
+        for bad in ("", "   ", "just-a-name", a_file):
+            response = client.post("/api/generate/store/dir", json={"path": bad})
+            assert response.status_code == 400, bad
+            assert response.json()["detail"]["code"] == "invalidPath"
+
+    def test_a_request_without_a_usable_path_is_refused(self, client):
+        for body in ({}, {"path": 5}, {"path": None}):
+            response = client.post("/api/generate/store/dir", json=body)
+            assert response.status_code == 400, body
+            assert response.json()["detail"]["code"] == "invalidPath"
+
+    def test_a_body_that_is_not_json_at_all_is_refused(self, client):
+        response = client.post("/api/generate/store/dir", content="nope",
+                              headers={"content-type": "text/plain"})
+        assert response.status_code == 400
+        assert response.json()["detail"]["code"] == "invalidPath"
+
+    def test_the_folder_the_store_is_already_in_changes_nothing(self, client, media_dir):
+        _store_a_script(media_dir)
+        old_dir = self.store_root
+
+        response = client.post("/api/generate/store/dir", json={"path": old_dir})
+        assert response.status_code == 200, response.text
+        assert response.json() == {"ok": True, "path": old_dir, "copied": 0,
+                                   "skipped": 0, "unchanged": True}
+        assert client.get("/api/generate/store/dir").status_code == 200

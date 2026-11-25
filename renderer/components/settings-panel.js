@@ -14,6 +14,15 @@ import { isUserEnabled, isToggleLocked, setUserEnabled } from '../js/source-stat
 import { eventBus } from '../js/event-bus.js';
 import { openFeedbackModal } from './feedback-modal.js';
 import { FrameInterpolator } from '../js/frame-interpolator.js';
+// The generated-script store is the backend's, so the panel speaks to it through
+// the same loopback API the generate panel uses — and shares its error mapping.
+import { errorTextFor } from '../js/generate-panel.js';
+import {
+  loadStoreDir,
+  chooseStoreDir,
+  storeDirMovedText,
+  sameStorePath,
+} from '../js/generated-store.js';
 
 // Canonical default values for each tunable Playback field. Used by the
 // per-field reset-to-default `↻` button (Shneiderman #6 reversibility)
@@ -39,6 +48,10 @@ const SETTINGS_DEFAULTS = {
   'library.folderPreviews': true,
   'library.autoVariantMode': 'strict',
   'library.useGeneratedVariants': true,
+  // Empty = the built-in folder under the user-data dir. The backend reads this
+  // key; a pick goes through its /store/dir endpoint first, which is what turns
+  // a refused folder into a message instead of a broken store.
+  'library.generatedStoreDir': '',
   'player.miniPlayer': true,
   'player.frameInterpolation.enabled': false,
   'player.frameInterpolation.factor': 'auto',
@@ -76,6 +89,8 @@ export class SettingsPanel {
     onRecheckSources,
     onTestFillerPattern,
     onStopFillerTest,
+    getBackendPort,
+    onGeneratedStoreChanged,
   }) {
     this._settings = settings;
     // Filler test button. The panel owns no devices — app.js holds the sync
@@ -116,6 +131,12 @@ export class SettingsPanel {
     // "Report a problem" dialog. Caller (app.js) owns the device managers
     // so it's the natural place to read this from.
     this.getConnectionState = getConnectionState || (() => ({}));
+    // The generated-script folder belongs to the backend store, not to the
+    // library scan, so the panel talks to the backend itself and only tells
+    // app.js that the store moved. Port is a GETTER like the others: the
+    // backend can arrive after the panel was built.
+    this.getBackendPort = getBackendPort || (() => 0);
+    this.onGeneratedStoreChanged = onGeneratedStoreChanged || null;
   }
 
   /**
@@ -846,7 +867,177 @@ export class SettingsPanel {
     sourceActions.appendChild(recheckBtn);
     panel.appendChild(sourceActions);
 
+    // Where generated funscripts are kept. Separate from the video sources on
+    // purpose: the scripts are written by the backend, and the backend decides
+    // whether a folder is usable at all.
+    panel.appendChild(this._buildGeneratedStoreSection());
+
     return panel;
+  }
+
+  /**
+   * The generated-script folder row.
+   *
+   * Two things make this different from every other setting here:
+   *
+   *   1. The value shown is the backend's answer (`GET /store/dir`), not the
+   *      setting. A setting the backend cannot use is ignored at runtime, and
+   *      the row has to say which folder is really being written to.
+   *   2. A pick is only half-done until the backend has accepted the folder and
+   *      copied the existing scripts into it. The setting is written AFTER that
+   *      — it is the key the backend reads back, so writing it first would park
+   *      the store in a folder that had just been refused, with no explanation.
+   *
+   * The copy is deliberate: the old folder keeps its scripts, so pointing the
+   * setting back at it brings them back.
+   */
+  _buildGeneratedStoreSection() {
+    const section = document.createElement('div');
+    section.className = 'settings-panel__section';
+    section.id = 'sp-sec-generated-store';
+
+    const header = document.createElement('div');
+    header.className = 'settings-panel__section-header';
+    header.textContent = t('settingsPanel.generated.header');
+    section.appendChild(header);
+
+    const info = document.createElement('div');
+    info.className = 'settings-panel__source-info';
+    const folderLabel = document.createElement('span');
+    folderLabel.className = 'settings-panel__source-name';
+    const pathEl = document.createElement('span');
+    pathEl.className = 'settings-panel__source-path';
+    // Same class the source rows use for "why is this off": the fallback and
+    // not-writable lines are the same kind of secondary explanation.
+    const noteEl = document.createElement('span');
+    noteEl.className = 'settings-panel__source-reason';
+    noteEl.hidden = true;
+    info.appendChild(folderLabel);
+    info.appendChild(pathEl);
+    info.appendChild(noteEl);
+    section.appendChild(info);
+
+    const hint = document.createElement('div');
+    hint.className = 'settings-panel__hint';
+    hint.textContent = t('settingsPanel.generated.hint');
+    section.appendChild(hint);
+
+    const chooseBtn = document.createElement('button');
+    chooseBtn.type = 'button';
+    chooseBtn.className = 'settings-panel__add-btn';
+    chooseBtn.textContent = t('settingsPanel.generated.choose');
+    const defaultBtn = document.createElement('button');
+    defaultBtn.type = 'button';
+    defaultBtn.className = 'settings-panel__add-btn';
+    defaultBtn.textContent = t('settingsPanel.generated.useDefault');
+    defaultBtn.hidden = true;
+
+    const actions = document.createElement('div');
+    actions.className = 'settings-panel__source-buttons';
+    actions.appendChild(chooseBtn);
+    actions.appendChild(defaultBtn);
+    section.appendChild(actions);
+
+    // Live state from the backend. null = no answer yet (or the backend is not
+    // listening), which the row reports instead of guessing from the setting.
+    let state = null;
+
+    const paint = () => {
+      if (!state) {
+        folderLabel.textContent = t('settingsPanel.generated.unknown');
+        pathEl.hidden = true;
+        noteEl.hidden = false;
+        noteEl.textContent = t('settingsPanel.generated.unreachable');
+        chooseBtn.disabled = true;
+        defaultBtn.hidden = true;
+        return;
+      }
+      pathEl.hidden = false;
+      chooseBtn.disabled = false;
+      folderLabel.textContent = state.usingDefault
+        ? t('settingsPanel.generated.folderDefault')
+        : t('settingsPanel.generated.folderCustom');
+      pathEl.textContent = state.shownPath;
+      pathEl.title = state.shownPath;
+
+      let note = '';
+      if (state.fellBack) {
+        // Configured folder rejected at runtime: scripts are going somewhere
+        // else, and the user needs to know before generating more.
+        note = t('settingsPanel.generated.fellBack');
+      } else if (!state.writable) {
+        note = t('settingsPanel.generated.notWritableWarning');
+      }
+      noteEl.hidden = !note;
+      noteEl.textContent = note;
+      defaultBtn.hidden = !state.canReset;
+    };
+
+    const refresh = async () => {
+      state = await loadStoreDir(this.getBackendPort());
+      paint();
+    };
+
+    const setBusy = (busy) => {
+      chooseBtn.disabled = busy;
+      defaultBtn.disabled = busy;
+      chooseBtn.textContent = busy
+        ? t('settingsPanel.generated.working')
+        : t('settingsPanel.generated.choose');
+    };
+
+    /** The part both buttons share: ask, then — only on success — persist. */
+    const moveTo = async (target) => {
+      if (chooseBtn.disabled || defaultBtn.disabled) return;
+      setBusy(true);
+      try {
+        const result = await chooseStoreDir(this.getBackendPort(), target);
+        if (!result.ok) {
+          // Nothing moved and nothing was written; `errorTextFor` turns the
+          // backend's code into why the folder was refused.
+          showToast(errorTextFor(result.payload), 'error');
+          return;
+        }
+        // Past this point the folder exists, is writable, and already holds the
+        // copied scripts — so the setting records a fact rather than a request.
+        const settled = result.payload.path || '';
+        const isDefault = !settled || sameStorePath(settled, state?.defaultDir);
+        this._settings.set(
+          'library.generatedStoreDir',
+          // An empty setting means "the built-in folder", which keeps the row
+          // honest after a reset instead of storing the default path twice.
+          isDefault ? SETTINGS_DEFAULTS['library.generatedStoreDir'] : settled,
+        );
+        if (this.onGeneratedStoreChanged) this.onGeneratedStoreChanged();
+        showToast(storeDirMovedText(result.payload), 'info');
+      } finally {
+        setBusy(false);
+        await refresh();
+      }
+    };
+
+    chooseBtn.addEventListener('click', async () => {
+      if (chooseBtn.disabled) return;
+      let picked = null;
+      try {
+        picked = await window.funsync.selectDirectory();
+      } catch {
+        return; // picker failed or was dismissed; nothing to change
+      }
+      if (!picked) return;
+      await moveTo(picked);
+    });
+
+    defaultBtn.addEventListener('click', async () => {
+      // The default folder is the one path this panel knows without asking.
+      if (state?.defaultDir) await moveTo(state.defaultDir);
+    });
+
+    // Fire-and-forget: the row appears with the rest of the tab and fills in a
+    // moment later. A backend that is not up yet shows as "unknown".
+    refresh();
+
+    return section;
   }
 
   _buildPlaybackTab() {

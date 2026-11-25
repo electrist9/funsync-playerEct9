@@ -334,11 +334,7 @@ class App {
       // which is the scan-side refresh that sees it. The library joins the same
       // store for its 「一致あり」 answer, so a store change re-joins there too
       // (no rescan — the store is not part of the scan).
-      onStoredChanged: () => {
-        this._refreshGeneratedVariants();
-        this._refreshCurrentVariantsFromDisk();
-        this.library?.refreshGeneratedScripts?.();
-      },
+      onStoredChanged: () => this._refreshGeneratedStoreViews(),
     });
 
     // Generated scripts offered as script variations (generated-variants.js,
@@ -506,6 +502,16 @@ class App {
         this._refreshGeneratedVariants();
         this.library?.refreshGeneratedScripts?.();
       },
+      // The generated-script folder. The panel asks the backend over the same
+      // loopback API the generate dialog uses, so it needs the port; app.js is
+      // the only place that has it.
+      getBackendPort: () => this.backendPort,
+      // Moving the store moves every script at once, so this is the same
+      // refresh the generate panel triggers after writing one: the rows for
+      // the loaded video, the variants beside it on disk (untouched by a move,
+      // but rebuilding them is cheaper than working out which were affected),
+      // and the library's join.
+      onGeneratedStoreChanged: () => this._refreshGeneratedStoreViews(),
       // Orgasm Switch (hold X) — configure / clear / display the global
       // config (single script, multi-axis bundle, or custom routing —
       // same association shape videos use).
@@ -8954,13 +8960,28 @@ class App {
   }
 
   /**
+   * Re-read every view that shows generated scripts.
+   *
+   * The generate panel calls this after anything it writes to the store; the
+   * settings panel calls it after the store FOLDER changes, which retires a
+   * whole set of rows at once. Either way the three consumers below have to be
+   * refreshed together, or the player offers a script that is no longer there.
+   */
+  _refreshGeneratedStoreViews() {
+    this._refreshGeneratedVariants();
+    this._refreshCurrentVariantsFromDisk();
+    this.library?.refreshGeneratedScripts?.();
+  }
+
+  /**
    * Fetch the scripts the generate dialog stored for the CURRENT video and keep
    * them as variation rows (`_generatedVariants`), which
    * `_updateVariantSelector()` then merges in.
    *
    * Those files live in the app's own store folder, so the library scan never
    * sees them. Only the backend knows where that folder is — it follows
-   * `--user-data-dir`, and falls back to a temp dir without it — which is why
+   * `settings.library.generatedStoreDir`, then `--user-data-dir`, and falls back
+   * to a temp dir without either — which is why
    * `GET /store` hands back an absolute `path` per record and the renderer
    * never reconstructs the root. Rows are rebuilt per video and never
    * persisted, so switching the feature off leaves nothing behind to clean up.

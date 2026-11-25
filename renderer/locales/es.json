@@ -246,7 +246,10 @@
       "notFound": "No se encontró la tarea de generación.",
       "storedGone": "Este script ya se ha eliminado.",
       "writeFailed": "No se pudo escribir el archivo.",
-      "offline": "No se puede conectar con el servicio local."
+      "offline": "No se puede conectar con el servicio local.",
+      "invalidPath": "Esa carpeta no se puede usar. Elige una carpeta en la que puedas escribir.",
+      "nested": "Esa carpeta ya está dentro de la carpeta de scripts actual.",
+      "notWritable": "No se puede escribir en esa carpeta."
     }
   },
   "player": {
@@ -1142,6 +1145,22 @@
       "recheckedSome": "{count, plural, one {# fuente sigue sin ser accesible} other {# fuentes siguen sin ser accesibles}}",
       "working": "Trabajando...",
       "scanning": "Escaneando biblioteca..."
+    },
+    "generated": {
+      "header": "Scripts generados",
+      "folderDefault": "Carpeta predeterminada",
+      "folderCustom": "Carpeta personalizada",
+      "unknown": "Carpeta de scripts",
+      "hint": "Los funscripts generados automáticamente se guardan aquí. Al elegir una carpeta nueva se copian los scripts existentes; los originales se quedan donde están, así que volver a elegirlos los recupera.",
+      "choose": "Elegir carpeta",
+      "working": "Copiando...",
+      "useDefault": "Usar carpeta predeterminada",
+      "unreachable": "No se puede conectar con el servicio local, no se puede cambiar la carpeta de scripts.",
+      "fellBack": "La carpeta guardada no se puede usar; los scripts se guardan en la carpeta predeterminada.",
+      "notWritableWarning": "En esta carpeta no se puede escribir ahora mismo.",
+      "moved": "{count, plural, one {# script copiado a la carpeta nueva} other {# scripts copiados a la carpeta nueva}}",
+      "movedNone": "Los scripts se guardarán en la carpeta nueva.",
+      "alreadyThere": "Los scripts ya se guardan en esa carpeta."
     },
     "multiAxisConfirm": {
       "title": "¿Cambiar a multi-eje predeterminado?",

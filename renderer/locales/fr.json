@@ -246,7 +246,10 @@
       "notFound": "La tâche de génération est introuvable.",
       "storedGone": "Ce script a déjà été supprimé.",
       "writeFailed": "Impossible d’écrire le fichier.",
-      "offline": "Le service local est injoignable."
+      "offline": "Le service local est injoignable.",
+      "invalidPath": "Ce dossier ne peut pas être utilisé. Choisissez un dossier accessible en écriture.",
+      "nested": "Ce dossier se trouve déjà dans le dossier de scripts actuel.",
+      "notWritable": "L’écriture dans ce dossier est impossible."
     }
   },
   "player": {
@@ -1142,6 +1145,22 @@
       "recheckedSome": "{count, plural, one {# source est toujours inaccessible} other {# sources sont toujours inaccessibles}}",
       "working": "Traitement...",
       "scanning": "Analyse de la bibliothèque..."
+    },
+    "generated": {
+      "header": "Scripts générés",
+      "folderDefault": "Dossier par défaut",
+      "folderCustom": "Dossier personnalisé",
+      "unknown": "Dossier de scripts",
+      "hint": "Les funscripts générés automatiquement sont enregistrés ici. Choisir un nouveau dossier y copie les scripts existants ; les originaux restent en place, donc revenir en arrière les fait réapparaître.",
+      "choose": "Choisir un dossier",
+      "working": "Copie...",
+      "useDefault": "Utiliser le dossier par défaut",
+      "unreachable": "Le service local est injoignable ; le dossier de scripts ne peut pas être modifié.",
+      "fellBack": "Le dossier enregistré ne peut pas être utilisé ; les scripts sont enregistrés dans le dossier par défaut.",
+      "notWritableWarning": "L’écriture dans ce dossier est impossible pour le moment.",
+      "moved": "{count, plural, one {# script copié dans le nouveau dossier} other {# scripts copiés dans le nouveau dossier}}",
+      "movedNone": "Les scripts seront enregistrés dans le nouveau dossier.",
+      "alreadyThere": "Les scripts sont déjà enregistrés dans ce dossier."
     },
     "multiAxisConfirm": {
       "title": "Passer par défaut en multi-axe ?",

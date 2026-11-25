@@ -532,9 +532,15 @@ describe('Generated scripts offered as variations', () => {
     expect(panel).toContain('this._onStoredChanged = opts.onStoredChanged || (() => {});');
     expect(panel.match(/this\._onStoredChanged\(\);/g)).toHaveLength(4);
     // An export lands a file beside the video, which is the scan-side refresh.
-    expect(app).toContain('onStoredChanged: () => {');
-    expect(app).toContain('this._refreshGeneratedVariants();');
-    expect(app).toContain('this._refreshCurrentVariantsFromDisk();');
+    // The two refresh calls now sit in one shared method, because moving the
+    // store folder has to update exactly the same views a new script does.
+    expect(app).toContain('onStoredChanged: () => this._refreshGeneratedStoreViews(),');
+    const storeViews = app.slice(
+      app.indexOf('_refreshGeneratedStoreViews() {'),
+      app.indexOf('async _refreshGeneratedVariants() {'),
+    );
+    expect(storeViews).toContain('this._refreshGeneratedVariants();');
+    expect(storeViews).toContain('this._refreshCurrentVariantsFromDisk();');
   });
 
   it('the pop-out protocol documents the four origins it can be sent', () => {

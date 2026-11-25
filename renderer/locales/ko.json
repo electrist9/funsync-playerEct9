@@ -246,7 +246,10 @@
       "notFound": "생성 작업을 찾을 수 없습니다.",
       "storedGone": "이 스크립트는 이미 삭제되었습니다.",
       "writeFailed": "파일을 쓸 수 없습니다.",
-      "offline": "로컬 백엔드에 연결할 수 없습니다."
+      "offline": "로컬 백엔드에 연결할 수 없습니다.",
+      "invalidPath": "이 폴더는 사용할 수 없습니다. 쓸 수 있는 폴더를 선택하세요.",
+      "nested": "이 폴더는 현재 스크립트 폴더 안에 있습니다.",
+      "notWritable": "이 폴더에 쓸 수 없습니다."
     }
   },
   "player": {
@@ -1142,6 +1145,22 @@
       "recheckedSome": "{count, plural, other {소스 #개에 여전히 접근할 수 없습니다}}",
       "working": "처리 중...",
       "scanning": "라이브러리 스캔 중..."
+    },
+    "generated": {
+      "header": "생성된 스크립트",
+      "folderDefault": "기본 폴더",
+      "folderCustom": "지정한 폴더",
+      "unknown": "스크립트 폴더",
+      "hint": "자동으로 만든 펀스크립트는 여기에 저장됩니다. 새 폴더를 고르면 기존 스크립트가 복사되며, 원본은 원래 폴더에 그대로 남아 설정을 되돌리면 다시 사용할 수 있습니다.",
+      "choose": "폴더 선택",
+      "working": "복사 중...",
+      "useDefault": "기본 폴더 사용",
+      "unreachable": "로컬 백엔드에 연결할 수 없어 스크립트 폴더를 변경할 수 없습니다.",
+      "fellBack": "설정된 폴더를 사용할 수 없어 스크립트는 기본 폴더에 저장되고 있습니다.",
+      "notWritableWarning": "이 폴더에는 현재 쓸 수 없습니다.",
+      "moved": "{count, plural, other {스크립트 #개를 새 폴더에 복사했습니다}}",
+      "movedNone": "스크립트가 새 폴더에 저장됩니다.",
+      "alreadyThere": "스크립트가 이미 그 폴더에 저장되어 있습니다."
     },
     "multiAxisConfirm": {
       "title": "기본을 다중 축으로 전환하시겠습니까?",

@@ -7,6 +7,8 @@ Contract with the renderer (renderer/js/funscript-generator.js):
   GET  /api/generate/{job_id}                                       -> {status, progress, ...}
   POST /api/generate/{job_id}/cancel                                -> {status}
   GET  /api/generate/store?video_path=...                           -> {items: [...]}
+  GET  /api/generate/store/dir                                      -> {configured, effective, ...}
+  POST /api/generate/store/dir    {path}                            -> {ok, path, copied, skipped}
   GET  /api/generate/store/{script_id}                              -> {record, script}
   DELETE /api/generate/store/{script_id}                            -> {ok}
   POST /api/generate/store/{script_id}/export  {overwrite?}         -> {ok, filename}
@@ -24,7 +26,11 @@ modules are imported *inside* that thread, which is what keeps numpy out of
 backend startup and out of the PyInstaller import graph at boot.
 
 Privacy: nothing here logs a file path or filename. Job ids and the store's
-content hash are the only identifiers that leave this module.
+content hash are the only identifiers that leave this module. The one folder
+this module does talk back to the renderer about is the generated-script
+store itself, which is a folder the user picked in the settings panel — no
+video path ever leaves, and a generated script's path is handed to the
+variant system through `/store` rather than named here.
 """
 
 from __future__ import annotations
@@ -50,7 +56,16 @@ from services.funscript_build import (
     speed_limit_for,
 )
 from services.generate_errors import GenerateError
-from services.generated_store import get_store, video_identity
+from services.generated_store import (
+    StoreDirError,
+    copy_store_to,
+    default_store_root,
+    effective_store_dir,
+    get_store,
+    same_store_dir,
+    validate_store_dir,
+    video_identity,
+)
 
 router = APIRouter()
 
@@ -352,8 +367,9 @@ def _with_paths(store, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
     The player offers stored scripts as script variants, and a variant is
     addressed by path — so the path has to come from the store, which is the
-    only thing that knows where its folder is (it follows `--user-data-dir`,
-    and falls back to a temp dir when that flag is missing). Records whose file
+    only thing that knows where its folder is (the default follows
+    `--user-data-dir`, the user can point it at another folder, and it falls
+    back to a temp dir when neither is available). Records whose file
     has gone are dropped rather than returned without a path: a variant that
     cannot be loaded is worse than no variant at all.
     """
@@ -364,6 +380,69 @@ def _with_paths(store, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
             continue
         enriched.append({**item, "path": path})
     return enriched
+
+
+# Both of these are declared *before* /store/{script_id}: FastAPI tries
+# routes in declaration order, so a literal segment under /store would
+# otherwise be swallowed by `{script_id}` and the panel would see a 404.
+@router.get("/store/dir")
+async def get_store_dir():
+    """Which folder generated scripts are kept in, for the settings panel.
+
+    `configured` is what the Electron config asks for (None when unset),
+    `effective` is where the store actually is — a configured folder that
+    cannot be used falls back to `default` rather than failing generation.
+    """
+    try:
+        return effective_store_dir()
+    except OSError:
+        # A settings panel that shows the default folder beats one that
+        # errors out over a filesystem surprise.
+        root = default_store_root()
+        return {"configured": None, "effective": root, "default": root,
+                "writable": False}
+
+
+@router.post("/store/dir")
+async def set_store_dir(request: Request):
+    """Point the store at another folder, copying the scripts into it.
+
+    The renderer saves the setting itself (`library.generatedStoreDir`) only
+    after this answers ok — the backend never writes the Electron config, so
+    the order is: validate and copy here, then persist there. That also means
+    a refused folder changes nothing at all.
+
+    The old folder keeps its copies (the user asked for that, and pointing
+    the setting back at it brings those scripts right back), so this route
+    deletes nothing. If the config already names the requested folder — the
+    setting written by hand, say — there is nothing to copy and the answer is
+    simply `unchanged`.
+    """
+    try:
+        body = await request.json()
+    except (ValueError, AssertionError):
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    requested = body.get("path")
+    if not isinstance(requested, str) or not requested.strip():
+        raise HTTPException(status_code=400, detail={"code": "invalidPath"})
+
+    current = getattr(get_store(), "root_dir", default_store_root())
+    try:
+        target = validate_store_dir(requested, current_root=current)
+    except StoreDirError as exc:
+        status, code = {
+            "nested": (409, "nested"),
+            "notWritable": (500, "notWritable"),
+        }.get(exc.code, (400, "invalidPath"))
+        raise HTTPException(status_code=status, detail={"code": code}) from exc
+
+    if same_store_dir(target, current):
+        return {"ok": True, "path": target, "copied": 0, "skipped": 0,
+                "unchanged": True}
+    copied = copy_store_to(target, source_root=current)
+    return {"ok": True, "path": target, **copied}
 
 
 @router.get("/store")

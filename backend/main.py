@@ -111,7 +111,8 @@ if __name__ == "__main__":
     # Path to electron-conf's userData dir (contains config.json). Used
     # by the web-remote locale endpoint to mirror the desktop's chosen
     # language, and as the root of the generated-funscript store
-    # (<userData>/generated-scripts). Optional — both fall back if absent.
+    # (<userData>/generated-scripts, unless settings.library.generatedStoreDir
+    # points it at another folder). Optional — both fall back if absent.
     parser.add_argument("--user-data-dir", type=str, default=None)
     args = parser.parse_args()
 

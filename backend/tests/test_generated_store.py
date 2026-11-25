@@ -5,6 +5,11 @@ they came from (`<video name>-audio.funscript` / `<video name>-motion.funscript`
 rather than after an opaque hash, one script per video and engine family so
 regenerating replaces instead of piling up, and the old hash-named files from
 version 1 of the index are thrown away rather than migrated.
+
+The folder the store lives in is the user's choice too (the settings panel
+writes `settings.library.generatedStoreDir` into the Electron config), so a
+requested folder is checked before anything lands in it and the scripts are
+copied — not moved — when it changes.
 """
 
 import json
@@ -16,10 +21,18 @@ import pytest
 from services.generated_store import (
     INDEX_VERSION,
     FileGeneratedScriptStore,
+    StoreDirError,
+    copy_store_to,
+    default_store_root,
+    effective_store_dir,
     engine_family,
     generated_filename,
+    get_store,
+    set_store,
+    validate_store_dir,
     video_identity,
 )
+from services.paths import get_user_data_dir, set_user_data_dir
 
 SCRIPT_SUFFIX = ".funscript"
 
@@ -247,3 +260,184 @@ def test_a_record_cannot_point_outside_the_store(store_dir, media_dir):
     )
     store.delete("abc123")
     assert os.path.isfile(escape)
+
+
+# -- where the store lives ---------------------------------------------------
+
+@pytest.fixture
+def user_data(media_dir):
+    """A stand-in Electron userData dir, waiting for a config.json.
+
+    services.paths keeps the value in a module global, so the fixture puts
+    back what it found — and clears the memoized store, because a later test
+    must not inherit one pointed at a directory pytest has already deleted.
+    """
+    previous = get_user_data_dir()
+    path = os.path.join(media_dir, "user-data-" + uuid.uuid4().hex[:8])
+    os.makedirs(path)
+    set_user_data_dir(path)
+    try:
+        yield path
+    finally:
+        set_user_data_dir(previous)
+        set_store(None)
+
+
+def _choose_folder(user_data, path):
+    """Save the setting the way the settings panel does it."""
+    with open(os.path.join(user_data, "config.json"), "w", encoding="utf-8") as handle:
+        json.dump({"settings": {"library": {"generatedStoreDir": path}}}, handle)
+
+
+def _save_pair(store, video_file):
+    """One audio and one motion script for the same video."""
+    audio = store.save(engine="audio", video=video_identity(video_file),
+                       params={}, script=_script(0, 1), duration_ms=1000)
+    motion = store.save(engine="motion", video=video_identity(video_file),
+                        params={}, script=_script(2, 3), duration_ms=1000)
+    return audio, motion
+
+
+def test_the_store_follows_the_folder_from_the_config(user_data, store_dir):
+    _choose_folder(user_data, store_dir)
+    assert get_store().root_dir == store_dir
+    # Same setting, same instance: reading the config again is cheap,
+    # rebuilding the store on every request is not.
+    assert get_store() is get_store()
+
+
+def test_a_changed_setting_moves_the_store_without_a_restart(user_data, store_dir, video_file):
+    _choose_folder(user_data, store_dir)
+    record = get_store().save(engine="audio", video=video_identity(video_file),
+                              params={}, script=_script(0, 1), duration_ms=1000)
+    assert os.path.isfile(os.path.join(store_dir, "clip-audio.funscript"))
+
+    elsewhere = store_dir + "-elsewhere"
+    _choose_folder(user_data, elsewhere)
+    assert get_store().root_dir == elsewhere
+    # Each folder has its own index.json, so the new one starts empty.
+    assert get_store().list_all() == []
+    assert get_store().get_script(record["id"]) is None
+
+    _choose_folder(user_data, store_dir)
+    assert get_store().get_script(record["id"]) is not None
+
+
+def test_an_unusable_folder_in_the_config_falls_back_to_the_default(user_data, store_dir):
+    blocked = os.path.join(store_dir, "not-a-folder")
+    with open(blocked, "w", encoding="utf-8") as handle:
+        handle.write("a file where a folder should be")
+    _choose_folder(user_data, blocked)
+
+    snapshot = effective_store_dir()
+    assert snapshot["configured"] == blocked
+    assert snapshot["effective"] == default_store_root()
+    assert snapshot["writable"] is True
+    # Generation still works; the store just uses the default folder.
+    assert get_store().root_dir == default_store_root()
+
+
+def test_validate_refuses_paths_that_cannot_be_a_folder(store_dir):
+    a_file = os.path.join(store_dir, "file.txt")
+    with open(a_file, "w", encoding="utf-8") as handle:
+        handle.write("x")
+    refused = [
+        "", "   ",
+        "relative/here",            # the store needs an absolute folder
+        a_file,                     # a file, not a folder
+        os.path.join(store_dir, "st*ars"),   # Windows would reject the write
+        os.path.join(store_dir, "trailing."),  # quietly trimmed by Windows
+    ]
+    for candidate in refused:
+        with pytest.raises(StoreDirError) as info:
+            validate_store_dir(candidate)
+        assert info.value.code == "invalid", candidate
+
+
+def test_validate_creates_a_folder_that_is_not_there_yet(store_dir):
+    wanted = os.path.join(store_dir, "deep", "deeper", "scripts")
+    assert validate_store_dir(wanted) == wanted
+    assert os.path.isdir(wanted)
+    # Second time round it is still fine — the folder already exists.
+    assert validate_store_dir(wanted) == wanted
+
+
+def test_validate_refuses_a_folder_nested_in_the_store(store_dir):
+    inner = os.path.join(store_dir, "inside")
+    with pytest.raises(StoreDirError) as info:
+        validate_store_dir(inner, current_root=store_dir)
+    assert info.value.code == "nested"
+
+    # And the other way round: the old store must not end up inside the new
+    # folder, or the same scripts would be listed from both roots.
+    os.makedirs(inner, exist_ok=True)
+    with pytest.raises(StoreDirError) as info:
+        validate_store_dir(store_dir, current_root=inner)
+    assert info.value.code == "nested"
+
+    # The same folder written differently is not nesting; it is the no-op the
+    # caller reports as "already there".
+    assert validate_store_dir(store_dir + os.sep + ".", current_root=store_dir) == store_dir
+
+
+def test_validate_refuses_a_folder_that_cannot_be_written(store_dir):
+    a_file = os.path.join(store_dir, "file.txt")
+    with open(a_file, "w", encoding="utf-8") as handle:
+        handle.write("x")
+    with pytest.raises(StoreDirError) as info:
+        validate_store_dir(os.path.join(a_file, "child"))
+    assert info.value.code == "notWritable"
+
+
+def test_copying_the_store_leaves_the_old_folder_where_it_is(store_dir, video_file):
+    audio, motion = _save_pair(FileGeneratedScriptStore(store_dir), video_file)
+    target = store_dir + "-copy"
+
+    assert copy_store_to(target, source_root=store_dir) == {"copied": 2, "skipped": 0}
+
+    fresh = FileGeneratedScriptStore(target)
+    assert sorted(entry["id"] for entry in fresh.list_all()) == sorted([audio["id"], motion["id"]])
+    for record in (audio, motion):
+        path = fresh.script_path(record)
+        assert os.path.isfile(path)
+        # Same name as before: a file name comes from the video, not from
+        # which folder the store happens to use.
+        assert os.path.basename(path) == record["filename"]
+    # Nothing was deleted, so pointing the setting back at the old folder
+    # brings those scripts right back.
+    assert os.path.isfile(os.path.join(store_dir, "clip-audio.funscript"))
+    assert len(FileGeneratedScriptStore(store_dir).list_all()) == 2
+
+
+def test_repeating_the_copy_does_not_double_up(store_dir, video_file):
+    _save_pair(FileGeneratedScriptStore(store_dir), video_file)
+    target = store_dir + "-copy"
+    copy_store_to(target, source_root=store_dir)
+
+    assert copy_store_to(target, source_root=store_dir) == {"copied": 0, "skipped": 2}
+    assert len(FileGeneratedScriptStore(target).list_all()) == 2
+
+
+def test_a_copy_the_new_folder_already_has_keeps_its_own(store_dir, video_file):
+    source = FileGeneratedScriptStore(store_dir)
+    _save_pair(source, video_file)
+
+    target_dir = store_dir + "-copy"
+    target = FileGeneratedScriptStore(target_dir)
+    kept = target.save(engine="audio", video=video_identity(video_file),
+                       params={}, script=_script(9, 9), duration_ms=1)
+
+    # The audio pair is already there and wins; motion has nothing to clash
+    # with and comes over.
+    assert copy_store_to(target_dir, source_root=store_dir) == {"copied": 1, "skipped": 1}
+    assert target.get(kept["id"]) is not None
+    assert target.get_script(kept["id"])["actions"][0]["pos"] == 9
+
+
+def test_a_record_whose_file_has_gone_is_left_behind(store_dir, video_file):
+    _, motion = _save_pair(FileGeneratedScriptStore(store_dir), video_file)
+    os.remove(os.path.join(store_dir, motion["filename"]))
+    target = store_dir + "-copy"
+
+    assert copy_store_to(target, source_root=store_dir) == {"copied": 1, "skipped": 1}
+    assert len(FileGeneratedScriptStore(target).list_all()) == 1

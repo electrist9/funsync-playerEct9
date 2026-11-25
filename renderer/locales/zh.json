@@ -246,7 +246,10 @@
       "notFound": "找不到生成任务。",
       "storedGone": "此脚本已被删除。",
       "writeFailed": "无法写入文件。",
-      "offline": "无法连接本地后端。"
+      "offline": "无法连接本地后端。",
+      "invalidPath": "无法使用这个文件夹，请选择一个可以写入的文件夹。",
+      "nested": "这个文件夹已经在当前脚本文件夹里面。",
+      "notWritable": "无法写入这个文件夹。"
     }
   },
   "player": {
@@ -1142,6 +1145,22 @@
       "recheckedSome": "{count, plural, other {仍有 # 个来源无法访问}}",
       "working": "处理中...",
       "scanning": "正在扫描媒体库..."
+    },
+    "generated": {
+      "header": "生成的脚本",
+      "folderDefault": "默认文件夹",
+      "folderCustom": "自定义文件夹",
+      "unknown": "脚本文件夹",
+      "hint": "自动生成的 funscript 保存在这里。选择新文件夹会把现有脚本复制过去，原来的文件保持不变，改回原文件夹就能继续使用。",
+      "choose": "选择文件夹",
+      "working": "复制中...",
+      "useDefault": "使用默认文件夹",
+      "unreachable": "无法连接本地后端，因此不能更改脚本文件夹。",
+      "fellBack": "设置中的文件夹无法使用，脚本正保存在默认文件夹。",
+      "notWritableWarning": "当前无法写入这个文件夹。",
+      "moved": "{count, plural, other {已复制 # 个脚本到新文件夹}}",
+      "movedNone": "脚本将保存在新文件夹。",
+      "alreadyThere": "脚本已经保存在该文件夹。"
     },
     "multiAxisConfirm": {
       "title": "切换为多轴默认?",

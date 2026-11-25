@@ -246,7 +246,10 @@
       "notFound": "The generation job could not be found.",
       "storedGone": "This script has already been removed.",
       "writeFailed": "The file could not be written.",
-      "offline": "The local backend is not reachable."
+      "offline": "The local backend is not reachable.",
+      "invalidPath": "That folder can't be used. Pick a real folder you can write to.",
+      "nested": "That folder is already inside the current script folder.",
+      "notWritable": "That folder can't be written to."
     }
   },
   "player": {
@@ -1117,6 +1120,22 @@
       "recheckedSome": "{count, plural, one {# source is still not reachable} other {# sources are still not reachable}}",
       "working": "Working...",
       "scanning": "Scanning library..."
+    },
+    "generated": {
+      "header": "Generated Scripts",
+      "folderDefault": "Default folder",
+      "folderCustom": "Custom folder",
+      "unknown": "Script folder",
+      "hint": "Auto-generated funscripts are saved here. Choosing a new folder copies the existing scripts into it; the originals stay where they are, so switching back brings them back.",
+      "choose": "Choose Folder",
+      "working": "Copying...",
+      "useDefault": "Use Default Folder",
+      "unreachable": "The local backend is not reachable, so the script folder can't be changed.",
+      "fellBack": "The folder in your settings can't be used, so scripts are being saved in the default folder.",
+      "notWritableWarning": "This folder can't be written to right now.",
+      "moved": "{count, plural, one {# script copied to the new folder} other {# scripts copied to the new folder}}",
+      "movedNone": "Scripts will be saved in the new folder.",
+      "alreadyThere": "Scripts are already saved in that folder."
     },
     "multiAxisConfirm": {
       "title": "Switch to multi-axis default?",
