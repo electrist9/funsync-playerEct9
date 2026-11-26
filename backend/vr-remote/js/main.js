@@ -43,9 +43,11 @@ const FONT = '"Noto Sans JP", "Hiragino Kaku Gothic ProN", Meiryo, sans-serif';
 const SORT_LABELS = { name: '名前', recent: '追加日', duration: '長さ' };
 const SORT_CYCLE = ['name', 'recent', 'duration'];
 // Player-panel auto-hide: after this much idle time during playback the
-// control panel fades nearly out of view (see _updatePanelFade).
+// control panel fades fully out of view (see _updatePanelFade). The mesh
+// stays visible=true at opacity 0, which keeps it raycastable so aiming
+// where it was (then pressing) always brings it back.
 const PANEL_IDLE_MS = 3000;
-const PANEL_GHOST_OPACITY = 0.06;
+const PANEL_GHOST_OPACITY = 0;
 
 class VrApp {
   constructor() {
@@ -236,7 +238,10 @@ class VrApp {
 
     this.playerPanel = new UIPanel({ worldWidth: 2.2, pixelWidth: 1200, pixelHeight: 300 });
     this.playerPanel.mesh.position.set(0, 0.72, -2.35);
-    this.playerPanel.mesh.rotation.x = 0.25; // tilt up toward the hands
+    this.playerPanel.mesh.rotation.x = 0; // upright, parallel to the screen — no tilt
+    // Opacity-0 ghost panels must not write depth, or the transparent quad
+    // would punch a see-through hole in the screen/sphere behind it.
+    this.playerPanel.mesh.material.depthWrite = false;
     this.playerPanel.setDraw(() => this._drawPlayerControls());
     this.playerGroup.add(this.playerPanel.mesh);
 
@@ -349,8 +354,8 @@ class VrApp {
 
   /**
    * Auto-hide for the player control panel: while a video is playing and
-   * nothing is looking at / touching the panel, it fades nearly out of
-   * sight so it never floats in front of the picture. Aiming ONTO the panel
+   * nothing is looking at / touching the panel, it fades fully out of
+   * sight (opacity 0) so it never floats in front of the picture. Aiming ONTO the panel
    * (a controller ray or gaze landing on it after not being there) counts
    * as a wake event, and so does pressing the trigger over it (see
    * _select) — but resting a ray on it does NOT: in surround-sphere modes
