@@ -1,0 +1,89 @@
+/* FunSync VR — pre-session overlay styling only. Inside the XR session the
+   page is invisible; every visual is a CanvasTexture panel (js/panel.js). */
+
+:root {
+  --bg: #0a0c14;
+  --card: #141827;
+  --accent: #e94560;
+  --text: #e8ecf8;
+  --muted: #8b93ad;
+  --border: rgba(120, 130, 170, 0.35);
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Noto Sans JP", "Hiragino Kaku Gothic ProN", Meiryo, sans-serif;
+}
+
+body > canvas { display: block; }
+
+#overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+#overlay.hidden { display: none; }
+
+#overlay-card {
+  max-width: 560px;
+  width: 100%;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 32px;
+  text-align: center;
+}
+
+#overlay-card h1 {
+  margin: 0;
+  font-size: 34px;
+  letter-spacing: 0.02em;
+}
+
+#overlay-card .sub {
+  margin: 6px 0 24px;
+  color: var(--muted);
+}
+
+#enter-vr {
+  appearance: none;
+  border: none;
+  border-radius: 12px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 22px;
+  font-weight: 700;
+  padding: 16px 40px;
+  cursor: pointer;
+}
+
+#enter-vr:disabled { opacity: 0.5; cursor: default; }
+
+#overlay-status {
+  margin: 18px 0 0;
+  color: var(--muted);
+  min-height: 1.4em;
+}
+
+#overlay-card .hint {
+  margin: 24px 0 0;
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+#overlay-card code {
+  background: rgba(255, 255, 255, 0.07);
+  padding: 1px 6px;
+  border-radius: 6px;
+  font-size: 12px;
+}

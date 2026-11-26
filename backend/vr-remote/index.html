@@ -1,26 +1,31 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>FunSync VR</title>
-<style>
-  body { background:#111; color:#eee; font-family:system-ui,sans-serif;
-         display:flex; align-items:center; justify-content:center; height:100vh; margin:0; }
-  main { text-align:center; }
-  code { background:#222; padding:2px 6px; border-radius:4px; }
-</style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FunSync VR</title>
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<!-- Placeholder: the WebXR SPA (xr-app.js + vendored three.js) lands with
-     Phase 1. This page only proves the /vr mount + TLS path end-to-end. -->
-<main>
-  <h1>FunSync VR</h1>
-  <p>WebXR クライアントは準備中です。</p>
-  <p><code id="loc"></code></p>
-</main>
-<script>
-  document.getElementById('loc').textContent = location.origin + '/vr/';
-</script>
+  <!-- Pre-session DOM overlay only: inside the XR session all UI lives in
+       CanvasTexture panels (see js/panel.js). -->
+  <div id="overlay">
+    <div id="overlay-card">
+      <h1>FunSync VR</h1>
+      <p class="sub">WebXR ヘッドセット用プレイヤー</p>
+      <button id="enter-vr" type="button">VR を開始</button>
+      <p id="overlay-status">読み込み中…</p>
+      <p class="hint">
+        ヘッドセットのブラウザで <code id="loc"></code> にアクセスしてください。<br>
+        LAN IP 経由では HTTPS が必要です（デスクトップの VR モーダルで TLS を有効化）。<br>
+        Quest 等では <code>adb reverse tcp:5123 tcp:5123</code> で
+        <code>http://localhost:5123/vr/</code> も利用できます。
+      </p>
+    </div>
+  </div>
+  <script type="module" src="js/main.js"></script>
+  <script>
+    document.getElementById('loc').textContent = location.origin + '/vr/';
+  </script>
 </body>
 </html>
