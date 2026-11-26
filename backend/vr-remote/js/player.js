@@ -38,6 +38,7 @@ export class VideoPlayer {
     this.info = null;      // current video record from /api/remote/videos
     this.sync = null;
     this.lastError = null;
+    this.wsConnected = false; // sync socket open (device drive also needs the desktop app)
 
     this._onServerMessage = onServerMessage || (() => {});
     this._onKicked = onKicked || (() => {});
@@ -66,6 +67,8 @@ export class VideoPlayer {
       clientKind: 'vr',
       onServerMessage: this._onServerMessage,
       onKicked: this._onKicked,
+      onOpen: () => { this.wsConnected = true; },
+      onClose: () => { this.wsConnected = false; },
     });
     this.sync.start();
 
@@ -123,6 +126,7 @@ export class VideoPlayer {
       this.sync.stop();
       this.sync = null;
     }
+    this.wsConnected = false;
     try { this.video.pause(); } catch { /* ignore */ }
     this.video.removeAttribute('src');
     this.video.load();

@@ -66,6 +66,7 @@ class VrApp {
     this._tmpMatrix = new THREE.Matrix4();
     this._origin = new THREE.Vector3();
     this._dir = new THREE.Vector3();
+    this._frameError = null; // first frame-loop exception, surfaced on the OSD
   }
 
   // -------------------------------------------------------------------------
@@ -108,34 +109,43 @@ class VrApp {
   }
 
   async _enterSession(session) {
-    this.renderer = new THREE.WebGLRenderer({ antialias: true });
-    this.renderer.xr.enabled = true;
-    this.renderer.xr.setReferenceSpaceType('local-floor');
-    document.body.appendChild(this.renderer.domElement);
-    await this.renderer.xr.setSession(session);
+    try {
+      this.renderer = new THREE.WebGLRenderer({ antialias: true });
+      this.renderer.xr.enabled = true;
+      this.renderer.xr.setReferenceSpaceType('local-floor');
+      document.body.appendChild(this.renderer.domElement);
+      await this.renderer.xr.setSession(session);
 
-    session.addEventListener('end', () => this._exitSession());
+      session.addEventListener('end', () => this._exitSession());
 
-    this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x0a0c14);
-    this.camera = new THREE.PerspectiveCamera(70, 1, 0.05, 100);
-    this.scene.add(this.camera);
+      this.scene = new THREE.Scene();
+      this.scene.background = new THREE.Color(0x0a0c14);
+      this.camera = new THREE.PerspectiveCamera(70, 1, 0.05, 100);
+      this.scene.add(this.camera);
 
-    // Soft floor grid for spatial grounding.
-    const grid = new THREE.GridHelper(12, 24, 0x2a3050, 0x171c2c);
-    grid.material.transparent = true;
-    grid.material.opacity = 0.5;
-    this.scene.add(grid);
+      // Soft floor grid for spatial grounding.
+      const grid = new THREE.GridHelper(12, 24, 0x2a3050, 0x171c2c);
+      grid.material.transparent = true;
+      grid.material.opacity = 0.5;
+      this.scene.add(grid);
 
-    this._buildLibraryPanel();
-    this._buildPlayerRig();
-    this._buildOsd();
-    this._buildControllers();
+      this._buildLibraryPanel();
+      this._buildPlayerRig();
+      this._buildOsd();
+      this._buildControllers();
 
-    this.mode = 'library';
-    this._refreshLibrary(true);
+      this.mode = 'library';
+      this._frameError = null;
+      this.toast = { text: 'コントローラーをパネルに向けてトリガーで選択します', until: Date.now() + 6000 };
+      this._refreshLibrary(true);
 
-    this.renderer.setAnimationLoop(() => this._frame());
+      this.renderer.setAnimationLoop(() => this._frame());
+    } catch (err) {
+      // Never strand the user inside a half-built XR scene: end the session
+      // and surface the failure on the DOM overlay instead.
+      try { await session.end(); } catch { /* ignore */ }
+      throw err;
+    }
   }
 
   _exitSession() {
@@ -228,18 +238,35 @@ class VrApp {
   // -------------------------------------------------------------------------
 
   _frame() {
-    this._updateHover();
-    if (this.slideshow) this._slideshowTick();
-    if (this.toast && Date.now() > this.toast.until) {
-      this.toast = null;
-      this.osdPanel.redraw();
+    try {
+      this._updateHover();
+      if (this.slideshow) this._slideshowTick();
+      if (this.toast && Date.now() > this.toast.until) {
+        this.toast = null;
+        this.osdPanel.redraw();
+      }
+      const sig = this._osdSignature();
+      if (sig !== this._osdSig) {
+        this._osdSig = sig;
+        this.osdPanel.redraw();
+      }
+    } catch (err) {
+      // An exception inside the XR loop otherwise freezes the headset view
+      // with zero diagnostics (the last submitted frame just persists).
+      // Keep the loop alive and surface the first failure on the OSD.
+      if (!this._frameError) {
+        this._frameError = `内部エラー: ${err && err.message ? err.message : err}`;
+        console.error('[FunSync VR] frame error', err);
+      }
     }
-    const sig = this._osdSignature();
-    if (sig !== this._osdSig) {
-      this._osdSig = sig;
-      this.osdPanel.redraw();
+    try {
+      this.renderer.render(this.scene, this.camera);
+    } catch (err) {
+      if (!this._frameError) {
+        this._frameError = `描画エラー: ${err && err.message ? err.message : err}`;
+        console.error('[FunSync VR] render error', err);
+      }
     }
-    this.renderer.render(this.scene, this.camera);
   }
 
   _rayFrom(controller) {
@@ -266,6 +293,20 @@ class VrApp {
         best = { controller, mesh: hit.object, uv: hit.uv, distance: hit.distance };
       }
     }
+
+    // Gaze fallback: when no controller ray lands on a target, aim from the
+    // head so the UI stays operable even if controller poses are missing or
+    // mis-tracked (a real-device failure mode we cannot reproduce locally).
+    if (!best && this.camera) {
+      this.camera.getWorldPosition(this._origin);
+      this.camera.getWorldDirection(this._dir);
+      this._raycaster.ray.origin.copy(this._origin);
+      this._raycaster.ray.direction.copy(this._dir);
+      const hits = this._raycaster.intersectObjects(this._targets(), false);
+      if (hits.length) {
+        best = { controller: null, mesh: hits[0].object, uv: hits[0].uv, distance: hits[0].distance };
+      }
+    }
     this._hover = best;
 
     // Exactly one panel may show a hovered region at a time.
@@ -278,7 +319,16 @@ class VrApp {
 
   _select(controller) {
     this._rayFrom(controller);
-    const hits = this._raycaster.intersectObjects(this._targets(), false);
+    let hits = this._raycaster.intersectObjects(this._targets(), false);
+    if (!hits.length && this.camera) {
+      // Same gaze fallback as hover: if the controller ray missed, select
+      // whatever the user is looking at.
+      this.camera.getWorldPosition(this._origin);
+      this.camera.getWorldDirection(this._dir);
+      this._raycaster.ray.origin.copy(this._origin);
+      this._raycaster.ray.direction.copy(this._dir);
+      hits = this._raycaster.intersectObjects(this._targets(), false);
+    }
     if (!hits.length) return;
     const hit = hits[0];
     const panel = hit.object.userData.uiPanel;
@@ -317,6 +367,8 @@ class VrApp {
     this.mode = 'player';
     this.libraryGroup.visible = false;
     this.playerGroup.visible = true;
+    // Fresh session per video: connection status belongs to the new socket.
+    this.sync = { connected: false, script: null, devices: [] };
     this.player.open(video);
     this.playerPanel.redraw();
     this.osdPanel.redraw();
@@ -326,6 +378,7 @@ class VrApp {
     this._disableSlideshow();
     this.player.close();
     this.mode = 'library';
+    this.sync = { connected: false, script: null, devices: [] };
     this.playerGroup.visible = false;
     this.libraryGroup.visible = true;
     if (toastText) this.toast = { text: toastText, until: Date.now() + 5000 };
@@ -461,10 +514,10 @@ class VrApp {
   // Slideshow (flat videos, Phase 2)
   // -------------------------------------------------------------------------
 
-  /** SS needs a funscript (switch points) and a configured folder. */
+  /** SS needs a funscript (switch points) and is a flat-video feature only. */
   _canSlideshow() {
     const v = this.player.info;
-    return !!(v && v.hasFunscript);
+    return !!(v && v.hasFunscript && v.manualVRType !== 'vr');
   }
 
   async _toggleSlideshow() {
@@ -616,6 +669,30 @@ class VrApp {
     this.osdPanel.redraw();
   }
 
+  /**
+   * Right-hand OSD status, contextual per mode. In library mode there is no
+   * sync socket at all, so a "not connected" warning there is misleading.
+   * In player mode we distinguish: socket still opening → socket open but no
+   * device-status relayed by the desktop app → device status confirmed.
+   */
+  _syncStatus() {
+    if (this.mode === 'library') {
+      return { text: `${this.library.view().total} 本のビデオ`, color: '#8b93ad' };
+    }
+    if (this.sync.connected) {
+      const text = this.sync.devices.length
+        ? `デバイス: ${this.sync.devices.map((d) => d.label).join(', ')}`
+        : 'デバイスなし';
+      return { text, color: '#7ed98a' };
+    }
+    if (this.player.wsConnected) {
+      // Device status is relayed by the desktop FunSync app; playback works
+      // standalone whether or not it is running.
+      return { text: 'デスクトップ未接続（単独再生中）', color: '#ff9d6a' };
+    }
+    return { text: '同期接続中…（単独再生中）', color: '#ff9d6a' };
+  }
+
   _osdSignature() {
     const v = this.player.info;
     return [
@@ -624,12 +701,12 @@ class VrApp {
       this.player.paused ? 'p' : 'r',
       formatTime(this.player.currentTime),
       formatTime(this.player.duration),
-      this.sync.connected ? 'c' : '-',
+      this._syncStatus().text,
       this.sync.script || '-',
-      this.sync.devices.map((d) => d.label).join(','),
       this.slideshow ? 'ss' : '-',
       this.toast ? this.toast.text : '',
       this.player.lastError || '',
+      this._frameError || '',
     ].join('|');
   }
 
@@ -643,7 +720,11 @@ class VrApp {
     ctx.textAlign = 'left';
     const v = this.player.info;
 
-    if (this.toast) {
+    if (this._frameError) {
+      ctx.fillStyle = '#ff5d5d';
+      ctx.font = `600 34px ${FONT}`;
+      ctx.fillText(ellipsize(ctx, this._frameError, W - 80), 40, 70);
+    } else if (this.toast) {
       ctx.fillStyle = '#ffd76a';
       ctx.font = `600 34px ${FONT}`;
       ctx.fillText(ellipsize(ctx, this.toast.text, W - 80), 40, 70);
@@ -673,12 +754,10 @@ class VrApp {
       }
     }
     ctx.textAlign = 'right';
-    let right = '';
-    if (!this.sync.connected) right = 'デスクトップ未接続';
-    else if (this.sync.devices.length) right = `デバイス: ${this.sync.devices.map((d) => d.label).join(', ')}`;
-    else right = 'デバイスなし';
+    const st = this._syncStatus();
+    let right = st.text;
     if (this.sync.script) right = `${right} • ${this.sync.script}`;
-    ctx.fillStyle = this.sync.connected ? '#7ed98a' : '#ff9d6a';
+    ctx.fillStyle = st.color;
     ctx.fillText(ellipsize(ctx, right, W - 80), W - 40, 170);
   }
 }

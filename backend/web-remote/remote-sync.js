@@ -34,12 +34,20 @@ export class RemoteSyncClient {
    *   backend/observer UI ("vr" for the WebXR headset client). Purely
    *   informational — protocol and last-wins arbitration are unchanged.
    */
-  constructor({ video, videoId, onServerMessage, onKicked, clientKind }) {
+  constructor({ video, videoId, onServerMessage, onKicked, clientKind, onOpen, onClose }) {
     this._video = video;
     this._videoId = videoId;
     this._clientKind = clientKind === 'vr' ? 'vr' : null;
     this._onServerMessage = onServerMessage || (() => {});
     this._onKicked = onKicked || (() => {});
+    // Optional connection lifecycle hooks (client-side only; the wire
+    // protocol and last-wins arbitration are untouched).
+    this._onOpenCb = onOpen || null;
+    this._onCloseCb = onClose || null;
+    // VR clients live inside an immersive session: the page can report
+    // document.hidden even while fully foreground, so the hidden-page
+    // guards below must not pause playback or defer reconnection there.
+    this._vr = clientKind === 'vr';
 
     this._ws = null;
     this._kicked = false;
@@ -54,7 +62,9 @@ export class RemoteSyncClient {
       // that is already hidden when play() lands never sees one, and Chrome
       // starves timeupdate in hidden pages — the desktop would extrapolate
       // stale state with nothing correcting it. Refuse to start hidden.
-      if (typeof document !== 'undefined' && document.hidden) {
+      // VR skips this: an immersive session is foreground by definition,
+      // even though the tab may report itself hidden under WebXR.
+      if (!this._vr && typeof document !== 'undefined' && document.hidden) {
         try { this._video.pause(); } catch { /* ignore */ }
         return;
       }
@@ -68,11 +78,12 @@ export class RemoteSyncClient {
     // flips the effective-paused bit the desktop uses to stop/start devices.
     this._onStallChange = () => this._sendState();
     this._onVisibility = () => {
-      if (document.hidden && !this._video.paused) {
+      if (!this._vr && document.hidden && !this._video.paused) {
         // Phone backgrounded — pause playback so devices don't keep running
-        // while the WebSocket silently throttles.
+        // while the WebSocket silently throttles. (VR is exempt: an
+        // immersive session counts as foreground even when hidden.)
         try { this._video.pause(); } catch { /* ignore */ }
-      } else if (!document.hidden && !this._ws && !this._stopped && !this._kicked) {
+      } else if ((!this._vr || document.hidden) && !this._ws && !this._stopped && !this._kicked) {
         // Back on screen with a dead socket — reconnect immediately rather
         // than waiting out the backoff timer.
         if (this._retryTimer) { clearTimeout(this._retryTimer); this._retryTimer = null; }
@@ -109,6 +120,7 @@ export class RemoteSyncClient {
       this._attachVideoHandlers();
       // Seed the initial state in case the video is already playing.
       this._sendState();
+      if (this._onOpenCb) this._onOpenCb();
     });
 
     ws.addEventListener('message', (evt) => {
@@ -126,6 +138,7 @@ export class RemoteSyncClient {
     ws.addEventListener('close', () => {
       this._detachVideoHandlers();
       this._ws = null;
+      if (this._onCloseCb) this._onCloseCb();
       this._scheduleReconnect();
     });
 
@@ -137,12 +150,13 @@ export class RemoteSyncClient {
    * OS-killed socket used to end device sync silently for the rest of the
    * video — playback carried on, devices sat dead, and only exiting and
    * reopening the video restored sync. Kicks and deliberate stop() never
-   * reconnect; hidden pages wait for the visibility handler instead (the
-   * socket would just be throttled into uselessness anyway).
+   * reconnect; hidden phone pages wait for the visibility handler instead
+   * (the socket would just be throttled into uselessness anyway), while VR
+   * clients keep retrying even when the tab reports itself hidden.
    */
   _scheduleReconnect() {
     if (this._stopped || this._kicked || this._retryTimer) return;
-    if (typeof document !== 'undefined' && document.hidden) return;
+    if (!this._vr && typeof document !== 'undefined' && document.hidden) return;
     const delay = Math.min(1000 * 2 ** this._retries, RECONNECT_MAX_MS);
     this._retries++;
     this._retryTimer = setTimeout(() => {
