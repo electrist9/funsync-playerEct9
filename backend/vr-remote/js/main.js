@@ -44,7 +44,7 @@ const SORT_LABELS = { name: '名前', recent: '追加日', duration: '長さ' };
 const SORT_CYCLE = ['name', 'recent', 'duration'];
 // Player-panel auto-hide: after this much idle time during playback the
 // control panel fades nearly out of view (see _updatePanelFade).
-const PANEL_IDLE_MS = 4000;
+const PANEL_IDLE_MS = 3000;
 const PANEL_GHOST_OPACITY = 0.06;
 
 class VrApp {
@@ -467,7 +467,7 @@ class VrApp {
     this.vrMode = resolveVRMode(video, this.vrOverride);
     this.vrScreen.applyMode(this.renderer, this.vrMode);
     if (this.vrMode.projection !== 'flat') {
-      this.toast = { text: `VR 投影: ${modeLabel(this.vrMode)}`, until: Date.now() + 4000 };
+      this.toast = { text: `VR 投影: ${modeLabel(this.vrMode)}`, until: Date.now() + 3000 };
     }
 
     // Subtitles (world-anchored caption panel).
@@ -480,7 +480,7 @@ class VrApp {
     // Fresh video: the panel starts fully visible, then auto-hides while
     // playing (see _updatePanelFade).
     this.playerPanel.mesh.material.opacity = 1;
-    this._panelActiveUntil = Date.now() + 6000;
+    this._panelActiveUntil = Date.now() + PANEL_IDLE_MS;
     this.playerPanel.redraw();
   }
 
