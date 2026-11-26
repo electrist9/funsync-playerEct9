@@ -17,13 +17,16 @@
  * our clock, so connected funscript devices follow the headset.
  *
  * Projection modes (equirect/fisheye/SBS) arrive in Phase 3; in-scene
- * search / playlists / slideshow in Phases 2 & 4.
+ * search / playlists in Phase 4. Flat videos support the photo slideshow
+ * (Phase 2) using the desktop-configured folder and the shared
+ * /shared-js/slideshow-timing.js + slideshow-color.js logic.
  */
 
 import * as THREE from '../vendor/three/three.module.js';
 import { UIPanel, drawPanelBackground, drawButton, ellipsize, roundRect } from './panel.js';
 import { LibraryModel, fetchVideos } from './library.js';
 import { VideoPlayer } from './player.js';
+import { SlideshowModel, SlideshowRenderer } from './slideshow.js';
 import { formatTime } from './util.js';
 
 const FONT = '"Noto Sans JP", "Hiragino Kaku Gothic ProN", Meiryo, sans-serif';
@@ -54,6 +57,8 @@ class VrApp {
     });
 
     this.sync = { connected: false, script: null, devices: [] };
+    this.slideshow = null; // { model, renderer, texture } while SS is on
+    this._ssScriptCache = new Map(); // scriptUrl → actions[]
     this.toast = null; // { text, until }
     this._hover = null; // { controller, mesh, uv, distance }
     this._osdSig = '';
@@ -135,6 +140,7 @@ class VrApp {
 
   _exitSession() {
     this.renderer.setAnimationLoop(null);
+    this._disableSlideshow();
     this.player.close();
     this.mode = 'library';
     if (this.renderer.domElement.parentNode) {
@@ -172,7 +178,7 @@ class VrApp {
     this.screenMesh.position.set(0, 1.65, -2.6);
     this.playerGroup.add(this.screenMesh);
 
-    this.playerPanel = new UIPanel({ worldWidth: 2.2, pixelWidth: 1100, pixelHeight: 220 });
+    this.playerPanel = new UIPanel({ worldWidth: 2.2, pixelWidth: 1200, pixelHeight: 220 });
     this.playerPanel.mesh.position.set(0, 0.72, -2.35);
     this.playerPanel.mesh.rotation.x = 0.25; // tilt up toward the hands
     this.playerPanel.setDraw(() => this._drawPlayerControls());
@@ -223,6 +229,7 @@ class VrApp {
 
   _frame() {
     this._updateHover();
+    if (this.slideshow) this._slideshowTick();
     if (this.toast && Date.now() > this.toast.until) {
       this.toast = null;
       this.osdPanel.redraw();
@@ -306,6 +313,7 @@ class VrApp {
   }
 
   _openVideo(video) {
+    this._disableSlideshow();
     this.mode = 'player';
     this.libraryGroup.visible = false;
     this.playerGroup.visible = true;
@@ -315,6 +323,7 @@ class VrApp {
   }
 
   _closePlayback(toastText) {
+    this._disableSlideshow();
     this.player.close();
     this.mode = 'library';
     this.playerGroup.visible = false;
@@ -425,10 +434,10 @@ class VrApp {
     drawPanelBackground(ctx, W, H);
 
     const playing = !this.player.paused;
-    const bw = 190;
+    const bw = 178;
     const bh = 120;
-    const gap = 18;
-    const total = bw * 5 + gap * 4;
+    const gap = 16;
+    const total = bw * 6 + gap * 5;
     const x0 = (W - total) / 2;
     const y0 = (H - bh) / 2;
 
@@ -439,10 +448,146 @@ class VrApp {
       mk(2, 'playpause', playing ? '⏸ 一時停止' : '▶ 再生', () => { this.player.toggle(); this.playerPanel.redraw(); this.osdPanel.redraw(); }),
       mk(3, 'fwd', '+10 秒', () => { this.player.seekBy(10); this.playerPanel.redraw(); }),
       mk(4, 'mute', this.player.muted ? '🔇 ミュート' : '🔊 音声', () => { this.player.toggleMute(); this.playerPanel.redraw(); }),
+      mk(5, 'slideshow', this.slideshow ? 'SS 停止' : 'SS 開始',
+        () => this._toggleSlideshow(),
+        !this._canSlideshow()),
     ];
 
     for (const r of regions) drawButton(ctx, r, this.playerPanel, { fontSize: 30 });
     this.playerPanel.setRegions(regions);
+  }
+
+  // -------------------------------------------------------------------------
+  // Slideshow (flat videos, Phase 2)
+  // -------------------------------------------------------------------------
+
+  /** SS needs a funscript (switch points) and a configured folder. */
+  _canSlideshow() {
+    const v = this.player.info;
+    return !!(v && v.hasFunscript);
+  }
+
+  async _toggleSlideshow() {
+    if (this.slideshow) {
+      this._disableSlideshow();
+      this.playerPanel.redraw();
+      this.osdPanel.redraw();
+      return;
+    }
+    await this._enableSlideshow();
+  }
+
+  async _enableSlideshow() {
+    const v = this.player.info;
+    if (!v) return;
+    try {
+      const cfgRes = await fetch('/api/remote/slideshow/config', { cache: 'no-store' });
+      if (!cfgRes.ok) throw new Error(`config ${cfgRes.status}`);
+      const cfg = await cfgRes.json();
+      if (!cfg.configured) {
+        this.toast = { text: 'スライドショーフォルダが未設定です。デスクトップで設定してください。', until: Date.now() + 5000 };
+        this.osdPanel.redraw();
+        return;
+      }
+      if (!cfg.folderExists) {
+        this.toast = { text: 'スライドショーフォルダが見つかりません。', until: Date.now() + 5000 };
+        this.osdPanel.redraw();
+        return;
+      }
+      const imgRes = await fetch('/api/remote/slideshow/images', { cache: 'no-store' });
+      if (!imgRes.ok) throw new Error(`images ${imgRes.status}`);
+      const listing = await imgRes.json();
+      if (!Array.isArray(listing.images) || !listing.images.length) {
+        this.toast = { text: 'スライドショーフォルダに画像がありません。', until: Date.now() + 5000 };
+        this.osdPanel.redraw();
+        return;
+      }
+      const actions = await this._fetchActions(v.scriptUrl);
+      if (!actions.length) {
+        this.toast = { text: 'FunScript にアクションがありません。', until: Date.now() + 5000 };
+        this.osdPanel.redraw();
+        return;
+      }
+
+      const model = new SlideshowModel({
+        canvasW: 1280,
+        canvasH: 720,
+        corner: cfg.corner,
+        sizeDenom: cfg.sizeDenom,
+        imageOrder: cfg.imageOrder,
+        transition: cfg.transition,
+        background: cfg.background,
+        preset: cfg.preset,
+        presets: cfg.presets,
+        imageUrls: listing.images.map((im) => im.url),
+        actions,
+      });
+      if (!model.switchTimes.length) {
+        this.toast = { text: 'FunScript から切替ポイントを作成できませんでした。', until: Date.now() + 5000 };
+        this.osdPanel.redraw();
+        return;
+      }
+
+      const renderer = new SlideshowRenderer({ width: 1280, height: 720 });
+      const texture = new THREE.CanvasTexture(renderer.canvas);
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.minFilter = THREE.LinearFilter;
+      texture.magFilter = THREE.LinearFilter;
+      this.slideshow = { model, renderer, texture };
+
+      // Prime the visible photo plus the next one before swapping screens.
+      const first = model.frame(this.player.currentTime);
+      renderer.loadImage(model.images, first.photoIndex);
+      renderer.loadImage(model.images, first.toIndex >= 0 ? first.toIndex : first.photoIndex);
+
+      this.screenMesh.material.map = texture;
+      this.screenMesh.material.needsUpdate = true;
+      this.playerPanel.redraw();
+      this.toast = { text: `スライドショー開始（${model.switchTimes.length} 切替・${model.images.length} 枚）`, until: Date.now() + 3500 };
+      this.osdPanel.redraw();
+    } catch {
+      this.toast = { text: 'スライドショーを開始できませんでした。', until: Date.now() + 5000 };
+      this.osdPanel.redraw();
+    }
+  }
+
+  _disableSlideshow() {
+    if (!this.slideshow) return;
+    this.slideshow.texture.dispose();
+    this.slideshow = null;
+    if (this.screenMesh) {
+      this.screenMesh.material.map = this.player.texture;
+      this.screenMesh.material.needsUpdate = true;
+    }
+  }
+
+  /** Funscript actions for a script URL (cached across videos). */
+  async _fetchActions(scriptUrl) {
+    if (!scriptUrl) return [];
+    const cached = this._ssScriptCache.get(scriptUrl);
+    if (cached) return cached;
+    const res = await fetch(scriptUrl, { cache: 'no-store' });
+    if (!res.ok) throw new Error(`script ${res.status}`);
+    const data = await res.json();
+    const actions = Array.isArray(data.actions) ? data.actions : [];
+    this._ssScriptCache.set(scriptUrl, actions);
+    return actions;
+  }
+
+  /** Re-composite the slideshow canvas from the current video time. */
+  _slideshowTick() {
+    const { model, renderer, texture } = this.slideshow;
+    const video = this.player.video;
+    const state = model.frame(this.player.currentTime, video.videoWidth, video.videoHeight);
+    renderer.render(state, model, video);
+    texture.needsUpdate = true;
+    // Keep the next switch's photo warm.
+    if (state.toIndex >= 0) renderer.loadImage(model.images, state.toIndex);
+    const nextSwitch = model.switchTimes.find((s) => s > this.player.currentTime);
+    if (nextSwitch !== undefined && nextSwitch - this.player.currentTime < 2) {
+      const upcoming = model.frame(Math.min(nextSwitch + 0.01, model.switchTimes[model.switchTimes.length - 1] + 1));
+      renderer.loadImage(model.images, upcoming.toIndex >= 0 ? upcoming.toIndex : upcoming.photoIndex);
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -482,6 +627,7 @@ class VrApp {
       this.sync.connected ? 'c' : '-',
       this.sync.script || '-',
       this.sync.devices.map((d) => d.label).join(','),
+      this.slideshow ? 'ss' : '-',
       this.toast ? this.toast.text : '',
       this.player.lastError || '',
     ].join('|');
@@ -519,7 +665,12 @@ class VrApp {
     ctx.font = `28px ${FONT}`;
     if (v) {
       ctx.fillStyle = '#c9d2e8';
-      ctx.fillText(`${formatTime(this.player.currentTime)} / ${formatTime(this.player.duration)}`, 40, 170);
+      const timeText = `${formatTime(this.player.currentTime)} / ${formatTime(this.player.duration)}`;
+      ctx.fillText(timeText, 40, 170);
+      if (this.slideshow) {
+        ctx.fillStyle = '#7ea2ff';
+        ctx.fillText('📷 スライドショー', 40 + ctx.measureText(timeText).width + 24, 170);
+      }
     }
     ctx.textAlign = 'right';
     let right = '';
