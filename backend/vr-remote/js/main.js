@@ -205,8 +205,9 @@ class VrApp {
     this.playerGroup = new THREE.Group();
 
     // Flat screen quad fed by the VideoTexture (VRScreen swaps in a
-    // head-centered sphere for equirect/fisheye modes — see vr-screen.js).
-    this.vrScreen = new VRScreen(this.player.texture);
+    // world-anchored surround sphere for equirect/fisheye modes — see
+    // vr-screen.js; the sphere rides on this world-fixed group).
+    this.vrScreen = new VRScreen(this.player.texture, this.playerGroup);
     this.screenMesh = this.vrScreen.quad;
     this.playerGroup.add(this.screenMesh);
 
@@ -272,6 +273,7 @@ class VrApp {
       this._updateHover();
       if (this.slideshow) this._slideshowTick();
       this._updateSubtitle();
+      if (this.vrScreen) this.vrScreen.recenter(this.renderer);
       if (this.toast && Date.now() > this.toast.until) {
         this.toast = null;
         if (this._osdShown) this.osdPanel.redraw();
@@ -412,7 +414,7 @@ class VrApp {
     // filename-derived vrFormat (see vr_api / vr-mode.js).
     this.vrOverride = 'auto';
     this.vrMode = resolveVRMode(video, this.vrOverride);
-    this.vrScreen.applyMode(this.camera, this.vrMode);
+    this.vrScreen.applyMode(this.renderer, this.vrMode);
     if (this.vrMode.projection !== 'flat') {
       this.toast = { text: `VR 投影: ${modeLabel(this.vrMode)}`, until: Date.now() + 4000 };
     }
@@ -437,7 +439,7 @@ class VrApp {
     // new mode is not flat, stop the slideshow first (restores video frame).
     if (this.slideshow) this._disableSlideshow();
     this.vrMode = resolveVRMode(video, this.vrOverride);
-    this.vrScreen.applyMode(this.camera, this.vrMode);
+    this.vrScreen.applyMode(this.renderer, this.vrMode);
     this.toast = { text: `投影: ${modeLabel(this.vrMode)}`, until: Date.now() + 3500 };
     this.playerPanel.redraw();
     this.osdPanel.redraw();
@@ -467,7 +469,7 @@ class VrApp {
   _closePlayback(toastText) {
     this._disableSlideshow();
     // Tear the surround sphere down so nothing hangs around in library mode.
-    if (this.vrScreen) this.vrScreen.applyMode(this.camera, { projection: 'flat', stereo: 'mono', fovDeg: 0 });
+    if (this.vrScreen) this.vrScreen.applyMode(this.renderer, { projection: 'flat', stereo: 'mono', fovDeg: 0 });
     this.vrMode = null;
     this._cues = [];
     this._cueSig = '';
