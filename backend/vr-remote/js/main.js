@@ -56,6 +56,12 @@ class VrApp {
 
     this.mode = 'library';
     this.library = new LibraryModel();
+    // Panel-fit paging: rows paint from y=150 at 72 px each, so 9 rows end
+    // at y=788 — clear of the toast strip drawn at H-128 and the paging
+    // buttons at H-96. (The model default of 12 overflowed the 960 px
+    // canvas, which is why the "N 本のビデオを読み込みました" toast landed
+    // on top of a video row.)
+    this.library.pageSize = 9;
     this.libraryPanel = null;
     this.playerPanel = null;
     this.subtitlePanel = null; // world-anchored subtitle quad (Phase 3)
