@@ -697,10 +697,24 @@ class VrApp {
 
     // Info strip: everything the retired head-attached OSD used to show.
     const v = this.player.info;
+
+    // Sync-status chip first (right-aligned): measuring it lets the title
+    // fit into whatever width is left, so long file names no longer run
+    // underneath the status text.
+    const st = this._syncStatus();
+    let stText = st.text;
+    if (this.sync.script) stText = `${stText} • ${this.sync.script}`;
+    ctx.font = `24px ${FONT}`;
+    const stShown = ellipsize(ctx, stText, 480);
+    ctx.textAlign = 'right';
+    ctx.fillStyle = st.color;
+    ctx.fillText(stShown, W - 40, 46);
+    const stW = ctx.measureText(stShown).width;
+
     ctx.textAlign = 'left';
     ctx.fillStyle = '#e8ecf8';
     ctx.font = `600 30px ${FONT}`;
-    ctx.fillText(ellipsize(ctx, v ? String(v.name || '') : 'FunSync VR', W - 480), 40, 46);
+    ctx.fillText(ellipsize(ctx, v ? String(v.name || '') : 'FunSync VR', W - 140 - stW), 40, 46);
 
     ctx.font = `24px ${FONT}`;
     ctx.fillStyle = '#c9d2e8';
@@ -717,13 +731,6 @@ class VrApp {
       ctx.fillStyle = '#7ea2ff';
       ctx.fillText('📷 スライドショー', metaX, 92);
     }
-
-    const st = this._syncStatus();
-    let stText = st.text;
-    if (this.sync.script) stText = `${stText} • ${this.sync.script}`;
-    ctx.textAlign = 'right';
-    ctx.fillStyle = st.color;
-    ctx.fillText(ellipsize(ctx, stText, W - 480), W - 40, 46);
 
     const playing = !this.player.paused;
     const bw = 152;
