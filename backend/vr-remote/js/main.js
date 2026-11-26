@@ -51,7 +51,6 @@ class VrApp {
     this.library = new LibraryModel();
     this.libraryPanel = null;
     this.playerPanel = null;
-    this.osdPanel = null;
     this.subtitlePanel = null; // head-attached subtitle quad (Phase 3)
     this.screenMesh = null;
     this.vrScreen = null; // VRScreen wrapper (quad + optional sphere)
@@ -76,13 +75,12 @@ class VrApp {
     this._ssScriptCache = new Map(); // scriptUrl → actions[]
     this.toast = null; // { text, until }
     this._hover = null; // { controller, mesh, uv, distance }
-    this._osdSig = '';
+    this._playerSig = ''; // player-panel refresh gate (see _playerSignature)
     this._raycaster = new THREE.Raycaster();
     this._tmpMatrix = new THREE.Matrix4();
     this._origin = new THREE.Vector3();
     this._dir = new THREE.Vector3();
-    this._frameError = null; // first frame-loop exception, surfaced on the OSD
-    this._osdShown = true; // head-attached OSD visibility gate (see _updateOsdVisibility)
+    this._frameError = null; // first frame-loop exception, surfaced on the visible panel
   }
 
   // -------------------------------------------------------------------------
@@ -147,12 +145,11 @@ class VrApp {
 
       this._buildLibraryPanel();
       this._buildPlayerRig();
-      this._buildOsd();
+      this._buildSubtitlePanel();
       this._buildControllers();
 
       this.mode = 'library';
       this._frameError = null;
-      this._osdShown = true; // fresh mesh defaults visible; toast keeps it up, loop hides it later
       this.toast = { text: 'コントローラーをパネルに向けてトリガーで選択します', until: Date.now() + 6000 };
       this._refreshLibrary(true);
 
@@ -211,7 +208,7 @@ class VrApp {
     this.screenMesh = this.vrScreen.quad;
     this.playerGroup.add(this.screenMesh);
 
-    this.playerPanel = new UIPanel({ worldWidth: 2.2, pixelWidth: 1200, pixelHeight: 220 });
+    this.playerPanel = new UIPanel({ worldWidth: 2.2, pixelWidth: 1200, pixelHeight: 300 });
     this.playerPanel.mesh.position.set(0, 0.72, -2.35);
     this.playerPanel.mesh.rotation.x = 0.25; // tilt up toward the hands
     this.playerPanel.setDraw(() => this._drawPlayerControls());
@@ -221,13 +218,7 @@ class VrApp {
     this.scene.add(this.playerGroup);
   }
 
-  _buildOsd() {
-    // Head-attached: parented to the camera, so it drifts with the gaze.
-    this.osdPanel = new UIPanel({ worldWidth: 0.62, pixelWidth: 1024, pixelHeight: 256 });
-    this.osdPanel.mesh.position.set(0, -0.22, -0.8);
-    this.osdPanel.setDraw(() => this._drawOsd());
-    this.camera.add(this.osdPanel.mesh);
-
+  _buildSubtitlePanel() {
     // Subtitles sit lower and further out so they read like burned-in
     // captions near the bottom of the visual field.
     this.subtitlePanel = new UIPanel({ worldWidth: 0.9, pixelWidth: 1280, pixelHeight: 192 });
@@ -265,7 +256,7 @@ class VrApp {
   }
 
   // -------------------------------------------------------------------------
-  // Frame loop: hover raycast + OSD refresh
+  // Frame loop: hover raycast + player panel status refresh
   // -------------------------------------------------------------------------
 
   _frame() {
@@ -276,23 +267,26 @@ class VrApp {
       if (this.vrScreen) this.vrScreen.recenter(this.renderer);
       if (this.toast && Date.now() > this.toast.until) {
         this.toast = null;
-        if (this._osdShown) this.osdPanel.redraw();
+        this._redrawActivePanel();
       }
-      this._updateOsdVisibility();
-      if (this._osdShown) {
-        const sig = this._osdSignature();
-        if (sig !== this._osdSig) {
-          this._osdSig = sig;
-          this.osdPanel.redraw();
+      if (this.mode === 'player') {
+        // The player panel carries everything the retired head-attached OSD
+        // did (title, time, sync status, projection, toasts): refresh it
+        // whenever anything it shows changes.
+        const sig = this._playerSignature();
+        if (sig !== this._playerSig) {
+          this._playerSig = sig;
+          this.playerPanel.redraw();
         }
       }
     } catch (err) {
       // An exception inside the XR loop otherwise freezes the headset view
       // with zero diagnostics (the last submitted frame just persists).
-      // Keep the loop alive and surface the first failure on the OSD.
+      // Keep the loop alive and surface the first failure on the visible panel.
       if (!this._frameError) {
         this._frameError = `内部エラー: ${err && err.message ? err.message : err}`;
         console.error('[FunSync VR] frame error', err);
+        this._redrawActivePanel();
       }
     }
     try {
@@ -301,6 +295,7 @@ class VrApp {
       if (!this._frameError) {
         this._frameError = `描画エラー: ${err && err.message ? err.message : err}`;
         console.error('[FunSync VR] render error', err);
+        this._redrawActivePanel();
       }
     }
   }
@@ -377,7 +372,6 @@ class VrApp {
     } else if (hit.object === this.screenMesh || (this.vrScreen && hit.object === this.vrScreen.sphere)) {
       this.player.toggle();
       this.playerPanel.redraw();
-      this.osdPanel.redraw();
     }
   }
 
@@ -427,7 +421,6 @@ class VrApp {
 
     this.player.open(video);
     this.playerPanel.redraw();
-    this.osdPanel.redraw();
   }
 
   /** Cycle the manual projection override (auto → flat → eq-sbs → ...). */
@@ -442,7 +435,6 @@ class VrApp {
     this.vrScreen.applyMode(this.renderer, this.vrMode);
     this.toast = { text: `投影: ${modeLabel(this.vrMode)}`, until: Date.now() + 3500 };
     this.playerPanel.redraw();
-    this.osdPanel.redraw();
   }
 
   async _loadSubtitles(video) {
@@ -462,7 +454,7 @@ class VrApp {
         this._cues = cues;
       }
     } catch {
-      // No captions is survivable; keep the OSD clean.
+      // No captions is survivable; playback continues silently.
     }
   }
 
@@ -481,7 +473,6 @@ class VrApp {
     this.libraryGroup.visible = true;
     if (toastText) this.toast = { text: toastText, until: Date.now() + 5000 };
     this._redrawLibrary();
-    this.osdPanel.redraw();
   }
 
   _drawLibrary() {
@@ -559,6 +550,17 @@ class VrApp {
       ctx.fillText('ビデオが見つかりません。デスクトップでライブラリをスキャンしてください。', 56, startY + 40);
     }
 
+    // Status line: toasts and frame errors surface here in library mode
+    // (the head-attached OSD is gone; every message rides on the open panel).
+    const message = this._frameError || (this.toast ? this.toast.text : '');
+    if (message) {
+      ctx.textAlign = 'center';
+      ctx.fillStyle = this._frameError ? '#ff5d5d' : '#ffd76a';
+      ctx.font = `600 28px ${FONT}`;
+      ctx.fillText(ellipsize(ctx, message, W - 420), W / 2, H - 128);
+      ctx.textAlign = 'left';
+    }
+
     // Paging buttons last so they paint over rows and win overlapping hits.
     regions.push({ x: 32, y: H - 96, w: 140, h: 64, id: 'prev', label: '◀ 前',
       disabled: view.page === 0,
@@ -584,19 +586,51 @@ class VrApp {
     const H = this.playerPanel.pixelHeight;
     drawPanelBackground(ctx, W, H);
 
+    ctx.textBaseline = 'middle';
+
+    // Info strip: everything the retired head-attached OSD used to show.
+    const v = this.player.info;
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#e8ecf8';
+    ctx.font = `600 30px ${FONT}`;
+    ctx.fillText(ellipsize(ctx, v ? String(v.name || '') : 'FunSync VR', W - 480), 40, 46);
+
+    ctx.font = `24px ${FONT}`;
+    ctx.fillStyle = '#c9d2e8';
+    const timeText = `${formatTime(this.player.currentTime)} / ${formatTime(this.player.duration)}`;
+    ctx.fillText(timeText, 40, 92);
+    let metaX = 40 + ctx.measureText(timeText).width + 24;
+    if (this.vrMode && this.vrMode.projection !== 'flat') {
+      ctx.fillStyle = '#7ea2ff';
+      const proj = modeLabel(this.vrMode);
+      ctx.fillText(proj, metaX, 92);
+      metaX += ctx.measureText(proj).width + 24;
+    }
+    if (this.slideshow) {
+      ctx.fillStyle = '#7ea2ff';
+      ctx.fillText('📷 スライドショー', metaX, 92);
+    }
+
+    const st = this._syncStatus();
+    let stText = st.text;
+    if (this.sync.script) stText = `${stText} • ${this.sync.script}`;
+    ctx.textAlign = 'right';
+    ctx.fillStyle = st.color;
+    ctx.fillText(ellipsize(ctx, stText, W - 480), W - 40, 46);
+
     const playing = !this.player.paused;
     const bw = 152;
     const bh = 120;
     const gap = 10;
     const total = bw * 7 + gap * 6;
     const x0 = (W - total) / 2;
-    const y0 = (H - bh) / 2;
+    const y0 = 130;
 
     const mk = (i, id, label, onClick, disabled) => ({ x: x0 + i * (bw + gap), y: y0, w: bw, h: bh, id, label, onClick, disabled });
     const regions = [
       mk(0, 'back', '◀ ライブラリ', () => this._closePlayback()),
       mk(1, 'rew', '-10 秒', () => { this.player.seekBy(-10); this.playerPanel.redraw(); }),
-      mk(2, 'playpause', playing ? '⏸ 一時停止' : '▶ 再生', () => { this.player.toggle(); this.playerPanel.redraw(); this.osdPanel.redraw(); }),
+      mk(2, 'playpause', playing ? '⏸ 一時停止' : '▶ 再生', () => { this.player.toggle(); this.playerPanel.redraw(); }),
       mk(3, 'fwd', '+10 秒', () => { this.player.seekBy(10); this.playerPanel.redraw(); }),
       mk(4, 'mute', this.player.muted ? '🔇 ミュート' : '🔊 音声', () => { this.player.toggleMute(); this.playerPanel.redraw(); }),
       mk(5, 'slideshow', this.slideshow ? 'SS 停止' : 'SS 開始',
@@ -608,6 +642,18 @@ class VrApp {
 
     for (const r of regions) drawButton(ctx, r, this.playerPanel, { fontSize: 30 });
     this.playerPanel.setRegions(regions);
+
+    // Error / toast strip along the bottom edge, only when there is something
+    // to say (frame errors outrank player errors, which outrank toasts).
+    const errText = this._frameError || this.player.lastError;
+    const message = errText || (this.toast ? this.toast.text : '');
+    if (message) {
+      ctx.textAlign = 'center';
+      ctx.fillStyle = errText ? '#ff5d5d' : '#ffd76a';
+      ctx.font = `600 26px ${FONT}`;
+      ctx.fillText(ellipsize(ctx, message, W - 120), W / 2, H - 24);
+      ctx.textAlign = 'left';
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -629,7 +675,6 @@ class VrApp {
     if (this.slideshow) {
       this._disableSlideshow();
       this.playerPanel.redraw();
-      this.osdPanel.redraw();
       return;
     }
     await this._enableSlideshow();
@@ -644,12 +689,12 @@ class VrApp {
       const cfg = await cfgRes.json();
       if (!cfg.configured) {
         this.toast = { text: 'スライドショーフォルダが未設定です。デスクトップで設定してください。', until: Date.now() + 5000 };
-        this.osdPanel.redraw();
+        this.playerPanel.redraw();
         return;
       }
       if (!cfg.folderExists) {
         this.toast = { text: 'スライドショーフォルダが見つかりません。', until: Date.now() + 5000 };
-        this.osdPanel.redraw();
+        this.playerPanel.redraw();
         return;
       }
       const imgRes = await fetch('/api/remote/slideshow/images', { cache: 'no-store' });
@@ -657,13 +702,13 @@ class VrApp {
       const listing = await imgRes.json();
       if (!Array.isArray(listing.images) || !listing.images.length) {
         this.toast = { text: 'スライドショーフォルダに画像がありません。', until: Date.now() + 5000 };
-        this.osdPanel.redraw();
+        this.playerPanel.redraw();
         return;
       }
       const actions = await this._fetchActions(v.scriptUrl);
       if (!actions.length) {
         this.toast = { text: 'FunScript にアクションがありません。', until: Date.now() + 5000 };
-        this.osdPanel.redraw();
+        this.playerPanel.redraw();
         return;
       }
 
@@ -682,7 +727,7 @@ class VrApp {
       });
       if (!model.switchTimes.length) {
         this.toast = { text: 'FunScript から切替ポイントを作成できませんでした。', until: Date.now() + 5000 };
-        this.osdPanel.redraw();
+        this.playerPanel.redraw();
         return;
       }
 
@@ -702,10 +747,9 @@ class VrApp {
       this.screenMesh.material.needsUpdate = true;
       this.playerPanel.redraw();
       this.toast = { text: `スライドショー開始（${model.switchTimes.length} 切替・${model.images.length} 枚）`, until: Date.now() + 3500 };
-      this.osdPanel.redraw();
     } catch {
       this.toast = { text: 'スライドショーを開始できませんでした。', until: Date.now() + 5000 };
-      this.osdPanel.redraw();
+      this.playerPanel.redraw();
     }
   }
 
@@ -801,7 +845,7 @@ class VrApp {
   }
 
   // -------------------------------------------------------------------------
-  // OSD (head-attached status)
+  // Sync status (drawn on the player panel / library footer)
   // -------------------------------------------------------------------------
 
   _onSyncMessage(msg) {
@@ -823,11 +867,11 @@ class VrApp {
       default:
         break;
     }
-    this.osdPanel.redraw();
+    this.playerPanel.redraw();
   }
 
   /**
-   * Right-hand OSD status, contextual per mode. In library mode there is no
+   * Sync status line, contextual per mode. In library mode there is no
    * sync socket at all, so a "not connected" warning there is misleading.
    * In player mode we distinguish: socket still opening → socket open but no
    * device-status relayed by the desktop app → device status confirmed.
@@ -850,29 +894,20 @@ class VrApp {
     return { text: '同期接続中…（単独再生中）', color: '#ff9d6a' };
   }
 
-  /**
-   * The OSD is head-attached, so leaving it up in library mode is a panel
-   * permanently floating in the user's face — the library panel itself
-   * already shows count/pagination. Keep it hidden there unless it has
-   * something to say (a toast or a frame error); in player mode it carries
-   * playback info, so it stays.
-   */
-  _updateOsdVisibility() {
-    const show = this.mode === 'player' || !!this._frameError || !!this.toast;
-    if (show === this._osdShown) return;
-    this._osdShown = show;
-    this.osdPanel.mesh.visible = show;
-    if (show) {
-      this._osdSig = this._osdSignature();
-      this.osdPanel.redraw();
-    }
+  /** Redraw whichever panel the user is currently looking at. */
+  _redrawActivePanel() {
+    const panel = this.mode === 'player' ? this.playerPanel : this.libraryPanel;
+    if (panel) panel.redraw();
   }
 
-  _osdSignature() {
+  /**
+   * Refresh gate for the player panel: it carries everything the retired
+   * head-attached OSD did (title, time, sync status, projection, toasts).
+   */
+  _playerSignature() {
     const v = this.player.info;
     return [
       v ? v.name : '',
-      this.mode,
       this.player.paused ? 'p' : 'r',
       formatTime(this.player.currentTime),
       formatTime(this.player.duration),
@@ -884,64 +919,6 @@ class VrApp {
       this.player.lastError || '',
       this._frameError || '',
     ].join('|');
-  }
-
-  _drawOsd() {
-    const { ctx } = this.osdPanel;
-    const W = this.osdPanel.pixelWidth;
-    const H = this.osdPanel.pixelHeight;
-    drawPanelBackground(ctx, W, H, { fill: 'rgba(10, 12, 20, 0.78)' });
-
-    ctx.textBaseline = 'middle';
-    ctx.textAlign = 'left';
-    const v = this.player.info;
-
-    if (this._frameError) {
-      ctx.fillStyle = '#ff5d5d';
-      ctx.font = `600 34px ${FONT}`;
-      ctx.fillText(ellipsize(ctx, this._frameError, W - 80), 40, 70);
-    } else if (this.toast) {
-      ctx.fillStyle = '#ffd76a';
-      ctx.font = `600 34px ${FONT}`;
-      ctx.fillText(ellipsize(ctx, this.toast.text, W - 80), 40, 70);
-    } else if (this.player.lastError) {
-      ctx.fillStyle = '#ff7a7a';
-      ctx.font = `600 34px ${FONT}`;
-      ctx.fillText(ellipsize(ctx, this.player.lastError, W - 80), 40, 70);
-    } else if (v) {
-      ctx.fillStyle = '#e8ecf8';
-      ctx.font = `600 34px ${FONT}`;
-      ctx.fillText(ellipsize(ctx, String(v.name || ''), W - 80), 40, 60);
-    } else {
-      ctx.fillStyle = '#8b93ad';
-      ctx.font = `600 34px ${FONT}`;
-      ctx.fillText('FunSync VR', 40, 60);
-    }
-
-    // Bottom row: time + sync status.
-    ctx.font = `28px ${FONT}`;
-    if (v) {
-      ctx.fillStyle = '#c9d2e8';
-      const timeText = `${formatTime(this.player.currentTime)} / ${formatTime(this.player.duration)}`;
-      ctx.fillText(timeText, 40, 170);
-      let extraX = 40 + ctx.measureText(timeText).width + 24;
-      if (this.vrMode && this.vrMode.projection !== 'flat') {
-        ctx.fillStyle = '#7ea2ff';
-        const proj = modeLabel(this.vrMode);
-        ctx.fillText(proj, extraX, 170);
-        extraX += ctx.measureText(proj).width + 24;
-      }
-      if (this.slideshow) {
-        ctx.fillStyle = '#7ea2ff';
-        ctx.fillText('📷 スライドショー', extraX, 170);
-      }
-    }
-    ctx.textAlign = 'right';
-    const st = this._syncStatus();
-    let right = st.text;
-    if (this.sync.script) right = `${right} • ${this.sync.script}`;
-    ctx.fillStyle = st.color;
-    ctx.fillText(ellipsize(ctx, right, W - 80), W - 40, 170);
   }
 }
 
