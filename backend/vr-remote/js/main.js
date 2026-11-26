@@ -279,6 +279,13 @@ class VrApp {
         this._redrawActivePanel();
       }
       if (this.mode === 'player') {
+        if (this.player.policyMuted) {
+          // play() had to fall back to muted (autoplay policy): tell the
+          // user where the unmute button is while the panel is still up.
+          this.player.policyMuted = false;
+          this.toast = { text: '音声を開始できなかったためミュートにしました。パネルの 🔇 で解除できます', until: Date.now() + 5000 };
+          this._redrawActivePanel();
+        }
         // The player panel carries everything the retired head-attached OSD
         // did (title, time, sync status, projection, toasts): refresh it
         // whenever anything it shows changes.
@@ -957,6 +964,7 @@ class VrApp {
       this.vrMode ? `${this.vrMode.projection}/${this.vrMode.stereo}` : '-',
       this.toast ? this.toast.text : '',
       this.player.lastError || '',
+      this.player.muted ? 'muted' : 'sound',
       this._frameError || '',
     ].join('|');
   }

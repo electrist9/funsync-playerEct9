@@ -10,9 +10,11 @@
  * existing phone-as-controller protocol, unchanged.
  *
  * Autoplay caveat: a WebXR controller "select" does not reliably count as
- * DOM user activation, so we always START muted (autoplay-safe) and let the
- * unmute button call play() again in the select handler; if the browser
- * rejects it we fall back to muted rather than stalling playback.
+ * DOM user activation, so we START with sound on (the Quest Browser has
+ * plenty of engagement once VR was entered) and rely on play() rejecting
+ * with NotAllowedError in the rare stricter case: the catch below then
+ * retries muted rather than stalling on a still frame. The panel button
+ * shows 🔇 ミュート whenever we ended up muted.
  */
 
 import * as THREE from '../vendor/three/three.module.js';
@@ -28,7 +30,7 @@ export class VideoPlayer {
     this.video = document.createElement('video');
     this.video.playsInline = true;
     this.video.preload = 'auto';
-    this.video.muted = true; // autoplay-safe start; unmute is an explicit action
+    this.video.muted = false; // start with sound; play() falls back to muted if blocked
 
     this.texture = new THREE.VideoTexture(this.video);
     this.texture.colorSpace = THREE.SRGBColorSpace;
@@ -38,6 +40,7 @@ export class VideoPlayer {
     this.info = null;      // current video record from /api/remote/videos
     this.sync = null;
     this.lastError = null;
+    this.policyMuted = false; // set when autoplay policy forced a muted start
     this.wsConnected = false; // sync socket open (device drive also needs the desktop app)
 
     this._onServerMessage = onServerMessage || (() => {});
@@ -58,6 +61,7 @@ export class VideoPlayer {
     this.close();
     this.info = videoRecord;
     this.lastError = null;
+    this.policyMuted = false;
     this.video.src = videoRecord.streamUrl || '';
     this.video.load();
 
@@ -84,6 +88,7 @@ export class VideoPlayer {
         // headset keeps playing rather than freezing on a still frame.
         if (!this.video.muted) {
           this.video.muted = true;
+          this.policyMuted = true; // autoplay policy blocked sound; main.js surfaces a toast
           const retry = this.video.play();
           if (retry && typeof retry.catch === 'function') {
             retry.catch(() => { this.lastError = '再生を再開できません'; });
@@ -106,6 +111,7 @@ export class VideoPlayer {
   /** Toggle audio; called from a controller select, which may double as activation. */
   toggleMute() {
     this.video.muted = !this.video.muted;
+    this.policyMuted = false; // an explicit choice supersedes the policy hint
     if (!this.video.muted && this.video.paused) this.play();
   }
 
