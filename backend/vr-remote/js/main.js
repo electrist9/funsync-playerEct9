@@ -165,11 +165,15 @@ class VrApp {
       this.camera = new THREE.PerspectiveCamera(70, 1, 0.05, 100);
       this.scene.add(this.camera);
 
-      // Soft floor grid for spatial grounding.
-      const grid = new THREE.GridHelper(12, 24, 0x2a3050, 0x171c2c);
-      grid.material.transparent = true;
-      grid.material.opacity = 0.5;
-      this.scene.add(grid);
+      // Soft floor grid for spatial grounding. Hidden whenever the
+      // surround sphere is up: the grid lies INSIDE the 8 m sphere (its
+      // plane crosses the room around the viewer), so it would otherwise
+      // blend over the video's lower half — the "the footage looks
+      // see-through, I can see the grid" artifact.
+      this.grid = new THREE.GridHelper(12, 24, 0x2a3050, 0x171c2c);
+      this.grid.material.transparent = true;
+      this.grid.material.opacity = 0.5;
+      this.scene.add(this.grid);
 
       this._buildLibraryPanel();
       this._buildPlayerRig();
@@ -512,6 +516,7 @@ class VrApp {
     this.vrOverride = 'auto';
     this.vrMode = resolveVRMode(video, this.vrOverride);
     this.vrScreen.applyMode(this.renderer, this.vrMode);
+    this._updateGridVisibility();
     if (this.vrMode.projection !== 'flat') {
       this.toast = { text: `VR 投影: ${modeLabel(this.vrMode)}`, until: Date.now() + 3000 };
     }
@@ -540,8 +545,18 @@ class VrApp {
     if (this.slideshow) this._disableSlideshow();
     this.vrMode = resolveVRMode(video, this.vrOverride);
     this.vrScreen.applyMode(this.renderer, this.vrMode);
+    this._updateGridVisibility();
     this.toast = { text: `投影: ${modeLabel(this.vrMode)}`, until: Date.now() + 3500 };
     this.playerPanel.redraw();
+  }
+
+  /**
+   * The floor grid only grounds the empty room — a surround sphere already
+   * encloses the viewer, and the grid plane would slice through its
+   * interior and show over the video.
+   */
+  _updateGridVisibility() {
+    if (this.grid) this.grid.visible = !(this.vrScreen && this.vrScreen.sphere);
   }
 
   async _loadSubtitles(video) {
@@ -569,6 +584,7 @@ class VrApp {
     this._disableSlideshow();
     // Tear the surround sphere down so nothing hangs around in library mode.
     if (this.vrScreen) this.vrScreen.applyMode(this.renderer, { projection: 'flat', stereo: 'mono', fovDeg: 0 });
+    this._updateGridVisibility();
     this.vrMode = null;
     this._cues = [];
     this._cueSig = '';
