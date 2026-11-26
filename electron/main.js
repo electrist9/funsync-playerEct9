@@ -513,11 +513,40 @@ app.on('will-quit', () => {
 process.on('uncaughtException', (err) => log.error('Uncaught exception:', err));
 process.on('unhandledRejection', (reason) => log.error('Unhandled rejection:', reason));
 
+// --- Backend TLS: accept OUR self-signed cert, nowhere else ---
+//
+// With settings.backend.tls on, uvicorn serves HTTPS using a cert this
+// app generates itself (backend/services/tls.py) — WebXR requires a
+// secure context. The renderer (and net.fetch below) talks to the
+// backend over https://127.0.0.1, and Chromium would refuse an untrusted
+// cert. Accept it ONLY for loopback hosts on the backend's own port;
+// every other origin keeps strict validation.
+app.on('certificate-error', (event, _webContents, url, _error, _certificate, callback) => {
+  try {
+    const u = new URL(url);
+    const host = u.hostname.replace(/^\[|\]$/g, '');
+    if ((host === '127.0.0.1' || host === 'localhost' || host === '::1')
+        && Number(u.port) === require('./python-bridge').getBackendPort()) {
+      event.preventDefault();
+      callback(true);
+      return;
+    }
+  } catch { /* malformed URL — keep the default rejection */ }
+  callback(false);
+});
+
 // --- IPC Handlers: App Info ---
 
 ipcMain.handle('get-backend-port', () => {
   const { getBackendPort } = require('./python-bridge');
   return getBackendPort();
+});
+
+// True when the backend serves HTTPS (--tls): the renderer builds
+// https/wss loopback URLs and shows the WebXR cert flow accordingly.
+ipcMain.handle('get-backend-tls', () => {
+  const { isBackendTls } = require('./python-bridge');
+  return isBackendTls();
 });
 
 // Backend health snapshot — used by the renderer banner on first paint
@@ -1008,16 +1037,41 @@ async function fetchWithTimeout(url, opts = {}, timeoutMs = 15000) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
-    return await fetch(url, { ...opts, signal: ctrl.signal });
+    return await _backendFetch(url, { ...opts, signal: ctrl.signal });
   } finally {
     clearTimeout(timer);
   }
 }
 
+/**
+ * 'https' when the backend runs with --tls (self-signed cert; WebXR
+ * needs a secure context), else 'http'. Every backend URL built in this
+ * file must follow it — a hardcoded http:// would hit the wrong scheme
+ * while TLS is on.
+ */
+function _backendScheme() {
+  return require('./python-bridge').isBackendTls() ? 'https' : 'http';
+}
+
+/**
+ * fetch() that also works against a TLS backend: Electron's net.fetch
+ * rides the Chromium network stack, where the certificate-error handler
+ * above accepts our self-signed loopback cert. Bare Node fetch (undici)
+ * does NOT consult that handler, so https backend calls must go through
+ * net.fetch; plain http keeps the normal path.
+ */
+function _backendFetch(url, opts) {
+  if (/^https:\/\/(127\.0\.0\.1|localhost)(:|\/)/.test(url)) {
+    const { net } = require('electron');
+    return net.fetch(url, opts);
+  }
+  return fetch(url, opts);
+}
+
 ipcMain.handle('fetch-metadata', async (_event, videoPath) => {
   const { getBackendPort } = require('./python-bridge');
   const port = getBackendPort();
-  const url = `http://localhost:${port}/metadata/?video_path=${encodeURIComponent(videoPath)}`;
+  const url = `${_backendScheme()}://localhost:${port}/metadata/?video_path=${encodeURIComponent(videoPath)}`;
   try {
     // 20s: ffprobe on very large / slow-disk files can take 5-10s; the
     // rest is network + JSON parse. Anything beyond this is a hung
@@ -1035,7 +1089,7 @@ ipcMain.handle('generate-thumbnails', async (_event, videoPath, interval) => {
   const { getBackendPort } = require('./python-bridge');
   const port = getBackendPort();
   const params = new URLSearchParams({ video_path: videoPath, interval: String(interval || 10) });
-  const url = `http://localhost:${port}/thumbnails/generate?${params}`;
+  const url = `${_backendScheme()}://localhost:${port}/thumbnails/generate?${params}`;
   try {
     // 60s: thumbnail generation on a long video can genuinely take
     // 10-30s of ffmpeg wall-time per pass. Hard ceiling at 60s to
@@ -1071,7 +1125,7 @@ ipcMain.handle('generate-single-thumbnail', async (_event, videoPath, opts = {})
     // minimum seek, both of which would silently change the frame.
     exact: String(!!opts.exact),
   });
-  const url = `http://localhost:${port}/thumbnails/single?${params}`;
+  const url = `${_backendScheme()}://localhost:${port}/thumbnails/single?${params}`;
   try {
     // 15s: a single fast-seek thumbnail is ~50-500ms; ceiling protects
     // against a hung ffmpeg.
@@ -1099,7 +1153,7 @@ ipcMain.handle('generate-single-thumbnail', async (_event, videoPath, opts = {})
 ipcMain.handle('remux-video', async (_event, videoPath) => {
   const { getBackendPort } = require('./python-bridge');
   const port = getBackendPort();
-  const url = `http://localhost:${port}/api/media/remux?video_path=${encodeURIComponent(videoPath)}`;
+  const url = `${_backendScheme()}://localhost:${port}/api/media/remux?video_path=${encodeURIComponent(videoPath)}`;
   try {
     // 10 min ceiling: stream-copy is normally seconds, but a multi-GB file
     // on slow/NAS storage plus an audio transcode can run long. This blocks
@@ -1128,7 +1182,7 @@ ipcMain.handle('remux-video', async (_event, videoPath) => {
 ipcMain.handle('resolve-remote-video', async (_event, pageUrl) => {
   const { getBackendPort } = require('./python-bridge');
   const port = getBackendPort();
-  const url = `http://localhost:${port}/api/media/resolve?url=${encodeURIComponent(pageUrl)}`;
+  const url = `${_backendScheme()}://localhost:${port}/api/media/resolve?url=${encodeURIComponent(pageUrl)}`;
   try {
     // yt-dlp extraction can take a few seconds (network + site parsing).
     const resp = await fetchWithTimeout(url, { method: 'POST' }, 90000);
@@ -1139,7 +1193,7 @@ ipcMain.handle('resolve-remote-video', async (_event, pageUrl) => {
       return { ok: false, kind, message: body?.detail?.message || '' };
     }
     log.info(`[Remote] resolved ${pageUrl} → ${body.isHls ? 'HLS' : 'progressive'} "${body.title}"`);
-    return { ok: true, ...body, proxyUrl: `http://localhost:${port}${body.proxyUrl}` };
+    return { ok: true, ...body, proxyUrl: `${_backendScheme()}://localhost:${port}${body.proxyUrl}` };
   } catch (err) {
     log.warn(`[Remote] resolve error for ${pageUrl}: ${err.message}`);
     return { ok: false, kind: 'error', message: err.message };
@@ -1600,8 +1654,9 @@ ipcMain.handle('scan-directory', async (_event, dirPathOrPaths, sourceMap) => {
   // Register videos with backend for VR content server (fire-and-forget)
   try {
     const { app } = require('electron');
+    const { getBackendPort } = require('./python-bridge');
     const thumbDir = path.join(app.getPath('userData'), 'thumb-cache');
-    fetch('http://127.0.0.1:5123/api/media/register', {
+    _backendFetch(`${_backendScheme()}://127.0.0.1:${getBackendPort()}/api/media/register`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ videos, thumbCacheDir: thumbDir }),
@@ -1868,7 +1923,7 @@ ipcMain.handle('write-funscript', async (_event, content, filePath) => {
 ipcMain.handle('get-speed-stats', async () => {
   const { getBackendPort } = require('./python-bridge');
   const port = getBackendPort();
-  const url = `http://localhost:${port}/api/media/speed-stats`;
+  const url = `${_backendScheme()}://localhost:${port}/api/media/speed-stats`;
   try {
     const resp = await fetchWithTimeout(url, {}, 5000);
     if (!resp.ok) throw new Error(`Backend returned ${resp.status}`);
@@ -1890,7 +1945,7 @@ ipcMain.handle('get-speed-stats', async () => {
 ipcMain.handle('get-durations', async () => {
   const { getBackendPort } = require('./python-bridge');
   const port = getBackendPort();
-  const url = `http://localhost:${port}/api/media/durations`;
+  const url = `${_backendScheme()}://localhost:${port}/api/media/durations`;
   try {
     const resp = await fetchWithTimeout(url, {}, 5000);
     if (!resp.ok) throw new Error(`Backend returned ${resp.status}`);
@@ -1904,7 +1959,7 @@ ipcMain.handle('get-durations', async () => {
 ipcMain.handle('convert-funscript', async (_event, funscriptContent) => {
   const { getBackendPort } = require('./python-bridge');
   const port = getBackendPort();
-  const url = `http://localhost:${port}/scripts/convert`;
+  const url = `${_backendScheme()}://localhost:${port}/scripts/convert`;
   try {
     // 15s: conversion is pure CPU / JSON; anything over this is a hang.
     const resp = await fetchWithTimeout(url, {

@@ -5,6 +5,7 @@
 
 import { Modal } from './modal.js';
 import { t } from '../js/i18n.js';
+import { httpUrl } from '../js/backend-url.js';
 
 /**
  * @param {object} opts
@@ -82,11 +83,15 @@ export async function openWebRemoteModal({ settings } = {}) {
 
 async function _populate(urlInput, qrWrap, port) {
   let ip = null;
+  let scheme = 'http';
   try {
-    const res = await fetch(`http://127.0.0.1:${port}/network-info`);
+    const res = await fetch(httpUrl(port, '/network-info'));
     if (res.ok) {
       const data = await res.json();
       ip = data.ip || '127.0.0.1';
+      // Authoritative for the LAN-facing URL: the backend reports the
+      // scheme it is actually serving ('https' when --tls is on).
+      scheme = data.scheme === 'https' ? 'https' : 'http';
     }
   } catch { /* backend down */ }
 
@@ -96,7 +101,7 @@ async function _populate(urlInput, qrWrap, port) {
     return;
   }
 
-  const url = `http://${ip}:${port}/remote/`;
+  const url = `${scheme}://${ip}:${port}/remote/`;
   urlInput.value = url;
   try {
     const mod = await import('../../node_modules/qrcode-generator/dist/qrcode.mjs');

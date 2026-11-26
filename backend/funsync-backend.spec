@@ -23,6 +23,9 @@ a = Analysis(
     # backend/.
     datas=[
         ('web-remote', 'web-remote'),
+        ('vr-remote', 'vr-remote'),
+        ('../renderer/js/slideshow-timing.js', 'shared-js'),
+        ('../renderer/js/slideshow-color.js', 'shared-js'),
         ('../renderer/locales', 'locales'),
     ],
     hiddenimports=[

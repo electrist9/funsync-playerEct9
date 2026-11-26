@@ -50,6 +50,10 @@ def _resolve_video_path(video_id):
 _active_phone: WebSocket | None = None
 _active_phone_ip: str | None = None
 _active_phone_video_id: str | None = None
+# "vr" when the phone slot is held by the WebXR headset client, else None
+# (plain 2D remote). Purely informational — protocol and arbitration are
+# identical either way, it only surfaces in observer payloads / logs.
+_active_phone_client_kind: str | None = None
 _last_state: dict | None = None  # last `state` event for observer catch-up
 
 _observer: WebSocket | None = None
@@ -93,11 +97,15 @@ async def _notify_observer(payload: dict) -> None:
 @router.websocket("/sync")
 async def phone_sync(ws: WebSocket) -> None:
     """Phone controller endpoint. Last-wins arbitration for multiple phones."""
-    global _active_phone, _active_phone_ip, _active_phone_video_id, _last_state
+    global _active_phone, _active_phone_ip, _active_phone_video_id
+    global _active_phone_client_kind, _last_state
 
     await ws.accept()
     client_ip = ws.client.host if ws.client else "unknown"
     query_video_id = ws.query_params.get("videoId")
+    # Optional hint that this socket is the VR (WebXR) client rather than a
+    # plain 2D phone. Anything other than "vr" is treated as a phone.
+    client_kind = "vr" if ws.query_params.get("clientKind") == "vr" else None
 
     # --- Kick an existing phone (last-wins) ---
     if _active_phone is not None and _active_phone is not ws:
@@ -117,6 +125,7 @@ async def phone_sync(ws: WebSocket) -> None:
     _active_phone = ws
     _active_phone_ip = client_ip
     _active_phone_video_id = query_video_id
+    _active_phone_client_kind = client_kind
     _last_state = None
 
     await _notify_observer({
@@ -124,8 +133,12 @@ async def phone_sync(ws: WebSocket) -> None:
         "ip": client_ip,
         "videoId": query_video_id,
         "videoPath": _resolve_video_path(query_video_id),
+        "clientKind": client_kind,
     })
-    log.info("[remote] Phone connected from %s (videoId=%s)", client_ip, query_video_id)
+    log.info(
+        "[remote] Phone connected from %s (videoId=%s, kind=%s)",
+        client_ip, query_video_id, client_kind or "phone",
+    )
 
     try:
         while True:
@@ -143,6 +156,9 @@ async def phone_sync(ws: WebSocket) -> None:
             # Capture / update context
             if msg_type == "hello" and msg.get("videoId"):
                 _active_phone_video_id = msg["videoId"]
+            if msg_type == "hello" and msg.get("clientKind") == "vr":
+                # hello payload is an alternative to the query-param hint.
+                _active_phone_client_kind = "vr"
             if msg_type == "state":
                 _last_state = msg  # cache for late observer connects
 
@@ -171,6 +187,7 @@ async def phone_sync(ws: WebSocket) -> None:
             _active_phone = None
             _active_phone_ip = None
             _active_phone_video_id = None
+            _active_phone_client_kind = None
             _last_state = None
             await _notify_observer({"type": "phone-disconnected", "ip": departing_ip})
             log.info("[remote] Phone disconnected: %s", departing_ip)
@@ -209,6 +226,7 @@ async def observer_sync(ws: WebSocket) -> None:
             "ip": _active_phone_ip,
             "videoId": _active_phone_video_id,
             "videoPath": _resolve_video_path(_active_phone_video_id),
+            "clientKind": _active_phone_client_kind,
         })
         if _last_state:
             await _safe_send(ws, {
@@ -246,10 +264,11 @@ async def observer_sync(ws: WebSocket) -> None:
 def _reset_state_for_tests() -> None:
     """Reset module state between tests. Not part of the public API."""
     global _active_phone, _active_phone_ip, _active_phone_video_id
-    global _last_state, _observer
+    global _active_phone_client_kind, _last_state, _observer
     _active_phone = None
     _active_phone_ip = None
     _active_phone_video_id = None
+    _active_phone_client_kind = None
     _last_state = None
     _observer = None
 
@@ -260,6 +279,7 @@ def _get_state_for_tests() -> dict:
         "has_phone": _active_phone is not None,
         "phone_ip": _active_phone_ip,
         "phone_video_id": _active_phone_video_id,
+        "phone_client_kind": _active_phone_client_kind,
         "has_observer": _observer is not None,
         "last_state": _last_state,
     }

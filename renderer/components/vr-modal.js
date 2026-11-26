@@ -25,6 +25,7 @@
 
 import { Modal } from './modal.js';
 import { t } from '../js/i18n.js';
+import { httpUrl, setBackendTls } from '../js/backend-url.js';
 
 /**
  * @param {object} opts
@@ -187,6 +188,52 @@ function _template() {
         </p>
       </div>
     </section>
+
+    <section class="vr-modal__section" aria-labelledby="vr-modal-webxr-h">
+      <h2 class="vr-modal__section-header" id="vr-modal-webxr-h">
+        <span class="vr-modal__section-num" aria-hidden="true">3</span>
+        ${t('vrModal.webxrHeader')}
+      </h2>
+      <p class="vr-modal__section-intro">
+        ${t('vrModal.webxrIntro')}
+      </p>
+
+      <p class="vr-modal__subnet-warning" id="webxr-tls-warning" role="alert" hidden>
+        ${t('vrModal.webxrTlsWarning')}
+      </p>
+
+      <div class="connection-panel__setting-row vr-modal__url-row">
+        <label class="connection-panel__setting-label" for="webxr-url">${t('vrModal.webxrUrlLabel')}</label>
+        <input type="text" id="webxr-url" class="connection-panel__input vr-modal__url-input" readonly aria-describedby="webxr-url-hint">
+        <button id="webxr-setup-info-btn" class="vr-modal__info-btn" type="button"
+                aria-controls="webxr-setup-info" aria-expanded="false"
+                aria-label="${t('vrModal.webxrToggleAria')}" title="${t('vrModal.webxrToggleTitle')}">i</button>
+      </div>
+      <p class="vr-modal__hint" id="webxr-url-hint">
+        ${t('vrModal.webxrUrlHint')}
+      </p>
+
+      <div class="vr-modal__qr" id="webxr-qr" aria-hidden="true"></div>
+
+      <div class="connection-panel__setting-row vr-modal__checkbox-row">
+        <input type="checkbox" id="webxr-tls-toggle" aria-describedby="webxr-tls-hint">
+        <label class="connection-panel__setting-label" for="webxr-tls-toggle">${t('vrModal.webxrTlsLabel')}</label>
+        <span class="connection-panel__setting-value vr-modal__restart-status" id="webxr-restart-status" hidden>${t('vrModal.webxrRestarting')}</span>
+      </div>
+      <p class="vr-modal__hint" id="webxr-tls-hint">
+        ${t('vrModal.webxrTlsHint')}
+      </p>
+
+      <div id="webxr-setup-info" class="vr-modal__setup-info" hidden>
+        <div class="vr-modal__setup-info-title">${t('vrModal.webxrSetupTitle')}</div>
+        <ol class="vr-modal__setup-info-list">
+          <li>${t('vrModal.webxrSetupStep1')}</li>
+          <li>${t('vrModal.webxrSetupStep2')}</li>
+          <li>${t('vrModal.webxrSetupStep3')}</li>
+          <li>${t('vrModal.webxrSetupStep4')}</li>
+        </ol>
+      </div>
+    </section>
   `;
 }
 
@@ -199,6 +246,10 @@ function _wire(root, { settings, vrBridge, port }) {
     pcIp = ip;
     _checkSubnet(root, pcIp, root.querySelector('#vr-host-input')?.value);
   });
+
+  // Section 3 — WebXR browser client (/vr/). Needs HTTPS on LAN addresses,
+  // so it also carries the backend.tls toggle (restarts the backend).
+  _wireWebxr(root, { settings, port });
 
   // Setup guide toggle — disclosure widget pattern. `aria-expanded` is
   // the source of truth for screen readers and the CSS `[aria-expanded="true"]`
@@ -374,12 +425,16 @@ async function _loadServerUrl(root, port) {
   const hsUrl = root.querySelector('#vr-server-hs-url');
   if (!hsUrl) return null;
   let ip = null;
+  let scheme = 'http';
   try {
-    const res = await fetch(`http://127.0.0.1:${port}/network-info`);
+    const res = await fetch(httpUrl(port, '/network-info'));
     if (res.ok) {
       const data = await res.json();
       ip = data.ip || '127.0.0.1';
-      hsUrl.value = `http://${ip}:${port}/heresphere`;
+      // 'https' when the backend was spawned with --tls (WebXR secure
+      // context); the URL we hand the headset must match its scheme.
+      scheme = data.scheme === 'https' ? 'https' : 'http';
+      hsUrl.value = `${scheme}://${ip}:${port}/heresphere`;
     } else {
       hsUrl.value = t('vrModal.backendNotRunning');
     }
@@ -388,6 +443,100 @@ async function _loadServerUrl(root, port) {
   }
   hsUrl.addEventListener('click', () => hsUrl.select());
   return ip;
+}
+
+
+// ── Section 3: WebXR browser client ───────────────────────────────────────
+//
+// The /vr/ client runs inside the headset's own browser (Quest Browser,
+// Wolvic), so setup is URL + QR like the phone remote — with one twist:
+// WebXR requires a secure context, which on LAN IPs means HTTPS. The
+// backend can be re-spawned with a self-signed cert (--tls); toggling
+// `backend.tls` here restarts it in place. `restartBackend()` re-reads
+// config.json, so no full app restart is needed.
+
+async function _wireWebxr(root, { settings, port }) {
+  const infoBtn = root.querySelector('#webxr-setup-info-btn');
+  const infoPanel = root.querySelector('#webxr-setup-info');
+  if (infoBtn && infoPanel) {
+    infoBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const open = infoPanel.hidden;
+      infoPanel.hidden = !open;
+      infoBtn.setAttribute('aria-expanded', String(open));
+    });
+  }
+
+  await _loadWebxr(root, port);
+
+  const urlInput = root.querySelector('#webxr-url');
+  if (urlInput) urlInput.addEventListener('click', () => urlInput.select());
+
+  const toggle = root.querySelector('#webxr-tls-toggle');
+  if (!toggle) return;
+  toggle.addEventListener('change', async () => {
+    const wanted = toggle.checked;
+    const status = root.querySelector('#webxr-restart-status');
+    toggle.disabled = true;
+    if (status) status.hidden = false;
+    try {
+      settings?.set?.('backend.tls', wanted);
+      // Keep our loopback helper in sync with what the backend is about
+      // to serve, then restart and wait for the new process to answer.
+      setBackendTls(wanted);
+      await window.funsync.restartBackend();
+      for (let i = 0; i < 20; i++) {
+        await new Promise((r) => setTimeout(r, 500));
+        if (document.body.contains(root) === false) return; // modal closed
+        try {
+          const res = await fetch(httpUrl(port, '/network-info'));
+          if (res.ok) break;
+        } catch { /* still coming up */ }
+      }
+    } finally {
+      if (document.body.contains(root)) {
+        toggle.disabled = false;
+        if (status) status.hidden = true;
+        await _loadWebxr(root, port);
+      }
+    }
+  });
+}
+
+async function _loadWebxr(root, port) {
+  const urlInput = root.querySelector('#webxr-url');
+  if (!urlInput) return;
+  const qrWrap = root.querySelector('#webxr-qr');
+  const warning = root.querySelector('#webxr-tls-warning');
+  const toggle = root.querySelector('#webxr-tls-toggle');
+  let data = null;
+  try {
+    const res = await fetch(httpUrl(port, '/network-info'));
+    if (res.ok) data = await res.json();
+  } catch { /* backend down */ }
+  if (!data) {
+    urlInput.value = t('vrModal.backendNotRunning');
+    if (qrWrap) qrWrap.innerHTML = '';
+    if (warning) warning.hidden = true;
+    return;
+  }
+  const ip = data.ip || '127.0.0.1';
+  const tls = data.tls === true || data.scheme === 'https';
+  urlInput.value = `${tls ? 'https' : 'http'}://${ip}:${port}/vr/`;
+  // WebXR launch only works over https on LAN addresses (or localhost via
+  // `adb reverse`) — surface that while TLS is off.
+  if (warning) warning.hidden = tls;
+  if (toggle) toggle.checked = tls;
+  try {
+    const mod = await import('../../node_modules/qrcode-generator/dist/qrcode.mjs');
+    const qrcode = mod.default || mod;
+    const qr = qrcode(0, 'M');
+    qr.addData(urlInput.value);
+    qr.make();
+    if (qrWrap) qrWrap.innerHTML = qr.createSvgTag({ cellSize: 4, margin: 1 });
+  } catch {
+    if (qrWrap) qrWrap.innerHTML = `<div class="vr-modal__qr-fallback">${t('webRemote.qrUnavailable')}</div>`;
+  }
 }
 
 

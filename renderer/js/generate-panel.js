@@ -22,6 +22,7 @@
 
 import { Modal } from '../components/modal.js';
 import { t } from './i18n.js';
+import { httpUrl } from './backend-url.js';
 import { showToast } from './toast.js';
 import { icon, AudioWaveform, Activity, WandSparkles, Download, Trash2 } from './icons.js';
 
@@ -857,7 +858,7 @@ function numberInput(value, ariaLabel, onChange) {
 
 /** Backend URL for a generate route. Always loopback: nothing leaves the machine. */
 export function generateApiUrl(port, path) {
-  return `http://127.0.0.1:${port}/api/generate${path}`;
+  return httpUrl(port, `/api/generate${path}`);
 }
 
 /** Engine family ('audio' | 'motion') a stored record belongs to, '' when unknown. */

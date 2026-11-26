@@ -107,6 +107,11 @@ const DEFAULTS = {
     backend: {
       port: 5123,
       localIp: 'auto',
+      // Serve the backend over HTTPS with an auto-generated self-signed
+      // cert. Required for the WebXR (/vr/) client: browsers only expose
+      // navigator.xr on secure contexts (https, or http on localhost).
+      // Toggling this needs a backend restart — the VR modal handles it.
+      tls: false,
     },
     library: {
       directory: '',

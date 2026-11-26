@@ -35,6 +35,7 @@ import { AutoblowManager } from './autoblow-manager.js';
 import { AutoblowSync } from './autoblow-sync.js';
 import { VRBridge } from './vr-bridge.js';
 import { RemoteBridge } from './remote-bridge.js';
+import { setBackendTls, httpUrl, wsUrl } from './backend-url.js';
 import { RemotePlaybackProxy } from './remote-playback-proxy.js';
 import { SessionTracker } from './session-tracker.js';
 import { SessionCard } from '../components/session-card.js';
@@ -266,6 +267,14 @@ class App {
       console.log(`Backend running on port ${this.backendPort}`);
     } catch (err) {
       console.warn('Could not get backend port:', err.message);
+    }
+
+    // Mirror the backend's TLS state (https + self-signed cert for WebXR)
+    // into the shared URL helpers before anything builds backend URLs.
+    try {
+      setBackendTls(await window.funsync.getBackendTls());
+    } catch (err) {
+      console.warn('Could not get backend TLS state:', err.message);
     }
 
     // Wire the backend-disconnected banner. State events stream from
@@ -933,7 +942,7 @@ class App {
         this.remoteBridge.onBridgeOpen = () => console.log('[Remote] observer bridge connected');
         this.remoteBridge.onBridgeClose = () => console.log('[Remote] observer bridge closed — will retry');
         this.remoteBridge.connect();
-        console.log('[Remote] observer bridge: attempting connect to ws://127.0.0.1:' + backendPort + '/api/remote/sync/observe');
+        console.log('[Remote] observer bridge: attempting connect to ' + wsUrl(backendPort, '/api/remote/sync/observe'));
       } catch (err) {
         console.warn('Remote bridge unavailable:', err.message);
       }
@@ -2967,7 +2976,7 @@ class App {
     if (!this.library) return;
     try {
       const port = this.settings.get('backend.port') || 5123;
-      const res = await fetch(`http://127.0.0.1:${port}/api/media/rescan-request`);
+      const res = await fetch(httpUrl(port, '/api/media/rescan-request'));
       if (!res.ok) return;
       const data = await res.json();
       const seq = data?.seq;
@@ -3018,7 +3027,7 @@ class App {
 
     try {
       const port = this.settings.get('backend.port') || 5123;
-      const res = await fetch(`http://127.0.0.1:${port}/api/media/vr-activity`);
+      const res = await fetch(httpUrl(port, '/api/media/vr-activity'));
       if (!res.ok) return;
       const data = await res.json();
 
@@ -3665,7 +3674,7 @@ class App {
       videoCategories: (this.settings._cache && this.settings._cache.videoCategories) || {},
     };
     try {
-      fetch(`http://127.0.0.1:${this.backendPort}/api/media/register`, {
+      fetch(httpUrl(this.backendPort, '/api/media/register'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),

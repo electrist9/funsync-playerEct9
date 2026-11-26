@@ -30,10 +30,14 @@ export class RemoteSyncClient {
    * @param {string}           opts.videoId  backend's id for this video
    * @param {(msg:object)=>void} [opts.onServerMessage]  device-status / script-* etc.
    * @param {()=>void}         [opts.onKicked]
+   * @param {string}           [opts.clientKind]  optional hint for the
+   *   backend/observer UI ("vr" for the WebXR headset client). Purely
+   *   informational — protocol and last-wins arbitration are unchanged.
    */
-  constructor({ video, videoId, onServerMessage, onKicked }) {
+  constructor({ video, videoId, onServerMessage, onKicked, clientKind }) {
     this._video = video;
     this._videoId = videoId;
+    this._clientKind = clientKind === 'vr' ? 'vr' : null;
     this._onServerMessage = onServerMessage || (() => {});
     this._onKicked = onKicked || (() => {});
 
@@ -87,18 +91,21 @@ export class RemoteSyncClient {
       this._visibilityBound = true;
     }
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const url = `${proto}//${location.host}/api/remote/sync?videoId=${encodeURIComponent(this._videoId)}`;
+    let url = `${proto}//${location.host}/api/remote/sync?videoId=${encodeURIComponent(this._videoId)}`;
+    if (this._clientKind) url += `&clientKind=${encodeURIComponent(this._clientKind)}`;
     let ws;
     try { ws = new WebSocket(url); } catch { return; }
     this._ws = ws;
 
     ws.addEventListener('open', () => {
       this._retries = 0;
-      ws.send(JSON.stringify({
+      const hello = {
         type: 'hello',
         videoId: this._videoId,
         duration: isFinite(this._video.duration) ? this._video.duration : 0,
-      }));
+      };
+      if (this._clientKind) hello.clientKind = this._clientKind;
+      ws.send(JSON.stringify(hello));
       this._attachVideoHandlers();
       // Seed the initial state in case the video is already playing.
       this._sendState();

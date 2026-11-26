@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('funsync', {
   // Node's `process.platform`: 'win32' | 'linux' | 'darwin' | 'freebsd' | …
   platform: process.platform,
   getBackendPort: () => ipcRenderer.invoke('get-backend-port'),
+  getBackendTls: () => ipcRenderer.invoke('get-backend-tls'),
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
   getPortableInfo: () => ipcRenderer.invoke('get-portable-info'),
 

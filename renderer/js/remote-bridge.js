@@ -9,6 +9,8 @@
 // child process and disappears briefly during dev reloads / crashes, so
 // resilience matters.
 
+import { wsUrl } from './backend-url.js';
+
 const DEFAULT_PORT = 5123;
 const MIN_BACKOFF_MS = 1000;
 const MAX_BACKOFF_MS = 15000;
@@ -82,7 +84,7 @@ export class RemoteBridge {
     if (!this._shouldRun) return;
     if (this._ws && this._ws.readyState === WebSocket.OPEN) return;
 
-    const url = `ws://127.0.0.1:${this._port}/api/remote/sync/observe`;
+    const url = wsUrl(this._port, '/api/remote/sync/observe');
     let ws;
     try {
       ws = new WebSocket(url);

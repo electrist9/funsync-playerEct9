@@ -21,6 +21,9 @@ const SETTINGS_DEFAULTS = {
   backend: {
     port: 5123,
     localIp: 'auto',
+    // HTTPS + self-signed cert for WebXR (/vr/) secure contexts.
+    // Mirrors electron/store.js; toggling restarts the backend.
+    tls: false,
   },
   library: {
     directory: '',
