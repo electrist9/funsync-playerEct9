@@ -20,8 +20,9 @@
  * (180/360) and angular fisheye videos render on a head-centered sphere
  * with per-eye SBS/TB sampling (see vr-screen.js / vr-shaders.js). The
  * per-video format comes from the backend (`video.vrFormat`), the player
- * control offers a manual override cycle. Subtitles ride a head-attached
- * panel; in-scene search / playlists in Phase 4. Flat videos support the
+ * control offers a manual override cycle. Subtitles ride a world-anchored
+ * panel below the screen/sphere (not head-attached); in-scene search /
+ * playlists in Phase 4. Flat videos support the
  * photo slideshow (Phase 2) using the desktop-configured folder and the
  * shared /shared-js/slideshow-timing.js + slideshow-color.js logic.
  */
@@ -51,7 +52,7 @@ class VrApp {
     this.library = new LibraryModel();
     this.libraryPanel = null;
     this.playerPanel = null;
-    this.subtitlePanel = null; // head-attached subtitle quad (Phase 3)
+    this.subtitlePanel = null; // world-anchored subtitle quad (Phase 3)
     this.screenMesh = null;
     this.vrScreen = null; // VRScreen wrapper (quad + optional sphere)
     this.libraryGroup = null;
@@ -219,13 +220,15 @@ class VrApp {
   }
 
   _buildSubtitlePanel() {
-    // Subtitles sit lower and further out so they read like burned-in
-    // captions near the bottom of the visual field.
-    this.subtitlePanel = new UIPanel({ worldWidth: 0.9, pixelWidth: 1280, pixelHeight: 192 });
-    this.subtitlePanel.mesh.position.set(0, -0.62, -1.1);
+    // Captions hang just below the player panel in playerGroup, so they are
+    // world-anchored like the video: turning your head lets them drift out
+    // of view instead of hovering in front of the face.
+    this.subtitlePanel = new UIPanel({ worldWidth: 1.6, pixelWidth: 1280, pixelHeight: 192 });
+    this.subtitlePanel.mesh.position.set(0, 0.3, -2.0);
+    this.subtitlePanel.mesh.rotation.x = 0.3; // tilt up toward the eye line
     this.subtitlePanel.setDraw(() => this._drawSubtitle());
     this.subtitlePanel.mesh.visible = false;
-    this.camera.add(this.subtitlePanel.mesh);
+    this.playerGroup.add(this.subtitlePanel.mesh);
   }
 
   _buildControllers() {
@@ -413,7 +416,7 @@ class VrApp {
       this.toast = { text: `VR 投影: ${modeLabel(this.vrMode)}`, until: Date.now() + 4000 };
     }
 
-    // Subtitles (head-attached caption panel).
+    // Subtitles (world-anchored caption panel).
     this._cues = [];
     this._cueSig = '';
     this.subtitlePanel.mesh.visible = false;
@@ -793,7 +796,7 @@ class VrApp {
   }
 
   // -------------------------------------------------------------------------
-  // Subtitles (head-attached captions)
+  // Subtitles (world-anchored captions)
   // -------------------------------------------------------------------------
 
   /** Cheap per-frame caption sync: only redraw when the active cue changes. */
