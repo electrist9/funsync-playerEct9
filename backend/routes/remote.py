@@ -26,6 +26,10 @@ from routes.media import (
     bump_rescan_request,
     _path_to_id,
 )
+# Shared filename-based VR heuristics. Called per record here (pure regex on
+# cached names — no stat()/ffprobe), so the VR client does not need to
+# duplicate the studio-code tables in browser JS.
+from routes.vr_api import detect_vr_format_for_video
 
 router = APIRouter()
 
@@ -85,6 +89,12 @@ async def request_rescan():
     Returns the new counter so the phone could correlate if it wanted to.
     """
     return {"seq": bump_rescan_request()}
+
+
+def _vr_format_record(video: dict) -> dict:
+    """`{"screen", "stereo", "is3d"}` for the VR client (see vr_api)."""
+    screen, stereo, is3d = detect_vr_format_for_video(video)
+    return {"screen": screen, "stereo": stereo, "is3d": bool(is3d)}
 
 
 @router.get("/videos")
@@ -148,6 +158,12 @@ async def list_videos():
             # override store before the heuristic so the VR filter agrees with
             # the desktop.
             "manualVRType": v.get("manualVRType") or None,
+            # VR client (Phase 3): the same detection result the desktop VR
+            # pipeline and DeoVR manifests use, precomputed so the headset
+            # does not need the studio-code tables in JS. dims=None → pure
+            # filename/override heuristics, never stat() or ffprobe, so this
+            # stays cheap even for libraries in the thousands.
+            "vrFormat": _vr_format_record(v),
         })
     out.sort(key=lambda v: v["name"].lower())
     return {"videos": out}

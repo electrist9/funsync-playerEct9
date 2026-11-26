@@ -16,10 +16,14 @@
  * the "phone" (last-wins takeover unchanged) and its sync engines bind to
  * our clock, so connected funscript devices follow the headset.
  *
- * Projection modes (equirect/fisheye/SBS) arrive in Phase 3; in-scene
- * search / playlists in Phase 4. Flat videos support the photo slideshow
- * (Phase 2) using the desktop-configured folder and the shared
- * /shared-js/slideshow-timing.js + slideshow-color.js logic.
+ * Projection modes (Phase 3): flat videos play on the screen quad; equirect
+ * (180/360) and angular fisheye videos render on a head-centered sphere
+ * with per-eye SBS/TB sampling (see vr-screen.js / vr-shaders.js). The
+ * per-video format comes from the backend (`video.vrFormat`), the player
+ * control offers a manual override cycle. Subtitles ride a head-attached
+ * panel; in-scene search / playlists in Phase 4. Flat videos support the
+ * photo slideshow (Phase 2) using the desktop-configured folder and the
+ * shared /shared-js/slideshow-timing.js + slideshow-color.js logic.
  */
 
 import * as THREE from '../vendor/three/three.module.js';
@@ -27,6 +31,9 @@ import { UIPanel, drawPanelBackground, drawButton, ellipsize, roundRect } from '
 import { LibraryModel, fetchVideos } from './library.js';
 import { VideoPlayer } from './player.js';
 import { SlideshowModel, SlideshowRenderer } from './slideshow.js';
+import { VRScreen } from './vr-screen.js';
+import { resolveVRMode, nextOverride, modeLabel, overrideButtonLabel } from './vr-mode.js';
+import { parseSubtitles, activeCue } from './subtitles.js';
 import { formatTime } from './util.js';
 
 const FONT = '"Noto Sans JP", "Hiragino Kaku Gothic ProN", Meiryo, sans-serif';
@@ -45,9 +52,17 @@ class VrApp {
     this.libraryPanel = null;
     this.playerPanel = null;
     this.osdPanel = null;
+    this.subtitlePanel = null; // head-attached subtitle quad (Phase 3)
     this.screenMesh = null;
+    this.vrScreen = null; // VRScreen wrapper (quad + optional sphere)
     this.libraryGroup = null;
     this.playerGroup = null;
+
+    this.vrOverride = 'auto'; // OVERRIDE_CYCLE member (see vr-mode.js)
+    this.vrMode = null; // resolved {projection, stereo, fovDeg, source}
+    this._cues = []; // parsed subtitle cues for the open video
+    this._cueSig = ''; // last rendered subtitle text (redraw gate)
+    this._subtitleCache = new Map(); // subtitleUrl → cues
 
     this.player = new VideoPlayer({
       onServerMessage: (msg) => this._onSyncMessage(msg),
@@ -153,6 +168,12 @@ class VrApp {
   _exitSession() {
     this.renderer.setAnimationLoop(null);
     this._disableSlideshow();
+    if (this.vrScreen) {
+      this.vrScreen.dispose();
+      this.vrScreen = null;
+    }
+    this.vrMode = null;
+    this._cues = [];
     this.player.close();
     this.mode = 'library';
     if (this.renderer.domElement.parentNode) {
@@ -183,11 +204,10 @@ class VrApp {
   _buildPlayerRig() {
     this.playerGroup = new THREE.Group();
 
-    // 16:9 screen quad fed by the VideoTexture.
-    const geo = new THREE.PlaneGeometry(3.2, 1.8);
-    const mat = new THREE.MeshBasicMaterial({ map: this.player.texture, toneMapped: false });
-    this.screenMesh = new THREE.Mesh(geo, mat);
-    this.screenMesh.position.set(0, 1.65, -2.6);
+    // Flat screen quad fed by the VideoTexture (VRScreen swaps in a
+    // head-centered sphere for equirect/fisheye modes — see vr-screen.js).
+    this.vrScreen = new VRScreen(this.player.texture);
+    this.screenMesh = this.vrScreen.quad;
     this.playerGroup.add(this.screenMesh);
 
     this.playerPanel = new UIPanel({ worldWidth: 2.2, pixelWidth: 1200, pixelHeight: 220 });
@@ -206,6 +226,14 @@ class VrApp {
     this.osdPanel.mesh.position.set(0, -0.22, -0.8);
     this.osdPanel.setDraw(() => this._drawOsd());
     this.camera.add(this.osdPanel.mesh);
+
+    // Subtitles sit lower and further out so they read like burned-in
+    // captions near the bottom of the visual field.
+    this.subtitlePanel = new UIPanel({ worldWidth: 0.9, pixelWidth: 1280, pixelHeight: 192 });
+    this.subtitlePanel.mesh.position.set(0, -0.62, -1.1);
+    this.subtitlePanel.setDraw(() => this._drawSubtitle());
+    this.subtitlePanel.mesh.visible = false;
+    this.camera.add(this.subtitlePanel.mesh);
   }
 
   _buildControllers() {
@@ -243,6 +271,7 @@ class VrApp {
     try {
       this._updateHover();
       if (this.slideshow) this._slideshowTick();
+      this._updateSubtitle();
       if (this.toast && Date.now() > this.toast.until) {
         this.toast = null;
         if (this._osdShown) this.osdPanel.redraw();
@@ -284,7 +313,9 @@ class VrApp {
 
   _targets() {
     if (this.mode === 'library') return [this.libraryPanel.mesh];
-    return [this.playerPanel.mesh, this.screenMesh];
+    const targets = [this.playerPanel.mesh, this.screenMesh];
+    if (this.vrScreen && this.vrScreen.sphere) targets.push(this.vrScreen.sphere);
+    return targets;
   }
 
   _updateHover() {
@@ -293,7 +324,9 @@ class VrApp {
       this._rayFrom(controller);
       const hits = this._raycaster.intersectObjects(this._targets(), false);
       const hit = hits.length ? hits[0] : null;
-      controller.userData.ray.scale.z = hit ? hit.distance : 4;
+      // Clamp the visible ray: a surround sphere sits 8 m out, which would
+      // otherwise stretch the pointer line across the room.
+      controller.userData.ray.scale.z = hit ? Math.min(hit.distance, 4) : 4;
       if (hit && (!best || hit.distance < best.distance)) {
         best = { controller, mesh: hit.object, uv: hit.uv, distance: hit.distance };
       }
@@ -339,7 +372,7 @@ class VrApp {
     const panel = hit.object.userData.uiPanel;
     if (panel) {
       panel.activate(hit.uv);
-    } else if (hit.object === this.screenMesh) {
+    } else if (hit.object === this.screenMesh || (this.vrScreen && hit.object === this.vrScreen.sphere)) {
       this.player.toggle();
       this.playerPanel.redraw();
       this.osdPanel.redraw();
@@ -374,13 +407,71 @@ class VrApp {
     this.playerGroup.visible = true;
     // Fresh session per video: connection status belongs to the new socket.
     this.sync = { connected: false, script: null, devices: [] };
+
+    // Projection mode: reset the manual override, then trust the backend's
+    // filename-derived vrFormat (see vr_api / vr-mode.js).
+    this.vrOverride = 'auto';
+    this.vrMode = resolveVRMode(video, this.vrOverride);
+    this.vrScreen.applyMode(this.camera, this.vrMode);
+    if (this.vrMode.projection !== 'flat') {
+      this.toast = { text: `VR 投影: ${modeLabel(this.vrMode)}`, until: Date.now() + 4000 };
+    }
+
+    // Subtitles (head-attached caption panel).
+    this._cues = [];
+    this._cueSig = '';
+    this.subtitlePanel.mesh.visible = false;
+    this._loadSubtitles(video);
+
     this.player.open(video);
     this.playerPanel.redraw();
     this.osdPanel.redraw();
   }
 
+  /** Cycle the manual projection override (auto → flat → eq-sbs → ...). */
+  _cycleProjectionOverride() {
+    this.vrOverride = nextOverride(this.vrOverride);
+    const video = this.player.info;
+    if (!video) return;
+    // A surround sphere and a flat slideshow can't share the screen: if the
+    // new mode is not flat, stop the slideshow first (restores video frame).
+    if (this.slideshow) this._disableSlideshow();
+    this.vrMode = resolveVRMode(video, this.vrOverride);
+    this.vrScreen.applyMode(this.camera, this.vrMode);
+    this.toast = { text: `投影: ${modeLabel(this.vrMode)}`, until: Date.now() + 3500 };
+    this.playerPanel.redraw();
+    this.osdPanel.redraw();
+  }
+
+  async _loadSubtitles(video) {
+    if (!video || !video.hasSubtitle || !video.subtitleUrl) return;
+    const videoId = video.id;
+    try {
+      let cues = this._subtitleCache.get(video.subtitleUrl);
+      if (!cues) {
+        const res = await fetch(video.subtitleUrl, { cache: 'no-store' });
+        if (!res.ok) throw new Error(`subtitle ${res.status}`);
+        const text = await res.text();
+        cues = parseSubtitles(text);
+        this._subtitleCache.set(video.subtitleUrl, cues);
+      }
+      // Ignore a slow response that arrived after the user moved on.
+      if (this.player.info && this.player.info.id === videoId) {
+        this._cues = cues;
+      }
+    } catch {
+      // No captions is survivable; keep the OSD clean.
+    }
+  }
+
   _closePlayback(toastText) {
     this._disableSlideshow();
+    // Tear the surround sphere down so nothing hangs around in library mode.
+    if (this.vrScreen) this.vrScreen.applyMode(this.camera, { projection: 'flat', stereo: 'mono', fovDeg: 0 });
+    this.vrMode = null;
+    this._cues = [];
+    this._cueSig = '';
+    this.subtitlePanel.mesh.visible = false;
     this.player.close();
     this.mode = 'library';
     this.sync = { connected: false, script: null, devices: [] };
@@ -492,10 +583,10 @@ class VrApp {
     drawPanelBackground(ctx, W, H);
 
     const playing = !this.player.paused;
-    const bw = 178;
+    const bw = 152;
     const bh = 120;
-    const gap = 16;
-    const total = bw * 6 + gap * 5;
+    const gap = 10;
+    const total = bw * 7 + gap * 6;
     const x0 = (W - total) / 2;
     const y0 = (H - bh) / 2;
 
@@ -509,6 +600,8 @@ class VrApp {
       mk(5, 'slideshow', this.slideshow ? 'SS 停止' : 'SS 開始',
         () => this._toggleSlideshow(),
         !this._canSlideshow()),
+      mk(6, 'projection', overrideButtonLabel(this.vrOverride),
+        () => this._cycleProjectionOverride()),
     ];
 
     for (const r of regions) drawButton(ctx, r, this.playerPanel, { fontSize: 30 });
@@ -519,10 +612,15 @@ class VrApp {
   // Slideshow (flat videos, Phase 2)
   // -------------------------------------------------------------------------
 
-  /** SS needs a funscript (switch points) and is a flat-video feature only. */
+  /**
+   * SS needs a funscript (switch points) and is a flat-video feature only:
+   * VR-tagged videos are excluded, and a surround sphere must never fight
+   * the slideshow for the screen.
+   */
   _canSlideshow() {
     const v = this.player.info;
-    return !!(v && v.hasFunscript && v.manualVRType !== 'vr');
+    if (!v || !v.hasFunscript || v.manualVRType === 'vr') return false;
+    return !this.vrMode || this.vrMode.projection === 'flat';
   }
 
   async _toggleSlideshow() {
@@ -649,6 +747,58 @@ class VrApp {
   }
 
   // -------------------------------------------------------------------------
+  // Subtitles (head-attached captions)
+  // -------------------------------------------------------------------------
+
+  /** Cheap per-frame caption sync: only redraw when the active cue changes. */
+  _updateSubtitle() {
+    const panel = this.subtitlePanel;
+    if (!panel) return;
+    const cue = this.mode === 'player' && this._cues.length
+      ? activeCue(this._cues, this.player.currentTime)
+      : null;
+    const text = cue ? cue.text : '';
+    if (text === this._cueSig) return;
+    this._cueSig = text;
+    panel.mesh.visible = !!text;
+    if (text) panel.redraw();
+  }
+
+  _drawSubtitle() {
+    const { ctx } = this.subtitlePanel;
+    const W = this.subtitlePanel.pixelWidth;
+    const H = this.subtitlePanel.pixelHeight;
+    ctx.clearRect(0, 0, W, H);
+    if (!this._cueSig) return;
+
+    // Burned-in-caption look: black outline, white text, wrapped to 2 lines.
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const size = 56;
+    ctx.font = `600 ${size}px ${FONT}`;
+    const maxW = W - 80;
+    let line = this._cueSig;
+    let lines = [line];
+    if (ctx.measureText(line).width > maxW) {
+      const mid = Math.floor(line.length / 2);
+      let cut = mid;
+      for (let i = mid; i > 0; i--) if (line[i] === ' ') { cut = i; break; }
+      for (let i = mid; i < line.length; i++) if (line[i] === ' ') { cut = i; break; }
+      lines = [line.slice(0, cut).trim(), line.slice(cut).trim()].filter(Boolean);
+    }
+    const y0 = H / 2 - (lines.length - 1) * (size + 8) / 2;
+    lines.forEach((ln, i) => {
+      const y = y0 + i * (size + 8);
+      ctx.strokeStyle = 'rgba(0, 0, 0, 0.9)';
+      ctx.lineWidth = 8;
+      ctx.lineJoin = 'round';
+      ctx.strokeText(ellipsize(ctx, ln, maxW), W / 2, y);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText(ellipsize(ctx, ln, maxW), W / 2, y);
+    });
+  }
+
+  // -------------------------------------------------------------------------
   // OSD (head-attached status)
   // -------------------------------------------------------------------------
 
@@ -727,6 +877,7 @@ class VrApp {
       this._syncStatus().text,
       this.sync.script || '-',
       this.slideshow ? 'ss' : '-',
+      this.vrMode ? `${this.vrMode.projection}/${this.vrMode.stereo}` : '-',
       this.toast ? this.toast.text : '',
       this.player.lastError || '',
       this._frameError || '',
@@ -771,9 +922,16 @@ class VrApp {
       ctx.fillStyle = '#c9d2e8';
       const timeText = `${formatTime(this.player.currentTime)} / ${formatTime(this.player.duration)}`;
       ctx.fillText(timeText, 40, 170);
+      let extraX = 40 + ctx.measureText(timeText).width + 24;
+      if (this.vrMode && this.vrMode.projection !== 'flat') {
+        ctx.fillStyle = '#7ea2ff';
+        const proj = modeLabel(this.vrMode);
+        ctx.fillText(proj, extraX, 170);
+        extraX += ctx.measureText(proj).width + 24;
+      }
       if (this.slideshow) {
         ctx.fillStyle = '#7ea2ff';
-        ctx.fillText('📷 スライドショー', 40 + ctx.measureText(timeText).width + 24, 170);
+        ctx.fillText('📷 スライドショー', extraX, 170);
       }
     }
     ctx.textAlign = 'right';

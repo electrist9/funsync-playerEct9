@@ -72,8 +72,24 @@ async def test_remote_videos_is_sorted(client):
 async def test_remote_video_has_expected_fields(client):
     response = await client.get("/api/remote/videos")
     first = response.json()["videos"][0]
-    for field in ("id", "name", "hasFunscript", "duration", "streamUrl", "thumbUrl", "sourceName"):
+    for field in ("id", "name", "hasFunscript", "duration", "streamUrl", "thumbUrl", "sourceName", "vrFormat"):
         assert field in first
+
+
+@pytest.mark.anyio
+async def test_remote_videos_carry_vr_format(client):
+    """`vrFormat` is the backend's filename-derived projection guess for the
+    VR client (extra field: the 2D phone client ignores it)."""
+    register_videos([
+        {"path": "C:\\Videos\\Beach_SBS.mp4", "name": "Beach_SBS.mp4", "hasFunscript": False, "duration": 100},
+        {"path": "C:\\Videos\\Deep_FISHEYE190_A.mp4", "name": "Deep_FISHEYE190_A.mp4", "hasFunscript": False, "duration": 100},
+        {"path": "C:\\Videos\\Calm Morning.mp4", "name": "Calm Morning.mp4", "hasFunscript": False, "duration": 100},
+    ])
+    response = await client.get("/api/remote/videos")
+    by_name = {v["name"]: v for v in response.json()["videos"]}
+    assert by_name["Beach_SBS"]["vrFormat"] == {"screen": "dome", "stereo": "sbs", "is3d": True}
+    assert by_name["Deep_FISHEYE190_A"]["vrFormat"] == {"screen": "fisheye", "stereo": "sbs", "is3d": True}
+    assert by_name["Calm Morning"]["vrFormat"] == {"screen": "flat", "stereo": "off", "is3d": False}
 
 
 @pytest.mark.anyio
