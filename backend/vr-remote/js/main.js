@@ -20,9 +20,10 @@
  * (180/360) and angular fisheye videos render on a head-centered sphere
  * with per-eye SBS/TB sampling (see vr-screen.js / vr-shaders.js). The
  * per-video format comes from the backend (`video.vrFormat`), the player
- * control offers a manual override cycle. Subtitles ride a world-anchored
- * panel below the screen/sphere (not head-attached); in-scene search /
- * playlists in Phase 4. Flat videos support the
+ * control offers a manual override cycle. Subtitles ride a panel anchored
+ * below the screen/sphere in the world; during video playback the control
+ * panel auto-hides and ghosts back when a controller points at it. In-scene
+ * search / playlists in Phase 4. Flat videos support the
  * photo slideshow (Phase 2) using the desktop-configured folder and the
  * shared /shared-js/slideshow-timing.js + slideshow-color.js logic.
  */
@@ -40,6 +41,10 @@ import { formatTime } from './util.js';
 const FONT = '"Noto Sans JP", "Hiragino Kaku Gothic ProN", Meiryo, sans-serif';
 const SORT_LABELS = { name: '名前', recent: '追加日', duration: '長さ' };
 const SORT_CYCLE = ['name', 'recent', 'duration'];
+// Player-panel auto-hide: after this much idle time during playback the
+// control panel fades nearly out of view (see _updatePanelFade).
+const PANEL_IDLE_MS = 4000;
+const PANEL_GHOST_OPACITY = 0.06;
 
 class VrApp {
   constructor() {
@@ -77,6 +82,7 @@ class VrApp {
     this.toast = null; // { text, until }
     this._hover = null; // { controller, mesh, uv, distance }
     this._playerSig = ''; // player-panel refresh gate (see _playerSignature)
+    this._panelActiveUntil = 0; // player-panel auto-hide deadline (see _updatePanelFade)
     this._raycaster = new THREE.Raycaster();
     this._tmpMatrix = new THREE.Matrix4();
     this._origin = new THREE.Vector3();
@@ -281,6 +287,7 @@ class VrApp {
           this._playerSig = sig;
           this.playerPanel.redraw();
         }
+        this._updatePanelFade();
       }
     } catch (err) {
       // An exception inside the XR loop otherwise freezes the headset view
@@ -301,6 +308,32 @@ class VrApp {
         this._redrawActivePanel();
       }
     }
+  }
+
+  /**
+   * Auto-hide for the player control panel: while a video is playing and
+   * nothing is looking at / touching the panel, it fades nearly out of
+   * sight so it never floats in front of the picture. A controller ray (or
+   * gaze) landing on it, pausing, an error, or a toast bring it back. The
+   * ghosted panel stays raycastable, so pointing where it was is enough.
+   */
+  _updatePanelFade() {
+    const panel = this.playerPanel;
+    if (!panel) return;
+    const now = Date.now();
+    const pointed =
+      (this._hover && this._hover.mesh === panel.mesh) || panel.hoverId !== null;
+    const mustShow =
+      pointed ||
+      this.player.paused ||
+      this.player.lastError ||
+      this._frameError ||
+      (this.toast && now <= this.toast.until);
+    if (mustShow) this._panelActiveUntil = now + PANEL_IDLE_MS;
+    const target = now <= this._panelActiveUntil ? 1 : PANEL_GHOST_OPACITY;
+    const mat = panel.mesh.material; // transparent: true from UIPanel
+    mat.opacity += (target - mat.opacity) * 0.18;
+    if (Math.abs(target - mat.opacity) < 0.01) mat.opacity = target;
   }
 
   _rayFrom(controller) {
@@ -423,6 +456,10 @@ class VrApp {
     this._loadSubtitles(video);
 
     this.player.open(video);
+    // Fresh video: the panel starts fully visible, then auto-hides while
+    // playing (see _updatePanelFade).
+    this.playerPanel.mesh.material.opacity = 1;
+    this._panelActiveUntil = Date.now() + 6000;
     this.playerPanel.redraw();
   }
 
