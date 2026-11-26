@@ -250,6 +250,17 @@ class VrApp {
       ray.scale.z = 4;
       controller.add(ray);
       controller.userData.ray = ray;
+      // Gaze input is a fallback ONLY while no tracked-pointer device is
+      // providing rays. While a controller is connected the head must not
+      // steer the selection (field report: nodding in the library slid the
+      // highlighted video row up/down).
+      controller.userData.connected = false;
+      controller.addEventListener('connected', (e) => {
+        controller.userData.connected = !!(e.data && e.data.targetRayMode === 'tracked-pointer');
+      });
+      controller.addEventListener('disconnected', () => {
+        controller.userData.connected = false;
+      });
       controller.addEventListener('selectstart', () => this._select(controller));
       this.scene.add(controller);
 
@@ -360,6 +371,11 @@ class VrApp {
     this._raycaster.ray.direction.copy(this._dir);
   }
 
+  /** True while at least one tracked-pointer input source is connected. */
+  _hasTrackedController() {
+    return this.controllers.some((c) => c.userData.connected);
+  }
+
   _targets() {
     if (this.mode === 'library') return [this.libraryPanel.mesh];
     const targets = [this.playerPanel.mesh, this.screenMesh];
@@ -381,10 +397,11 @@ class VrApp {
       }
     }
 
-    // Gaze fallback: when no controller ray lands on a target, aim from the
-    // head so the UI stays operable even if controller poses are missing or
-    // mis-tracked (a real-device failure mode we cannot reproduce locally).
-    if (!best && this.camera) {
+    // Gaze fallback: only when NO tracked controller is providing rays at
+    // all (a real-device failure mode we cannot reproduce locally). With a
+    // connected controller the head must never steer the hover — that made
+    // the library selection slide with the user's neck.
+    if (!best && !this._hasTrackedController() && this.camera) {
       this.camera.getWorldPosition(this._origin);
       this.camera.getWorldDirection(this._dir);
       this._raycaster.ray.origin.copy(this._origin);
@@ -407,9 +424,8 @@ class VrApp {
   _select(controller) {
     this._rayFrom(controller);
     let hits = this._raycaster.intersectObjects(this._targets(), false);
-    if (!hits.length && this.camera) {
-      // Same gaze fallback as hover: if the controller ray missed, select
-      // whatever the user is looking at.
+    if (!hits.length && this.camera && !this._hasTrackedController()) {
+      // Same gaze fallback as hover: only when no tracked controller exists.
       this.camera.getWorldPosition(this._origin);
       this.camera.getWorldDirection(this._dir);
       this._raycaster.ray.origin.copy(this._origin);
