@@ -237,7 +237,11 @@ class VrApp {
     this.playerGroup.add(this.screenMesh);
 
     this.playerPanel = new UIPanel({ worldWidth: 2.2, pixelWidth: 1200, pixelHeight: 300 });
-    this.playerPanel.mesh.position.set(0, 0.72, -2.35);
+    // The screen quad is always 1.8 m tall (the aspect fit only narrows it),
+    // centered at y 1.65 → its bottom edge is y 0.75. The panel is 0.55 m
+    // tall, so centering it at 0.45 tops out at 0.725 — a clear gap below
+    // the picture instead of overlapping it.
+    this.playerPanel.mesh.position.set(0, 0.45, -2.35);
     this.playerPanel.mesh.rotation.x = 0; // upright, parallel to the screen — no tilt
     // Opacity-0 ghost panels must not write depth, or the transparent quad
     // would punch a see-through hole in the screen/sphere behind it.
@@ -254,7 +258,11 @@ class VrApp {
     // world-anchored like the video: turning your head lets them drift out
     // of view instead of hovering in front of the face.
     this.subtitlePanel = new UIPanel({ worldWidth: 1.6, pixelWidth: 1280, pixelHeight: 192 });
-    this.subtitlePanel.mesh.position.set(0, 0.3, -2.0);
+    // z -2.5 sits BEHIND the control panel quad (z -2.35): while the panel
+    // is fully shown it occludes the subtitle instead of the subtitle
+    // floating over the buttons; once the panel fades to opacity 0
+    // (depthWrite off) the subtitle shows through again.
+    this.subtitlePanel.mesh.position.set(0, 0.3, -2.5);
     this.subtitlePanel.mesh.rotation.x = 0.3; // tilt up toward the eye line
     this.subtitlePanel.setDraw(() => this._drawSubtitle());
     this.subtitlePanel.mesh.visible = false;
