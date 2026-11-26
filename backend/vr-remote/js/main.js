@@ -22,7 +22,8 @@
  * per-video format comes from the backend (`video.vrFormat`), the player
  * control offers a manual override cycle. Subtitles ride a panel anchored
  * below the screen/sphere in the world; during video playback the control
- * panel auto-hides and ghosts back when a controller points at it. In-scene
+ * panel auto-hides and re-appears when aim moves onto it or the trigger is
+ * pressed. In-scene
  * search / playlists in Phase 4. Flat videos support the
  * photo slideshow (Phase 2) using the desktop-configured folder and the
  * shared /shared-js/slideshow-timing.js + slideshow-color.js logic.
@@ -83,6 +84,7 @@ class VrApp {
     this._hover = null; // { controller, mesh, uv, distance }
     this._playerSig = ''; // player-panel refresh gate (see _playerSignature)
     this._panelActiveUntil = 0; // player-panel auto-hide deadline (see _updatePanelFade)
+    this._panelWasPointed = false; // edge-detect aiming at the panel
     this._raycaster = new THREE.Raycaster();
     this._tmpMatrix = new THREE.Matrix4();
     this._origin = new THREE.Vector3();
@@ -320,9 +322,14 @@ class VrApp {
   /**
    * Auto-hide for the player control panel: while a video is playing and
    * nothing is looking at / touching the panel, it fades nearly out of
-   * sight so it never floats in front of the picture. A controller ray (or
-   * gaze) landing on it, pausing, an error, or a toast bring it back. The
-   * ghosted panel stays raycastable, so pointing where it was is enough.
+   * sight so it never floats in front of the picture. Aiming ONTO the panel
+   * (a controller ray or gaze landing on it after not being there) counts
+   * as a wake event, and so does pressing the trigger over it (see
+   * _select) — but resting a ray on it does NOT: in surround-sphere modes
+   * every controller ray hits something, so an idle hand pose that crosses
+   * the panel would otherwise pin the panel open forever. Pausing, an
+   * error, or a toast keep it showing. The ghosted panel stays raycastable,
+   * so pointing where it was (then pressing) always brings it back.
    */
   _updatePanelFade() {
     const panel = this.playerPanel;
@@ -330,8 +337,10 @@ class VrApp {
     const now = Date.now();
     const pointed =
       (this._hover && this._hover.mesh === panel.mesh) || panel.hoverId !== null;
+    const wake = pointed && !this._panelWasPointed; // aim just moved onto the panel
+    this._panelWasPointed = pointed;
     const mustShow =
-      pointed ||
+      wake ||
       this.player.paused ||
       this.player.lastError ||
       this._frameError ||
@@ -411,6 +420,11 @@ class VrApp {
     const hit = hits[0];
     const panel = hit.object.userData.uiPanel;
     if (panel) {
+      // Any press on the panel re-arms the auto-hide timer. While the
+      // player panel is ghosted the press ONLY brings it back — firing an
+      // invisible button would be the worst failure mode of this feature.
+      this._panelActiveUntil = Date.now() + PANEL_IDLE_MS;
+      if (panel.mesh.material.opacity < 0.5) return;
       panel.activate(hit.uv);
     } else if (hit.object === this.screenMesh || (this.vrScreen && hit.object === this.vrScreen.sphere)) {
       this.player.toggle();
