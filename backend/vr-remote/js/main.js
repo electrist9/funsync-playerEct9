@@ -83,6 +83,17 @@ class VrApp {
       },
     });
 
+    // Flat-screen aspect: the quad is fixed 16:9, so re-fit it from the
+    // actual decoded frame size whenever a video's metadata arrives — a
+    // non-16:9 source otherwise looked vertically squashed (stretched wide).
+    // loadedmetadata fires before the first painted frame, so the quad is
+    // already correct when the picture appears.
+    this.player.video.addEventListener('loadedmetadata', () => {
+      if (this.vrScreen && !this.slideshow) {
+        this.vrScreen.setAspect(this.player.video.videoWidth, this.player.video.videoHeight);
+      }
+    });
+
     this.sync = { connected: false, script: null, devices: [] };
     this.slideshow = null; // { model, renderer, texture } while SS is on
     this._ssScriptCache = new Map(); // scriptUrl → actions[]
@@ -828,6 +839,9 @@ class VrApp {
 
       this.screenMesh.material.map = texture;
       this.screenMesh.material.needsUpdate = true;
+      // The video quad may have been shrunk to the video's aspect; the
+      // slideshow composites 16:9, so restore the full-size quad.
+      this.vrScreen.setAspect(renderer.canvas.width, renderer.canvas.height);
       this.playerPanel.redraw();
       this.toast = { text: `スライドショー開始（${model.switchTimes.length} 切替・${model.images.length} 枚）`, until: Date.now() + 3500 };
     } catch {
@@ -843,6 +857,10 @@ class VrApp {
     if (this.screenMesh) {
       this.screenMesh.material.map = this.player.texture;
       this.screenMesh.material.needsUpdate = true;
+      // Back to the video frame: restore the video's own aspect fit.
+      if (this.vrScreen) {
+        this.vrScreen.setAspect(this.player.video.videoWidth, this.player.video.videoHeight);
+      }
     }
   }
 

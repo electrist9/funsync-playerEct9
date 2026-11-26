@@ -57,6 +57,30 @@ export class VRScreen {
   }
 
   /**
+   * Fit the flat quad to a source's aspect ratio (only matters in flat
+   * mode; the surround sphere always wraps the full frame). The quad is
+   * built 3.2 × 1.8 m (16:9), so a source of any other ratio would be
+   * stretched — scale it down one axis instead, centred, keeping the same
+   * mid-height position. Called from the video's loadedmetadata event and
+   * when the slideshow swaps in its 16:9 canvas.
+   */
+  setAspect(width, height) {
+    const w = Number(width);
+    const h = Number(height);
+    if (!(w > 0) || !(h > 0)) return;
+    const MAX_W = 3.2;
+    const MAX_H = 1.8;
+    const a = w / h;
+    let sw = MAX_W;
+    let sh = MAX_W / a;
+    if (sh > MAX_H) {
+      sh = MAX_H;
+      sw = MAX_H * a;
+    }
+    this.quad.scale.set(sw / MAX_W, sh / MAX_H, 1);
+  }
+
+  /**
    * Apply a resolved VR mode ({projection, stereo, fovDeg}). 'flat' tears
    * down the sphere; anything else builds/updates the world-anchored sphere
    * and aligns the video's front with the viewer's current heading (yaw
