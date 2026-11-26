@@ -67,6 +67,7 @@ class VrApp {
     this._origin = new THREE.Vector3();
     this._dir = new THREE.Vector3();
     this._frameError = null; // first frame-loop exception, surfaced on the OSD
+    this._osdShown = true; // head-attached OSD visibility gate (see _updateOsdVisibility)
   }
 
   // -------------------------------------------------------------------------
@@ -136,6 +137,7 @@ class VrApp {
 
       this.mode = 'library';
       this._frameError = null;
+      this._osdShown = true; // fresh mesh defaults visible; toast keeps it up, loop hides it later
       this.toast = { text: 'コントローラーをパネルに向けてトリガーで選択します', until: Date.now() + 6000 };
       this._refreshLibrary(true);
 
@@ -243,12 +245,15 @@ class VrApp {
       if (this.slideshow) this._slideshowTick();
       if (this.toast && Date.now() > this.toast.until) {
         this.toast = null;
-        this.osdPanel.redraw();
+        if (this._osdShown) this.osdPanel.redraw();
       }
-      const sig = this._osdSignature();
-      if (sig !== this._osdSig) {
-        this._osdSig = sig;
-        this.osdPanel.redraw();
+      this._updateOsdVisibility();
+      if (this._osdShown) {
+        const sig = this._osdSignature();
+        if (sig !== this._osdSig) {
+          this._osdSig = sig;
+          this.osdPanel.redraw();
+        }
       }
     } catch (err) {
       // An exception inside the XR loop otherwise freezes the headset view
@@ -691,6 +696,24 @@ class VrApp {
       return { text: 'デスクトップ未接続（単独再生中）', color: '#ff9d6a' };
     }
     return { text: '同期接続中…（単独再生中）', color: '#ff9d6a' };
+  }
+
+  /**
+   * The OSD is head-attached, so leaving it up in library mode is a panel
+   * permanently floating in the user's face — the library panel itself
+   * already shows count/pagination. Keep it hidden there unless it has
+   * something to say (a toast or a frame error); in player mode it carries
+   * playback info, so it stays.
+   */
+  _updateOsdVisibility() {
+    const show = this.mode === 'player' || !!this._frameError || !!this.toast;
+    if (show === this._osdShown) return;
+    this._osdShown = show;
+    this.osdPanel.mesh.visible = show;
+    if (show) {
+      this._osdSig = this._osdSignature();
+      this.osdPanel.redraw();
+    }
   }
 
   _osdSignature() {
