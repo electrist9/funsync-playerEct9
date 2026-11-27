@@ -68,6 +68,11 @@ const SEEK_HIT_H = 36;
 // thumbs from drifting the screen.
 const STICK_AXIS_X = 2;
 const STICK_AXIS_Y = 3;
+// Folder-picker grid: 3 tile columns, 3 rows visible at rest — the right
+// thumbstick scrolls whole rows (step FP_COLS) over a 9-tile window,
+// exactly like the library grid.
+const FP_COLS = 3;
+const FP_VISIBLE_ROWS = 3;
 const STICK_DEADZONE = 0.25;
 // Left thumbstick click resets distance/size to the built-in defaults.
 // Quest Browser reports it as gamepad button 3 (verified on-device; the
@@ -171,7 +176,7 @@ class VrApp {
     this._ssImageUrls = null; // image URLs of the running slideshow
     // Modal slideshow-folder picker (built with the player rig).
     this.folderPanel = null;
-    this._fp = null; // picker state { path, parent, dirs, page, loading, busy, error } while open
+    this._fp = null; // picker state { path, parent, dirs, scroll, scrollTarget, loading, busy, error, current } while open
     this.toast = null; // { text, until }
     this._hover = null; // { controller, mesh, uv, distance }
     this._playerSig = ''; // player-panel refresh gate (see _playerSignature)
@@ -496,6 +501,8 @@ class VrApp {
       this._updateStickButtons();
       this._updateLibraryScroll();
       this._tickLibraryScroll();
+      this._updateFolderScroll();
+      this._tickFolderScroll();
       if (this.toast && Date.now() > this.toast.until) {
         this.toast = null;
         this._redrawActivePanel();
@@ -705,6 +712,61 @@ class VrApp {
   _tickLibraryScroll() {
     if (this.mode !== 'library') return;
     if (this.library.tickScroll()) this._redrawLibrary();
+  }
+
+  /**
+   * Right-thumbstick scrolling for the folder-picker grid — same feel as
+   * the library: whole-row notches (FP_COLS items), fractional tilts
+   * accumulate, and the visible position eases toward the target in
+   * _tickFolderScroll. Only active while the picker is open.
+   */
+  _updateFolderScroll() {
+    const st = this._fp;
+    if (!st) {
+      this._fpScrollAcc = 0;
+      return;
+    }
+    let y = 0;
+    for (const controller of this.controllers) {
+      const src = controller.userData.inputSource;
+      if (!src || src.handedness !== 'right') continue;
+      const gp = src.gamepad;
+      if (!gp || !gp.axes || gp.axes.length <= STICK_AXIS_Y) continue;
+      const ay = gp.axes[STICK_AXIS_Y] || 0;
+      if (Math.abs(ay) >= STICK_DEADZONE) y = ay; // gamepad Y: stick up = negative
+      break;
+    }
+    if (!y) {
+      this._fpScrollAcc = 0;
+      return;
+    }
+    const mag = (Math.abs(y) - STICK_DEADZONE) / (1 - STICK_DEADZONE);
+    this._fpScrollAcc += Math.sign(y) * mag * (0.25 / FP_COLS);
+    let steps = 0;
+    while (Math.abs(this._fpScrollAcc) >= 1) {
+      const dir = Math.sign(this._fpScrollAcc);
+      this._fpScrollAcc -= dir;
+      steps += dir;
+    }
+    if (!steps) return;
+    // Clamp like LibraryModel.maxScroll in grid mode: the row-aligned
+    // window still scrolls far enough to reveal the final partial row.
+    const total = st.dirs ? st.dirs.length : 0;
+    const pageSize = FP_COLS * FP_VISIBLE_ROWS;
+    const aligned = Math.ceil(total / FP_COLS) * FP_COLS - pageSize;
+    const max = Math.max(0, Math.floor(aligned / FP_COLS) * FP_COLS);
+    const next = Math.min(max, Math.max(0, st.scrollTarget + steps * FP_COLS));
+    if (next !== st.scrollTarget) st.scrollTarget = next;
+  }
+
+  /** Ease the picker scroll toward its target; repaint while it moves. */
+  _tickFolderScroll() {
+    const st = this._fp;
+    if (!st || !this.folderPanel) return;
+    if (st.scroll === st.scrollTarget) return;
+    const d = st.scrollTarget - st.scroll;
+    st.scroll = Math.abs(d) < 0.02 ? st.scrollTarget : st.scroll + d * 0.25;
+    this.folderPanel.redraw();
   }
 
   _targets() {
@@ -1815,7 +1877,8 @@ class VrApp {
    */
   _openFolderPicker() {
     if (!this.folderPanel || this._fp) return;
-    const st = this._fp = { path: '', parent: null, dirs: [], page: 0, loading: true, busy: false, error: null, current: null };
+    const st = this._fp = { path: '', parent: null, dirs: [], scroll: 0, scrollTarget: 0, loading: true, busy: false, error: null, current: null };
+    this._fpScrollAcc = 0;
     if (this.playerPanel) this.playerPanel.mesh.visible = false;
     this.folderPanel.clearHover();
     this.folderPanel.mesh.visible = true;
@@ -1877,7 +1940,7 @@ class VrApp {
       st.path = typeof data.path === 'string' ? data.path : '';
       st.parent = typeof data.parent === 'string' ? data.parent : null;
       st.dirs = Array.isArray(data.dirs) ? data.dirs.filter((d) => d && typeof d.path === 'string') : [];
-      st.page = 0;
+      st.scroll = 0; st.scrollTarget = 0; this._fpScrollAcc = 0;
       st.loading = false;
       this.folderPanel.redraw();
     } catch (err) {
@@ -2002,18 +2065,18 @@ class VrApp {
       }
     }
 
-    // Directory tiles: a 3×3 folder grid, styled like the library grid.
+    // Directory tiles: a 3-column folder grid scrolled smoothly with the
+    // right thumbstick (paging is gone) — same feel as the library grid.
+    const cols = FP_COLS;
+    const rows = FP_VISIBLE_ROWS;
     const gridTop = st && st.error ? 196 : 160;
-    const cols = 3;
-    const rows = 3;
-    const perPage = cols * rows;
     const gap = 16;
     const tileW = Math.floor((W - 64 - gap * (cols - 1)) / cols);
     const tileH = 180;
     const rowPitch = tileH + 14;
+    const bandBottom = gridTop + rows * rowPitch;
     const dirs = st && !st.loading ? st.dirs : [];
-    const pageCount = Math.max(1, Math.ceil(dirs.length / perPage));
-    const page = Math.min(Math.max(0, st ? st.page : 0), pageCount - 1);
+    const scroll = st ? st.scroll : 0;
     // Path equality for the "configured" highlight: separators and drive
     // letter case may differ between config and browse responses.
     const samePath = (a, b) => {
@@ -2036,13 +2099,21 @@ class VrApp {
       );
       ctx.textAlign = 'left';
     } else {
-      for (let i = 0; i < perPage; i++) {
-        const d = dirs[page * perPage + i];
-        if (!d) break;
-        const x = 32 + (i % cols) * (tileW + gap);
-        const y = gridTop + Math.floor(i / cols) * rowPitch;
+      // Clip the scroll band so rows slide under its edges while the
+      // fractional scroll eases toward its target (like the library).
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(24, gridTop, W - 48, bandBottom - gridTop);
+      ctx.clip();
+      const start = Math.max(0, Math.floor(scroll));
+      for (let gi = start; gi < dirs.length; gi++) {
+        const d = dirs[gi];
+        const x = 32 + (gi % cols) * (tileW + gap);
+        const y = gridTop + (Math.floor(gi / cols) - scroll / cols) * rowPitch;
+        if (y >= bandBottom) break; // later rows are even lower
+        if (y + tileH <= gridTop) continue; // row sliding out the top
         const cx = x + tileW / 2;
-        const hovered = panel.hoverId === `dir${i}`;
+        const hovered = panel.hoverId === `dir${gi}`;
         roundRect(ctx, x, y, tileW, tileH, 12);
         ctx.fillStyle = hovered ? '#3d4a7a' : '#232a40';
         ctx.fill();
@@ -2069,46 +2140,23 @@ class VrApp {
         }
         ctx.textAlign = 'left';
         regions.push({
-          x, y, w: tileW, h: tileH, id: `dir${i}`, label: '',
+          x, y, w: tileW, h: tileH, id: `dir${gi}`, label: '',
           disabled: !!(st && (st.loading || st.busy)),
           onClick: () => this._fpLoad(d.path),
         });
       }
-    }
-
-    // Pager row (only with more than one page of folders).
-    if (dirs.length > perPage) {
-      const py = 800;
-      const pager = [];
-      if (page > 0) {
-        pager.push({
-          x: 40, y: py, w: 160, h: 64, id: 'prev', label: '‹ 前へ',
-          onClick: () => {
-            if (this._fp) {
-              this._fp.page = Math.max(0, this._fp.page - 1);
-              this.folderPanel.redraw();
-            }
-          },
-        });
+      ctx.restore();
+      // Scroll-position hint where the pager used to sit: visible range
+      // out of the folder total, so deep lists still convey their size.
+      if (dirs.length > cols * rows) {
+        const first = start + 1;
+        const last = Math.min(dirs.length, start + cols * rows);
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#8b93ad';
+        ctx.font = `600 24px ${FONT}`;
+        ctx.fillText(`${first}–${last} / ${dirs.length} フォルダ`, W / 2, bandBottom + 24);
+        ctx.textAlign = 'left';
       }
-      if (page < pageCount - 1) {
-        pager.push({
-          x: W - 200, y: py, w: 160, h: 64, id: 'next', label: '次へ ›',
-          onClick: () => {
-            if (this._fp) {
-              this._fp.page = Math.min(pageCount - 1, this._fp.page + 1);
-              this.folderPanel.redraw();
-            }
-          },
-        });
-      }
-      ctx.textAlign = 'center';
-      ctx.fillStyle = '#8b93ad';
-      ctx.font = `600 28px ${FONT}`;
-      ctx.fillText(`${page + 1} / ${pageCount}`, W / 2, py + 32);
-      ctx.textAlign = 'left';
-      for (const r of pager) drawButton(ctx, r, panel, { fontSize: 28 });
-      regions.push(...pager.map((r) => ({ ...r })));
     }
 
     // Toast strip, same as the player panel.
