@@ -65,7 +65,7 @@ const STICK_AXIS_Y = 3;
 const STICK_DEADZONE = 0.25;
 const SCREEN_DIST_MIN = 0.5;
 const SCREEN_DIST_MAX = 4.0;
-const SCREEN_SCALE_MIN = 0.5;
+const SCREEN_SCALE_MIN = 0.2;
 const SCREEN_SCALE_MAX = 2.2;
 
 class VrApp {
@@ -267,7 +267,7 @@ class VrApp {
     // centered at y 1.65 → its bottom edge is y 0.75. The panel is 0.55 m
     // tall, so centering it at 0.45 tops out at 0.725 — a clear gap below
     // the picture instead of overlapping it.
-    this.playerPanel.mesh.position.set(0, 0.45, -2.35);
+    this.playerPanel.mesh.position.set(0, 0.45, -2.6); // default screen plane (dist 2.6; see _updateScreenControls)
     this.playerPanel.mesh.rotation.x = 0; // upright, parallel to the screen — no tilt
     // Opacity-0 ghost panels must not write depth, or the transparent quad
     // would punch a see-through hole in the screen/sphere behind it.
@@ -284,11 +284,11 @@ class VrApp {
     // world-anchored like the video: turning your head lets them drift out
     // of view instead of hovering in front of the face.
     this.subtitlePanel = new UIPanel({ worldWidth: 1.6, pixelWidth: 1280, pixelHeight: 192 });
-    // z -2.5 sits BEHIND the control panel quad (z -2.35): while the panel
-    // is fully shown it occludes the subtitle instead of the subtitle
-    // floating over the buttons; once the panel fades to opacity 0
-    // (depthWrite off) the subtitle shows through again.
-    this.subtitlePanel.mesh.position.set(0, 0.3, -2.5);
+    // z sits just BEHIND the control panel (default screen plane −2.6):
+    // while the panel is fully shown it occludes the subtitle instead of
+    // the subtitle floating over the buttons; once the panel fades to
+    // opacity 0 (depthWrite off) the subtitle shows through again.
+    this.subtitlePanel.mesh.position.set(0, 0.3, -2.7);
     this.subtitlePanel.mesh.rotation.x = 0.3; // tilt up toward the eye line
     this.subtitlePanel.setDraw(() => this._drawSubtitle());
     this.subtitlePanel.mesh.visible = false;
@@ -451,10 +451,11 @@ class VrApp {
   /**
    * Left thumbstick drives the flat (2D) screen: stick up/down pushes it
    * farther / pulls it closer, left/right grows / shrinks it. The control
-   * panel and subtitle ride along at their fixed offsets in front of the
-   * screen so they stay reachable at any distance; the screen's bottom
-   * edge stays pinned above the panel at any size (see VRScreen). Ignored
-   * in the library and in surround-sphere modes (there is no quad there).
+   * panel rides along IN the screen's plane (its top edge clears the
+   * screen's pinned bottom edge, so the two never overlap) and the
+   * subtitle sits just behind it; the screen's bottom edge stays pinned
+   * above the panel at any size (see VRScreen). Ignored in the library
+   * and in surround-sphere modes (there is no quad there).
    */
   _updateScreenControls() {
     if (this.mode !== 'player' || !this.vrScreen || this.vrScreen.sphere) return;
@@ -481,8 +482,11 @@ class VrApp {
     this._screenDist = dist;
     this._screenScale = scale;
     this.vrScreen.setPlacement(dist, scale);
-    this.playerPanel.mesh.position.z = -dist + 0.25;
-    this.subtitlePanel.mesh.position.z = -dist + 0.1;
+    // Panel sits in the screen's own plane (no overlap: panel top edge
+    // y 0.725 stays below the screen's pinned bottom edge y 0.75); the
+    // subtitle hides just behind it so the panel still occludes captions.
+    this.playerPanel.mesh.position.z = -dist;
+    this.subtitlePanel.mesh.position.z = -dist - 0.1;
   }
 
   _targets() {
