@@ -80,10 +80,11 @@ describe('LibraryModel view caching', () => {
   });
 
   it('grid mode steps whole rows and rests on row edges', () => {
-    const m = new LibraryModel(mkVideos(20)); // pageSize 12 → raw max 8
+    const m = new LibraryModel(mkVideos(20)); // pageSize 12 = four grid rows
     m.setViewMode('grid');
     expect(m.scrollStep()).toBe(3);
-    expect(m.maxScroll(20)).toBe(6); // floor(8/3)*3: last stop shows whole rows
+    // Row-aligned, yet the final partial row (items 18-19) stays reachable.
+    expect(m.maxScroll(20)).toBe(9);
     m.scrollBy(m.scrollStep()); // one notch = one row of three tiles
     while (m.tickScroll()) { /* settle */ }
     expect(m.view().start).toBe(3);
@@ -91,8 +92,24 @@ describe('LibraryModel view caching', () => {
     expect(m.view().start).toBe(3);
     m.scrollBy(99);
     while (m.tickScroll()) { /* settle */ }
-    expect(m.view().start).toBe(6);
-    expect(m.view().end).toBe(18);
+    const v = m.view();
+    expect(v.start).toBe(9);
+    expect(v.end).toBe(20);
+    expect(v.items[v.items.length - 1].video.name).toBe('Video 0019');
+  });
+
+  it('grid mode still reveals an overflow smaller than one row', () => {
+    // Field case: 11 folder tiles, a page shows 9 — the last 2 must scroll in.
+    const m = new LibraryModel(mkVideos(11));
+    m.pageSize = 9;
+    m.setViewMode('grid');
+    expect(m.maxScroll(11)).toBe(3);
+    m.scrollBy(m.scrollStep());
+    while (m.tickScroll()) { /* settle */ }
+    const v = m.view();
+    expect(v.start).toBe(3);
+    expect(v.items.length).toBe(8);
+    expect(v.items[v.items.length - 1].video.name).toBe('Video 0010');
   });
 
   it('view changes (folder mode, view mode) invalidate the cache', () => {

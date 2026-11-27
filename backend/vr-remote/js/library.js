@@ -147,13 +147,19 @@ export class LibraryModel {
   }
 
   /**
-   * Largest first-visible index that still fills a page. Grid mode stops
-   * on a row edge (multiples of the 3-column row size) so the last view
-   * never rests with a half-scrolled row.
+   * Largest first-visible index. List mode stops as soon as the last page
+   * is full. Grid mode stops on a row edge (multiples of the 3-column row
+   * size) BUT still scrolls far enough to reveal the final partial row —
+   * flooring against a full page alone would strand the last 1–2 items
+   * when the overflow is smaller than a row.
    */
   maxScroll(total) {
-    const max = Math.max(0, (Number(total) || 0) - this.pageSize);
-    return this.viewMode === 'grid' ? Math.floor(max / 3) * 3 : max;
+    const n = Number(total) || 0;
+    if (this.viewMode !== 'grid') return Math.max(0, n - this.pageSize);
+    // Slide the whole (row-padded) grid so its last row sits at the bottom
+    // of the page, then snap back to a row edge.
+    const aligned = Math.ceil(n / 3) * 3 - this.pageSize;
+    return Math.max(0, Math.floor(aligned / 3) * 3);
   }
 
   /**
