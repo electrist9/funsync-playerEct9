@@ -49,6 +49,12 @@ const SORT_CYCLE = ['name', 'recent', 'duration'];
 const PANEL_IDLE_MS = 3000;
 const PANEL_GHOST_OPACITY = 0;
 
+// Seek bar on the player panel, in canvas pixel space (panel 1200×300).
+const SEEK_SIDE = 40;   // track inset from the panel edges
+const SEEK_CY = 112;    // track centre line (y)
+const SEEK_HIT_Y = 96;  // invisible touch strip around the track
+const SEEK_HIT_H = 36;
+
 class VrApp {
   constructor() {
     this.renderer = null;
@@ -102,6 +108,7 @@ class VrApp {
     this.toast = null; // { text, until }
     this._hover = null; // { controller, mesh, uv, distance }
     this._playerSig = ''; // player-panel refresh gate (see _playerSignature)
+    this._scrubT = null;  // last scrub seek time (throttle; see _seekToUv)
     this._panelActiveUntil = 0; // player-panel auto-hide deadline (see _updatePanelFade)
     this._panelWasPointed = false; // edge-detect aiming at the panel
     this._raycaster = new THREE.Raycaster();
@@ -289,13 +296,25 @@ class VrApp {
       // steer the selection (field report: nodding in the library slid the
       // highlighted video row up/down).
       controller.userData.connected = false;
+      controller.userData.selecting = false;
       controller.addEventListener('connected', (e) => {
         controller.userData.connected = !!(e.data && e.data.targetRayMode === 'tracked-pointer');
+        controller.userData.selecting = false;
       });
       controller.addEventListener('disconnected', () => {
         controller.userData.connected = false;
+        controller.userData.selecting = false;
       });
-      controller.addEventListener('selectstart', () => this._select(controller));
+      // Trigger hold state drives seek-bar scrubbing (see _updateHover);
+      // selectstart still fires the normal press action.
+      controller.addEventListener('selectstart', () => {
+        controller.userData.selecting = true;
+        this._select(controller);
+      });
+      controller.addEventListener('selectend', () => {
+        controller.userData.selecting = false;
+        this._scrubT = null;
+      });
       this.scene.add(controller);
 
       const grip = this.renderer.xr.getControllerGrip(i);
@@ -452,6 +471,16 @@ class VrApp {
     for (const panel of panels) {
       if (best && best.mesh === panel.mesh && best.uv) panel.handleHover(best.uv);
       else panel.clearHover();
+    }
+
+    // Scrub while dragging: with the trigger held and the ray kept on the
+    // seek bar, keep moving the playhead (tap-to-jump goes through
+    // activate/select instead).
+    if (best && best.controller && best.controller.userData.selecting
+        && best.mesh === this.playerPanel.mesh && best.uv
+        && this.playerPanel.hoverId === 'seek'
+        && this.playerPanel.mesh.material.opacity >= 0.5) {
+      this._seekToUv(best.uv, true);
     }
   }
 
@@ -735,29 +764,48 @@ class VrApp {
     ctx.font = `24px ${FONT}`;
     ctx.fillStyle = '#c9d2e8';
     const timeText = `${formatTime(this.player.currentTime)} / ${formatTime(this.player.duration)}`;
-    ctx.fillText(timeText, 40, 92);
+    ctx.fillText(timeText, 40, 84);
     let metaX = 40 + ctx.measureText(timeText).width + 24;
     if (this.vrMode && this.vrMode.projection !== 'flat') {
       ctx.fillStyle = '#7ea2ff';
       const proj = modeLabel(this.vrMode);
-      ctx.fillText(proj, metaX, 92);
+      ctx.fillText(proj, metaX, 84);
       metaX += ctx.measureText(proj).width + 24;
     }
     if (this.slideshow) {
       ctx.fillStyle = '#7ea2ff';
-      ctx.fillText('📷 スライドショー', metaX, 92);
+      ctx.fillText('📷 スライドショー', metaX, 84);
     }
+
+    // Seek bar: tap to jump, or hold the trigger and slide the ray to scrub.
+    const trackX = SEEK_SIDE;
+    const trackW = W - SEEK_SIDE * 2;
+    const seekEnabled = !this.slideshow && this.player.duration > 0;
+    const frac = seekEnabled ? Math.max(0, Math.min(1, this.player.currentTime / this.player.duration)) : 0;
+    const seekHovered = this.playerPanel.hoverId === 'seek';
+    roundRect(ctx, trackX, SEEK_CY - 5, trackW, 10, 5);
+    ctx.fillStyle = seekEnabled ? (seekHovered ? '#4a5578' : '#39415f') : '#232838';
+    ctx.fill();
+    if (frac > 0) {
+      roundRect(ctx, trackX, SEEK_CY - 5, Math.max(10, trackW * frac), 10, 5);
+      ctx.fillStyle = '#7ea2ff';
+      ctx.fill();
+    }
+    ctx.beginPath();
+    ctx.arc(trackX + trackW * frac, SEEK_CY, seekHovered ? 13 : 11, 0, Math.PI * 2);
+    ctx.fillStyle = seekEnabled ? '#e8ecf8' : '#5a6070';
+    ctx.fill();
 
     const playing = !this.player.paused;
     const bw = 152;
-    const bh = 120;
+    const bh = 96;
     const gap = 10;
     const total = bw * 7 + gap * 6;
     const x0 = (W - total) / 2;
-    const y0 = 130;
+    const y0 = 152;
 
     const mk = (i, id, label, onClick, disabled) => ({ x: x0 + i * (bw + gap), y: y0, w: bw, h: bh, id, label, onClick, disabled });
-    const regions = [
+    const buttons = [
       mk(0, 'back', '◀ ライブラリ', () => this._closePlayback()),
       mk(1, 'rew', '-10 秒', () => { this.player.seekBy(-10); this.playerPanel.redraw(); }),
       mk(2, 'playpause', playing ? '⏸ 一時停止' : '▶ 再生', () => { this.player.toggle(); this.playerPanel.redraw(); }),
@@ -770,8 +818,17 @@ class VrApp {
         () => this._cycleProjectionOverride()),
     ];
 
-    for (const r of regions) drawButton(ctx, r, this.playerPanel, { fontSize: 30 });
-    this.playerPanel.setRegions(regions);
+    for (const r of buttons) drawButton(ctx, r, this.playerPanel, { fontSize: 30 });
+    // Seek strip first so a stray overlap can never steal a button press
+    // (hitRegion lets later regions win).
+    this.playerPanel.setRegions([
+      {
+        x: trackX, y: SEEK_HIT_Y, w: trackW, h: SEEK_HIT_H, id: 'seek', label: '',
+        disabled: !seekEnabled,
+        onClick: (region, uv) => this._seekToUv(uv),
+      },
+      ...buttons,
+    ]);
 
     // Error / toast strip along the bottom edge, only when there is something
     // to say (frame errors outrank player errors, which outrank toasts).
@@ -784,6 +841,27 @@ class VrApp {
       ctx.fillText(ellipsize(ctx, message, W - 120), W / 2, H - 24);
       ctx.textAlign = 'left';
     }
+  }
+
+  /**
+   * Jump the playhead to the seek-bar position under `uv`. With scrub=true
+   * (trigger held while dragging) seeks are throttled to ~0.25 s steps so a
+   * fast drag does not spam the decoder / sync clock.
+   */
+  _seekToUv(uv, scrub = false) {
+    const dur = this.player.duration;
+    if (!dur || this.slideshow) return;
+    const trackW = this.playerPanel.pixelWidth - SEEK_SIDE * 2;
+    const frac = Math.max(0, Math.min(1, (uv.x * this.playerPanel.pixelWidth - SEEK_SIDE) / trackW));
+    if (scrub) {
+      const t = frac * dur;
+      if (this._scrubT !== null && Math.abs(t - this._scrubT) < 0.25) return;
+      this._scrubT = t;
+    } else {
+      this._scrubT = null;
+    }
+    this.player.seekTo(frac);
+    this.playerPanel.redraw();
   }
 
   // -------------------------------------------------------------------------

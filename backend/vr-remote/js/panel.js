@@ -79,11 +79,15 @@ export class UIPanel {
     this.redraw();
   }
 
-  /** Fire the clicked region's handler (unless disabled). Returns whether a region hit. */
+  /**
+   * Fire the clicked region's handler (unless disabled). Returns whether a
+   * region hit. The handler receives (region, uv) so position-sensitive
+   * controls (the seek bar) know where on the region the press landed.
+   */
   activate(uv) {
     const region = hitRegion(this.regions, uv.x, uv.y, this.pixelWidth, this.pixelHeight);
     if (!region || region.disabled || typeof region.onClick !== 'function') return false;
-    region.onClick();
+    region.onClick(region, uv);
     return true;
   }
 
