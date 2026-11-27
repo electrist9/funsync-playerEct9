@@ -125,6 +125,7 @@ class VrApp {
     this._screenDist = 2.6;  // flat-screen placement (left thumbstick; see _updateScreenControls)
     this._screenScale = 1;
     this._panelActiveUntil = 0; // player-panel auto-hide deadline (see _updatePanelFade)
+    this._playerPanelPointed = false; // any ray touching the player panel (see _updateHover)
     this.session = null; // active XR session (the VR exit buttons call session.end())
     this._raycaster = new THREE.Raycaster();
     this._tmpMatrix = new THREE.Matrix4();
@@ -242,10 +243,10 @@ class VrApp {
   }
 
   /**
-   * Headset-side "exit VR" (see the VR終了 buttons on both panels): end the
-   * XR session. The session's 'end' listener then runs _exitSession, which
-   * tears the scene down and restores the DOM overlay with [VR を開始], so
-   * the user can re-enter from the browser page. Safe to call from a panel
+   * Headset-side "exit VR" (see the VR終了 button on the library panel):
+   * end the XR session. The session's 'end' listener then runs _exitSession,
+   * which tears the scene down and restores the DOM overlay with [VR を開始],
+   * so the user can re-enter from the browser page. Safe to call from a panel
    * click inside the frame loop — the session tears down asynchronously,
    * after this frame finishes.
    */
@@ -424,19 +425,22 @@ class VrApp {
   /**
    * Auto-hide for the player control panel: while a video is playing and
    * nothing is looking at / touching the panel, it fades fully out of
-   * sight (opacity 0) so it never floats in front of the picture. A
-   * controller ray (or gaze when no controller is connected) RESTING ON
-   * the panel keeps it fully open for as long as it stays there — the
-   * fade countdown only restarts once the ray leaves — and pressing the
-   * trigger over it (see _select) also resets the countdown. Pausing, an
-   * error, or a toast keep it showing. The ghosted panel stays raycastable,
-   * so pointing where it was (then pressing) always brings it back.
+   * sight (opacity 0) so it never floats in front of the picture. A ray
+   * from EITHER controller (or gaze when no controller is connected)
+   * RESTING ON the panel keeps it fully open for as long as it stays
+   * there — even when the other hand's ray lands on the screen and takes
+   * the hover highlight — the fade countdown only restarts once both rays
+   * have left. Pressing the trigger over it (see _select) also resets the
+   * countdown. Pausing, an error, or a toast keep it showing. The ghosted
+   * panel stays raycastable, so pointing where it was (then pressing)
+   * always brings it back.
    */
   _updatePanelFade() {
     const panel = this.playerPanel;
     if (!panel) return;
     const now = Date.now();
     const pointed =
+      this._playerPanelPointed ||
       (this._hover && this._hover.mesh === panel.mesh) || panel.hoverId !== null;
     const mustShow =
       pointed ||
@@ -514,10 +518,17 @@ class VrApp {
 
   _updateHover() {
     let best = null;
+    // The player panel stays open while ANY ray touches it, even when the
+    // single closest hit across both controllers belongs to the other hand
+    // (e.g. the second controller resting over the screen). See _updatePanelFade.
+    let playerPointed = false;
     for (const controller of this.controllers) {
       this._rayFrom(controller);
       const hits = this._raycaster.intersectObjects(this._targets(), false);
       const hit = hits.length ? hits[0] : null;
+      if (hit && this.playerPanel && hits.some((h) => h.object === this.playerPanel.mesh)) {
+        playerPointed = true;
+      }
       // Clamp the visible ray: a surround sphere sits 8 m out, which would
       // otherwise stretch the pointer line across the room.
       controller.userData.ray.scale.z = hit ? Math.min(hit.distance, 4) : 4;
@@ -538,9 +549,11 @@ class VrApp {
       const hits = this._raycaster.intersectObjects(this._targets(), false);
       if (hits.length) {
         best = { controller: null, mesh: hits[0].object, uv: hits[0].uv, distance: hits[0].distance };
+        if (this.playerPanel && hits.some((h) => h.object === this.playerPanel.mesh)) playerPointed = true;
       }
     }
     this._hover = best;
+    this._playerPanelPointed = playerPointed;
 
     // Exactly one panel may show a hovered region at a time.
     const panels = [this.libraryPanel, this.playerPanel];
@@ -880,10 +893,10 @@ class VrApp {
     ctx.fill();
 
     const playing = !this.player.paused;
-    const bw = 138;
+    const bw = 152;
     const bh = 96;
-    const gap = 8;
-    const total = bw * 8 + gap * 7;
+    const gap = 10;
+    const total = bw * 7 + gap * 6;
     const x0 = (W - total) / 2;
     const y0 = 152;
 
@@ -899,17 +912,9 @@ class VrApp {
         !this._canSlideshow()),
       mk(6, 'projection', overrideButtonLabel(this.vrOverride),
         () => this._cycleProjectionOverride()),
-      mk(7, 'vr', 'VR終了', () => this._endVrSession()),
     ];
 
-    for (const r of buttons) {
-      // Exit VR gets a red palette so it never reads like a transport control.
-      if (r.id === 'vr') {
-        drawButton(ctx, r, this.playerPanel, { fontSize: 30, base: '#5a2438', hover: '#8a3a52', text: '#ffdfe3' });
-        continue;
-      }
-      drawButton(ctx, r, this.playerPanel, { fontSize: 30 });
-    }
+    for (const r of buttons) drawButton(ctx, r, this.playerPanel, { fontSize: 30 });
     // Seek strip first so a stray overlap can never steal a button press
     // (hitRegion lets later regions win).
     this.playerPanel.setRegions([
