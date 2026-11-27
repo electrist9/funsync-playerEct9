@@ -87,3 +87,111 @@ export function hitRegion(regions, u, v, pixelWidth, pixelHeight) {
   }
   return null;
 }
+
+// ---------------------------------------------------------------------------
+// Folder browsing helpers (pure path logic, unit-testable in plain Node).
+// Video records carry absolute Windows paths from the scanner; we only ever
+// treat them as opaque strings — the VR client never touches the filesystem.
+// ---------------------------------------------------------------------------
+
+/** Normalize separators to '/' and drop trailing ones ('' for invalid input). */
+export function normalizePath(path) {
+  const s = String(path || '').replace(/\\/g, '/');
+  const trimmed = s.replace(/\/+$/, '');
+  return trimmed;
+}
+
+/** Parent directory of a normalized path ('' when there is none). */
+export function parentDir(path) {
+  const s = normalizePath(path);
+  const i = s.lastIndexOf('/');
+  if (i < 0) return '';
+  return s.slice(0, i);
+}
+
+/** Last path segment (the whole string when there is no separator). */
+export function baseName(path) {
+  const s = normalizePath(path);
+  const i = s.lastIndexOf('/');
+  return i < 0 ? s : s.slice(i + 1);
+}
+
+/** Case-insensitive "child sits strictly inside parent" for normalized paths. */
+function isUnder(child, parent) {
+  if (!child || !parent) return false;
+  return child.toLowerCase().startsWith(parent.toLowerCase() + '/');
+}
+
+/**
+ * Split `videos` (already filtered/sorted) into the subfolders directly
+ * under `folder` plus the videos stored directly in it.
+ *
+ * `folder` is a normalized directory path, or null for the auto root — at
+ * the root the "subfolders" are the minimal set of directories that contain
+ * videos (one entry per source tree instead of every intermediate folder).
+ * Inside a folder, children are derived from the FIRST path segment below
+ * it, so intermediate levels always appear even when videos live deeper.
+ * Videos with no usable path show up as `direct` entries at the root only.
+ * Folder entries are {path, name, count} sorted by name; count includes
+ * videos in nested subfolders. Comparison is case-insensitive throughout
+ * (Windows paths), display keeps the first-seen casing.
+ */
+export function folderGroups(videos, folder) {
+  const uniqueParents = [];
+  const seen = new Set();
+  for (const v of videos) {
+    const p = parentDir(normalizePath(v.path));
+    if (!p) continue;
+    const k = p.toLowerCase();
+    if (!seen.has(k)) {
+      seen.add(k);
+      uniqueParents.push(p);
+    }
+  }
+  const normFolder = folder == null ? '' : normalizePath(folder);
+
+  let paths;
+  if (!normFolder) {
+    // Auto root: keep only the outermost containing directories.
+    const deduped = [];
+    const keys = new Set();
+    for (const p of uniqueParents) {
+      const k = p.toLowerCase();
+      if (keys.has(k)) continue;
+      keys.add(k);
+      deduped.push(p);
+    }
+    paths = deduped.filter((p) => !deduped.some((q) => q !== p && isUnder(p, q)));
+  } else {
+    // Drill exactly one level: first segment below the current folder.
+    const childMap = new Map();
+    for (const p of uniqueParents) {
+      if (!isUnder(p, normFolder)) continue;
+      const seg = p.slice(normFolder.length + 1).split('/')[0];
+      if (!seg) continue;
+      const full = normFolder + '/' + seg;
+      const k = full.toLowerCase();
+      if (!childMap.has(k)) childMap.set(k, full);
+    }
+    paths = [...childMap.values()];
+  }
+
+  const folders = paths
+    .map((path) => ({ path, name: baseName(path) || path }))
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+  for (const f of folders) {
+    const key = f.path.toLowerCase();
+    f.count = videos.reduce((n, v) => {
+      const p = parentDir(normalizePath(v.path));
+      const pk = p.toLowerCase();
+      return n + (pk === key || isUnder(p, f.path) ? 1 : 0);
+    }, 0);
+  }
+  const folderKey = normFolder.toLowerCase();
+  const direct = videos.filter((v) => {
+    const p = parentDir(normalizePath(v.path));
+    if (!p) return !normFolder; // path-less videos live at the root view
+    return p.toLowerCase() === folderKey;
+  });
+  return { folders, direct };
+}

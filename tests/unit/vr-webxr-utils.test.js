@@ -11,6 +11,10 @@ import {
   filterVideos,
   sortVideos,
   hitRegion,
+  normalizePath,
+  parentDir,
+  baseName,
+  folderGroups,
 } from '../../backend/vr-remote/js/util.js';
 
 describe('formatTime', () => {
@@ -126,5 +130,55 @@ describe('hitRegion', () => {
     // Overlap point inside both 'footer' and 'covers-footer-part'.
     const hit = hitRegion(regions, 0.9, 1 - 420 / 500, 1000, 500);
     expect(hit?.id).toBe('covers-footer-part');
+  });
+});
+
+describe('path helpers', () => {
+  it('normalizePath flips separators and trims trailing ones', () => {
+    expect(normalizePath('C:\\Videos\\Set A\\a.mp4')).toBe('C:/Videos/Set A/a.mp4');
+    expect(normalizePath('C:/Videos/')).toBe('C:/Videos');
+    expect(normalizePath('')).toBe('');
+    expect(normalizePath(undefined)).toBe('');
+  });
+
+  it('parentDir / baseName split at the last separator', () => {
+    expect(parentDir('C:/Videos/a.mp4')).toBe('C:/Videos');
+    expect(parentDir('a.mp4')).toBe('');
+    expect(parentDir('')).toBe('');
+    expect(baseName('C:/Videos/Set A')).toBe('Set A');
+    expect(baseName('a.mp4')).toBe('a.mp4');
+  });
+});
+
+describe('folderGroups', () => {
+  const videos = [
+    { id: 'a', path: 'C:\\Videos\\Set A\\a.mp4' },
+    { id: 'b', path: 'C:\\Videos\\Set A\\deep\\inner\\b.mp4' },
+    { id: 'c', path: 'C:\\videos\\SET B\\c.mp4' }, // case-differing root
+    { id: 'd', path: 'C:\\Videos\\d.mp4' },
+    { id: 'e', path: '' },
+  ];
+
+  it('auto root collapses to the minimal containing folders', () => {
+    const g = folderGroups(videos, null);
+    expect(g.folders.map((f) => [f.path, f.name, f.count])).toEqual([
+      ['C:/Videos', 'Videos', 4], // A + B + C (case-differing root collapses) + D
+    ]);
+    expect(g.direct.map((v) => v.id)).toEqual(['e']); // path-less stay at root
+  });
+
+  it('drills one level: Set A and Set B under C:/Videos', () => {
+    const g = folderGroups(videos, 'C:/Videos');
+    expect(g.folders.map((f) => [f.name, f.count])).toEqual([
+      ['Set A', 2], // a + b (b sits two levels deeper)
+      ['SET B', 1], // kept with its original casing
+    ]);
+    expect(g.direct.map((v) => v.id)).toEqual(['d']);
+  });
+
+  it('empty folder yields no groups', () => {
+    const g = folderGroups([], 'C:/Videos');
+    expect(g.folders).toEqual([]);
+    expect(g.direct).toEqual([]);
   });
 });

@@ -37,7 +37,7 @@ import { SlideshowModel, SlideshowRenderer } from './slideshow.js';
 import { VRScreen } from './vr-screen.js';
 import { resolveVRMode, nextOverride, modeLabel, overrideButtonLabel } from './vr-mode.js';
 import { parseSubtitles, activeCue } from './subtitles.js';
-import { formatTime } from './util.js';
+import { formatTime, baseName } from './util.js';
 
 const FONT = '"Noto Sans JP", "Hiragino Kaku Gothic ProN", Meiryo, sans-serif';
 const SORT_LABELS = { name: '名前', recent: '追加日', duration: '長さ' };
@@ -68,6 +68,34 @@ const SCREEN_DIST_MAX = 4.0;
 const SCREEN_SCALE_MIN = 0.2;
 const SCREEN_SCALE_MAX = 2.2;
 
+/**
+ * Word-break-free wrapping (works for space-less Japanese): greedily break
+ * characters at maxWidth and ellipsize whatever overflows maxLines.
+ */
+function wrapLines(ctx, text, maxWidth, maxLines) {
+  const all = [];
+  let line = '';
+  for (const ch of String(text)) {
+    if (ch === '\n') {
+      all.push(line);
+      line = '';
+      continue;
+    }
+    const test = line + ch;
+    if (line && ctx.measureText(test).width > maxWidth) {
+      all.push(line);
+      line = ch;
+    } else {
+      line = test;
+    }
+  }
+  all.push(line);
+  if (all.length <= maxLines) return all;
+  const kept = all.slice(0, maxLines - 1);
+  kept.push(ellipsize(ctx, all.slice(maxLines - 1).join(''), maxWidth));
+  return kept;
+}
+
 class VrApp {
   constructor() {
     this.renderer = null;
@@ -77,11 +105,10 @@ class VrApp {
 
     this.mode = 'library';
     this.library = new LibraryModel();
-    // Panel-fit paging: rows paint from y=150 at 72 px each, so 9 rows end
-    // at y=788 — clear of the toast strip drawn at H-128 and the paging
-    // buttons at H-96. (The model default of 12 overflowed the 960 px
-    // canvas, which is why the "N 本のビデオを読み込みました" toast landed
-    // on top of a video row.)
+    // Panel-fit window size: list rows paint from y=170 at 72 px each, so
+    // 9 rows end at y=818 — clear of the toast strip at H-128 and the
+    // scroll hint at H-52; the grid (3×3 tiles of 208 px) ends at 822.
+    // (The model default of 12 overflowed the 960 px canvas.)
     this.library.pageSize = 9;
     this.libraryPanel = null;
     this.playerPanel = null;
@@ -125,6 +152,7 @@ class VrApp {
     this._screenDist = 2.6;  // flat-screen placement (left thumbstick; see _updateScreenControls)
     this._screenScale = 1;
     this._panelActiveUntil = 0; // player-panel auto-hide deadline (see _updatePanelFade)
+    this._libScrollAcc = 0; // fractional right-stick library scroll carry (see _updateLibraryScroll)
     this.session = null; // active XR session (the VR exit buttons call session.end())
     this._raycaster = new THREE.Raycaster();
     this._tmpMatrix = new THREE.Matrix4();
@@ -386,6 +414,7 @@ class VrApp {
       this._updateSubtitle();
       if (this.vrScreen) this.vrScreen.recenter(this.renderer);
       this._updateScreenControls();
+      this._updateLibraryScroll();
       if (this.toast && Date.now() > this.toast.until) {
         this.toast = null;
         this._redrawActivePanel();
@@ -511,6 +540,44 @@ class VrApp {
     // subtitle hides just behind it so the panel still occludes captions.
     this.playerPanel.mesh.position.z = -dist;
     this.subtitlePanel.mesh.position.z = -dist - 0.1;
+  }
+
+  /**
+   * Right-thumbstick scrolling in library mode (paging buttons are gone —
+   * stick down advances the list, stick up rewinds). Fractional steps
+   * accumulate so slow tilts still register; the rate scales with tilt.
+   */
+  _updateLibraryScroll() {
+    if (this.mode !== 'library') {
+      this._libScrollAcc = 0;
+      return;
+    }
+    let y = 0;
+    for (const controller of this.controllers) {
+      const src = controller.userData.inputSource;
+      if (!src || src.handedness !== 'right') continue;
+      const gp = src.gamepad;
+      if (!gp || !gp.axes || gp.axes.length <= STICK_AXIS_Y) continue;
+      const ay = gp.axes[STICK_AXIS_Y] || 0;
+      if (Math.abs(ay) >= STICK_DEADZONE) y = ay; // gamepad Y: stick up = negative
+      break;
+    }
+    if (!y) {
+      this._libScrollAcc = 0;
+      return;
+    }
+    const mag = (Math.abs(y) - STICK_DEADZONE) / (1 - STICK_DEADZONE);
+    this._libScrollAcc += Math.sign(y) * mag * 0.3;
+    let delta = 0;
+    while (Math.abs(this._libScrollAcc) >= 1) {
+      const step = Math.sign(this._libScrollAcc);
+      this._libScrollAcc -= step;
+      delta += step;
+    }
+    if (!delta) return;
+    const before = this.library.scroll;
+    this.library.scrollBy(delta);
+    if (this.library.scroll !== before) this._redrawLibrary();
   }
 
   _targets() {
@@ -719,74 +786,170 @@ class VrApp {
     // through the panel on-device (reported on Quest).
     drawPanelBackground(ctx, W, H, { fill: '#0e101a' });
 
+    const lib = this.library;
+    const view = lib.view();
+
     ctx.textBaseline = 'middle';
     ctx.textAlign = 'left';
     ctx.fillStyle = '#e8ecf8';
     ctx.font = `600 44px ${FONT}`;
     ctx.fillText('FunSync VR — ライブラリ', 40, 64);
 
-    const view = this.library.view();
-    ctx.font = `26px ${FONT}`;
-    ctx.fillStyle = '#8b93ad';
-    ctx.fillText(`${view.total} 本 • ${view.page + 1}/${view.pages} ページ`, 40, 116);
-
-    // Header buttons: refresh + sort cycle.
+    // Header buttons (right to left): refresh, sort, view-mode, folder.
     const regions = [];
-    const sortLabel = `ソート: ${SORT_LABELS[this.library.sort]}`;
     ctx.font = `28px ${FONT}`;
-    const sortW = Math.max(220, ctx.measureText(sortLabel).width + 40);
-    regions.push({ x: W - 40 - 140 - 16 - sortW, y: 40, w: sortW, h: 64, id: 'sort', label: sortLabel,
+    const btnRight = W - 40;
+    const folderLabel = `フォルダ: ${lib.folderMode ? 'ON' : 'OFF'}`;
+    const viewLabel = `表示: ${lib.viewMode === 'grid' ? 'タイル' : 'リスト'}`;
+    const sortLabel = `ソート: ${SORT_LABELS[lib.sort]}`;
+    const width = (text) => Math.max(140, ctx.measureText(text).width + 40);
+    let bx = btnRight;
+    regions.push({ x: (bx -= 140), y: 40, w: 140, h: 64, id: 'refresh', label: '更新',
+      onClick: () => this._refreshLibrary() });
+    bx -= 16;
+    regions.push({ x: (bx -= width(sortLabel)), y: 40, w: width(sortLabel), h: 64, id: 'sort', label: sortLabel,
       onClick: () => {
-        const i = SORT_CYCLE.indexOf(this.library.sort);
-        this.library.setSort(SORT_CYCLE[(i + 1) % SORT_CYCLE.length]);
+        const i = SORT_CYCLE.indexOf(lib.sort);
+        lib.setSort(SORT_CYCLE[(i + 1) % SORT_CYCLE.length]);
         this._redrawLibrary();
       } });
-    regions.push({ x: W - 40 - 140, y: 40, w: 140, h: 64, id: 'refresh', label: '更新',
-      onClick: () => this._refreshLibrary() });
+    bx -= 16;
+    regions.push({ x: (bx -= width(viewLabel)), y: 40, w: width(viewLabel), h: 64, id: 'view', label: viewLabel,
+      onClick: () => { lib.setViewMode(lib.viewMode === 'grid' ? 'list' : 'grid'); this._redrawLibrary(); } });
+    bx -= 16;
+    regions.push({ x: (bx -= width(folderLabel)), y: 40, w: width(folderLabel), h: 64, id: 'foldermode', label: folderLabel,
+      onClick: () => { lib.setFolderMode(!lib.folderMode); this._redrawLibrary(); } });
 
-    // Rows.
-    const rowH = 72;
-    const startY = 150;
-    view.rows.forEach((video, i) => {
-      const y = startY + i * rowH;
-      const region = { x: 32, y, w: W - 64, h: rowH - 10, id: `video:${video.id}`, label: '',
-        onClick: () => this._openVideo(video) };
-      regions.push(region);
-
-      const hovered = this.libraryPanel.hoverId === region.id;
-      if (hovered) {
-        roundRect(ctx, region.x, region.y, region.w, region.h, 10);
-        ctx.fillStyle = '#232a44';
-        ctx.fill();
-      }
-      ctx.fillStyle = hovered ? '#ffffff' : '#c9d2e8';
-      ctx.font = `30px ${FONT}`;
-      ctx.textAlign = 'left';
-      let nameX = 56;
-      const badges = [];
-      if (video.hasFunscript) badges.push('F');
-      if (video.hasSubtitle) badges.push('S');
-      if (video.manualVRType === 'vr') badges.push('VR');
-      if (badges.length) {
-        const tag = `[${badges.join('')}]`;
-        ctx.fillStyle = '#7ea2ff';
-        ctx.fillText(tag, nameX, y + region.h / 2);
-        nameX += ctx.measureText(tag).width + 14;
-      }
-      ctx.fillStyle = hovered ? '#ffffff' : '#c9d2e8';
-      ctx.fillText(ellipsize(ctx, String(video.name || ''), W - nameX - 220), nameX, y + region.h / 2);
-      ctx.textAlign = 'right';
-      ctx.fillStyle = '#8b93ad';
-      ctx.font = `26px ${FONT}`;
-      ctx.fillText(formatTime(video.duration), W - 56, y + region.h / 2);
-      ctx.textAlign = 'left';
-    });
-
-    if (!view.rows.length) {
-      ctx.fillStyle = '#8b93ad';
-      ctx.font = `30px ${FONT}`;
-      ctx.fillText('ビデオが見つかりません。デスクトップでライブラリをスキャンしてください。', 56, startY + 40);
+    // Status line: totals + visible range (scroll position), plus a
+    // breadcrumb and an "up" button while drilled into a folder.
+    const inFolder = lib.folderMode && lib.folder !== null;
+    ctx.font = `26px ${FONT}`;
+    ctx.fillStyle = '#8b93ad';
+    const crumb = inFolder ? ` • 📂 ${baseName(lib.folder)}` : '';
+    const range = view.total ? ` • ${view.start + 1}–${view.end}` : '';
+    let statusX = 40;
+    if (inFolder) {
+      regions.push({ x: 40, y: 92, w: 150, h: 52, id: 'up', label: '↑ 上位へ',
+        onClick: () => { lib.setFolder(this._parentFolder(lib.folder)); this._redrawLibrary(); } });
+      statusX = 206;
     }
+    ctx.fillText(`${view.total} 本${range}${crumb}`, statusX, 118);
+
+    const startY = 170;
+    if (lib.viewMode === 'grid') {
+      // Tiles: 3×3 cards, names wrapped to two lines.
+      const cols = 3;
+      const gap = 16;
+      const tileW = Math.floor((W - 64 - gap * (cols - 1)) / cols);
+      const tileH = 208;
+      view.items.forEach((item, i) => {
+        const x = 32 + (i % cols) * (tileW + gap);
+        const y = startY + Math.floor(i / cols) * (tileH + 14);
+        const region = item.folder
+          ? { x, y, w: tileW, h: tileH, id: `folder:${item.folder.path}`, label: '',
+            onClick: () => { lib.setFolder(item.folder.path); this._redrawLibrary(); } }
+          : { x, y, w: tileW, h: tileH, id: `video:${item.video.id}`, label: '',
+            onClick: () => this._openVideo(item.video) };
+        regions.push(region);
+
+        const hovered = this.libraryPanel.hoverId === region.id;
+        roundRect(ctx, x, y, tileW, tileH, 10);
+        ctx.fillStyle = hovered ? '#232a44' : '#151a2c';
+        ctx.fill();
+
+        const text = hovered ? '#ffffff' : '#c9d2e8';
+        ctx.fillStyle = text;
+        ctx.font = `30px ${FONT}`;
+        const name = item.folder ? item.folder.name : String(item.video.name || '');
+        const lines = wrapLines(ctx, name, tileW - 36, 2);
+        lines.forEach((line, li) => ctx.fillText(line, x + 18, y + 36 + li * 38));
+        ctx.font = `24px ${FONT}`;
+        ctx.fillStyle = '#8b93ad';
+        if (item.folder) {
+          ctx.fillText(`📁 ${item.folder.count} 本`, x + 18, y + tileH - 26);
+        } else {
+          const badges = [];
+          if (item.video.hasFunscript) badges.push('F');
+          if (item.video.hasSubtitle) badges.push('S');
+          if (item.video.manualVRType === 'vr') badges.push('VR');
+          if (badges.length) {
+            ctx.fillStyle = '#7ea2ff';
+            ctx.fillText(`[${badges.join('')}]`, x + 18, y + tileH - 26);
+          }
+          ctx.fillStyle = '#8b93ad';
+          ctx.textAlign = 'right';
+          ctx.fillText(formatTime(item.video.duration), x + tileW - 18, y + tileH - 26);
+          ctx.textAlign = 'left';
+        }
+      });
+    } else {
+      // List: full-width rows (folders first when folder mode is on).
+      const rowH = 72;
+      view.items.forEach((item, i) => {
+        const y = startY + i * rowH;
+        const region = item.folder
+          ? { x: 32, y, w: W - 64, h: rowH - 10, id: `folder:${item.folder.path}`, label: '',
+            onClick: () => { lib.setFolder(item.folder.path); this._redrawLibrary(); } }
+          : { x: 32, y, w: W - 64, h: rowH - 10, id: `video:${item.video.id}`, label: '',
+            onClick: () => this._openVideo(item.video) };
+        regions.push(region);
+
+        const hovered = this.libraryPanel.hoverId === region.id;
+        if (hovered) {
+          roundRect(ctx, region.x, region.y, region.w, region.h, 10);
+          ctx.fillStyle = '#232a44';
+          ctx.fill();
+        }
+        ctx.fillStyle = hovered ? '#ffffff' : '#c9d2e8';
+        ctx.font = `30px ${FONT}`;
+        ctx.textAlign = 'left';
+        let nameX = 56;
+        if (item.folder) {
+          ctx.fillText('📁', nameX, y + region.h / 2);
+          nameX += ctx.measureText('📁 ').width;
+          ctx.fillText(ellipsize(ctx, item.folder.name, W - nameX - 220), nameX, y + region.h / 2);
+          ctx.textAlign = 'right';
+          ctx.fillStyle = '#8b93ad';
+          ctx.font = `26px ${FONT}`;
+          ctx.fillText(`${item.folder.count} 本`, W - 56, y + region.h / 2);
+          ctx.textAlign = 'left';
+          return;
+        }
+        const video = item.video;
+        const badges = [];
+        if (video.hasFunscript) badges.push('F');
+        if (video.hasSubtitle) badges.push('S');
+        if (video.manualVRType === 'vr') badges.push('VR');
+        if (badges.length) {
+          const tag = `[${badges.join('')}]`;
+          ctx.fillStyle = '#7ea2ff';
+          ctx.fillText(tag, nameX, y + region.h / 2);
+          nameX += ctx.measureText(tag).width + 14;
+        }
+        ctx.fillStyle = hovered ? '#ffffff' : '#c9d2e8';
+        ctx.fillText(ellipsize(ctx, String(video.name || ''), W - nameX - 220), nameX, y + region.h / 2);
+        ctx.textAlign = 'right';
+        ctx.fillStyle = '#8b93ad';
+        ctx.font = `26px ${FONT}`;
+        ctx.fillText(formatTime(video.duration), W - 56, y + region.h / 2);
+        ctx.textAlign = 'left';
+      });
+    }
+
+    if (!view.items.length) {
+      ctx.fillStyle = '#8b93ad';
+      ctx.font = `30px ${FONT}`;
+      ctx.fillText(lib.folderMode
+        ? 'このフォルダにビデオはありません。'
+        : 'ビデオが見つかりません。デスクトップでライブラリをスキャンしてください。', 56, startY + 40);
+    }
+
+    // Scrolling hint (paging buttons were replaced by the right stick).
+    ctx.fillStyle = '#5b6380';
+    ctx.font = `24px ${FONT}`;
+    ctx.textAlign = 'center';
+    ctx.fillText('右スティック上下でスクロール', W / 2, H - 52);
+    ctx.textAlign = 'left';
 
     // Status line: toasts and frame errors surface here in library mode
     // (the head-attached OSD is gone; every message rides on the open panel).
@@ -799,26 +962,30 @@ class VrApp {
       ctx.textAlign = 'left';
     }
 
-    // Paging buttons last so they paint over rows and win overlapping hits.
-    regions.push({ x: 32, y: H - 96, w: 140, h: 64, id: 'prev', label: '◀ 前',
-      disabled: view.page === 0,
-      onClick: () => { this.library.prevPage(); this._redrawLibrary(); } });
-    regions.push({ x: W - 172, y: H - 96, w: 140, h: 64, id: 'next', label: '次 ▶',
-      disabled: view.page + 1 >= view.pages,
-      onClick: () => { this.library.nextPage(); this._redrawLibrary(); } });
     // Exit VR bottom-center: always visible in library mode.
     regions.push({ x: W / 2 - 80, y: H - 96, w: 160, h: 64, id: 'vr', label: 'VR終了',
       onClick: () => this._endVrSession() });
 
     for (const r of regions) {
-      if (r.id.startsWith('video:')) continue; // rows have their own painting
+      if (r.id.startsWith('video:') || r.id.startsWith('folder:')) continue; // items paint themselves
       if (r.id === 'vr') {
         drawButton(ctx, r, this.libraryPanel, { fontSize: 28, base: '#5a2438', hover: '#8a3a52', text: '#ffdfe3' });
+        continue;
+      }
+      if (r.id === 'up') {
+        drawButton(ctx, r, this.libraryPanel, { fontSize: 24 });
         continue;
       }
       drawButton(ctx, r, this.libraryPanel, { fontSize: 28 });
     }
     this.libraryPanel.setRegions(regions);
+  }
+
+  /** Parent of a library folder path (null = back to the auto root). */
+  _parentFolder(folder) {
+    const s = String(folder || '').replace(/\\/g, '/').replace(/\/+$/, '');
+    const i = s.lastIndexOf('/');
+    return i < 0 ? null : s.slice(0, i);
   }
 
   // -------------------------------------------------------------------------
