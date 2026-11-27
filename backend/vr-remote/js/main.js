@@ -404,19 +404,42 @@ class VrApp {
         new THREE.Vector3(0, 0, 0),
         new THREE.Vector3(0, 0, -1),
       ]);
-      const ray = new THREE.Line(rayGeo, new THREE.LineBasicMaterial({ color: 0x86a8ff }));
-      // Draw the pointer ray ON TOP of every panel. The panels use
-      // depthTest:false with high renderOrder, so without this the ray line
-      // (renderOrder 0) is painted over by a panel it points at — inside the
-      // opaque folder picker the ray vanished entirely and gave no pointer
-      // cue (field report). Forcing the ray last keeps it visible over the
-      // picker, the video, and the fade-ghosted player row alike.
+      const ray = new THREE.Line(
+        rayGeo,
+        // transparent:true is ESSENTIAL: WebGL three.js renders the opaque
+        // pass fully BEFORE any transparent object, and every panel material
+        // is transparent — an opaque ray line could never render on top of a
+        // panel no matter its renderOrder/depthTest (field report: the ray
+        // vanished wherever it crossed the folder picker AND the library
+        // list panel). In the transparent pass, renderOrder 10 sorts it after
+        // all panels (max 4) so it stays visible everywhere.
+        new THREE.LineBasicMaterial({
+          color: 0xa8c4ff,
+          transparent: true,
+          depthTest: false,
+        }),
+      );
       ray.renderOrder = 10;
-      ray.material.depthTest = false;
       ray.frustumCulled = false;
       ray.scale.z = 4;
       controller.add(ray);
       controller.userData.ray = ray;
+      // Cursor dot at the exact hit point — the 1px ray alone is hard to
+      // track over busy panels, and this directly answers "where does the
+      // ray point". Child of the controller, parked along -z each frame.
+      const cursor = new THREE.Mesh(
+        new THREE.SphereGeometry(0.014, 16, 16),
+        new THREE.MeshBasicMaterial({
+          color: 0xffffff,
+          transparent: true,
+          opacity: 0.9,
+          depthTest: false,
+        }),
+      );
+      cursor.renderOrder = 11;
+      cursor.visible = false;
+      controller.add(cursor);
+      controller.userData.cursor = cursor;
       // Gaze input is a fallback ONLY while no tracked-pointer device is
       // providing rays. While a controller is connected the head must not
       // steer the selection (field report: nodding in the library slid the
@@ -708,6 +731,15 @@ class VrApp {
       // Clamp the visible ray: a surround sphere sits 8 m out, which would
       // otherwise stretch the pointer line across the room.
       controller.userData.ray.scale.z = hit ? Math.min(hit.distance, 4) : 4;
+      const cursor = controller.userData.cursor;
+      if (cursor) {
+        if (hit) {
+          cursor.visible = true;
+          cursor.position.z = -controller.userData.ray.scale.z;
+        } else {
+          cursor.visible = false;
+        }
+      }
       if (hit && (!best || hit.distance < best.distance)) {
         best = { controller, mesh: hit.object, uv: hit.uv, distance: hit.distance };
       }
