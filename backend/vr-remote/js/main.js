@@ -69,9 +69,10 @@ const SEEK_HIT_H = 36;
 const STICK_AXIS_X = 2;
 const STICK_AXIS_Y = 3;
 const STICK_DEADZONE = 0.25;
-// Left thumbstick click (gamepad button 2, the xr-standard thumbstick
-// button) resets distance/size to the built-in defaults.
-const STICK_BUTTON = 2;
+// Left thumbstick click resets distance/size to the built-in defaults.
+// Quest Browser reports it as gamepad button 3 (verified on-device; the
+// xr-standard thumbstick index 2 never fires there).
+const STICK_BUTTON = 3;
 const DEFAULT_SCREEN_DIST = 2.6;
 const DEFAULT_SCREEN_SCALE = 1;
 const SCREEN_DIST_MIN = 0.5;
@@ -431,7 +432,6 @@ class VrApp {
       if (this.vrScreen) this.vrScreen.recenter(this.renderer);
       this._updateScreenControls();
       this._updateStickButtons();
-      this._debugButtonPresses();
       this._updateLibraryScroll();
       this._tickLibraryScroll();
       if (this.toast && Date.now() > this.toast.until) {
@@ -575,30 +575,6 @@ class VrApp {
       // No flat quad to reset in the library or in surround-sphere modes.
       if (this.mode !== 'player' || !this.vrScreen || this.vrScreen.sphere) continue;
       this._resetScreenPlacement();
-    }
-  }
-
-  // TEMP DIAGNOSTIC: surface every controller button press as a toast so we
-  // can learn, on real hardware, whether the thumbstick click reaches WebXR
-  // at all (and under which index). Remove once the binding is settled.
-  _debugButtonPresses() {
-    for (const controller of this.controllers) {
-      const src = controller.userData.inputSource;
-      const buttons = src && src.gamepad && src.gamepad.buttons;
-      if (!buttons || !buttons.length) continue;
-      let state = controller.userData._btnDbg;
-      if (!state || state.length !== buttons.length) {
-        state = controller.userData._btnDbg = new Array(buttons.length).fill(false);
-      }
-      for (let i = 0; i < buttons.length; i++) {
-        const pressed = !!(buttons[i] && buttons[i].pressed);
-        if (pressed && !state[i] && i !== 0) {
-          // Skip the trigger (index 0): it is the panel select button.
-          this.toast = { text: `DEBUG ${src.handedness} button ${i}`, until: Date.now() + 2000 };
-          this._redrawActivePanel();
-        }
-        state[i] = pressed;
-      }
     }
   }
 
