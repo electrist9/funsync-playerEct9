@@ -157,6 +157,7 @@ class VrApp {
     this._screenScale = 1;
     this._panelActiveUntil = 0; // player-panel auto-hide deadline (see _updatePanelFade)
     this._libScrollAcc = 0; // fractional right-stick library scroll carry (see _updateLibraryScroll)
+    this._thumbs = new Map(); // video.id → { img, state, attempts } (grid tiles)
     this.session = null; // active XR session (the VR exit buttons call session.end())
     this._raycaster = new THREE.Raycaster();
     this._tmpMatrix = new THREE.Matrix4();
@@ -721,6 +722,48 @@ class VrApp {
     }
   }
 
+  /**
+   * Grid-tile thumbnail, mirroring the 2D remote's wireThumb ladder:
+   * /api/media/thumb/<id> returns a 1x1 transparent PNG while ffmpeg is
+   * still generating the frame (and 404s until the registry knows the
+   * video), so a placeholder or error re-requests with a cache-buster on
+   * a growing delay until the real JPEG lands or we give up. Entries are
+   * keyed by video id and survive redraws/scrolling; the redraw on the
+   * first real image repaints just that panel.
+   */
+  _thumbFor(video) {
+    if (!video?.thumbUrl) return null;
+    const cached = this._thumbs.get(video.id);
+    if (cached) return cached;
+    if (this._thumbs.size > 600) return null; // memory guard on huge libraries
+    const entry = { img: new Image(), state: 'loading', attempts: 0 };
+    this._thumbs.set(video.id, entry);
+    entry.img.onload = () => {
+      if (entry.img.naturalWidth > 1) {
+        entry.state = 'ready';
+        if (this.mode === 'library' && this.libraryPanel) this._redrawLibrary();
+      } else {
+        this._thumbRetry(entry, video); // placeholder: still generating
+      }
+    };
+    entry.img.onerror = () => this._thumbRetry(entry, video);
+    entry.img.src = video.thumbUrl;
+    return entry;
+  }
+
+  _thumbRetry(entry, video) {
+    if (entry.attempts >= 15) {
+      entry.state = 'failed';
+      return;
+    }
+    entry.attempts++;
+    const delay = entry.attempts <= 10 ? Math.min(1000 * entry.attempts, 8000) : 30000;
+    setTimeout(() => {
+      const url = video.thumbUrl;
+      entry.img.src = url + (url.includes('?') ? '&' : '?') + '_r=' + entry.attempts;
+    }, delay);
+  }
+
   async _refreshLibrary(initial = false) {
     try {
       const videos = await fetchVideos();
@@ -936,16 +979,51 @@ class VrApp {
         regions.push(region);
 
         const hovered = this.libraryPanel.hoverId === region.id;
-        roundRect(ctx, x, y, tileW, tileH, 10);
-        ctx.fillStyle = hovered ? '#232a44' : '#151a2c';
-        ctx.fill();
+
+        // Video tiles get the ffmpeg thumbnail (cover-cropped, full-bleed)
+        // with a bottom scrim so the name/footer stay readable over any
+        // frame. Until a thumbnail is ready the tile keeps its old flat
+        // card look, so cold caches never look broken.
+        const thumb = item.video ? this._thumbFor(item.video) : null;
+        const hasThumb = !!thumb && thumb.state === 'ready';
+        if (hasThumb) {
+          ctx.save();
+          roundRect(ctx, x, y, tileW, tileH, 10);
+          ctx.clip();
+          const img = thumb.img;
+          const scale = Math.max(tileW / (img.naturalWidth || tileW), tileH / (img.naturalHeight || tileH));
+          const dw = (img.naturalWidth || tileW) * scale;
+          const dh = (img.naturalHeight || tileH) * scale;
+          ctx.drawImage(img, x + (tileW - dw) / 2, y + (tileH - dh) / 2, dw, dh);
+          if (hovered) {
+            ctx.fillStyle = 'rgba(126,162,255,0.16)';
+            ctx.fillRect(x, y, tileW, tileH);
+          }
+          const grad = ctx.createLinearGradient(0, y + tileH - 120, 0, y + tileH);
+          grad.addColorStop(0, 'rgba(12,16,28,0)');
+          grad.addColorStop(1, 'rgba(12,16,28,0.94)');
+          ctx.fillStyle = grad;
+          ctx.fillRect(x, y + tileH - 120, tileW, 120);
+          ctx.restore();
+          roundRect(ctx, x, y, tileW, tileH, 10);
+          ctx.strokeStyle = 'rgba(201,210,232,0.16)';
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        } else {
+          roundRect(ctx, x, y, tileW, tileH, 10);
+          ctx.fillStyle = hovered ? '#232a44' : '#151a2c';
+          ctx.fill();
+        }
 
         const text = hovered ? '#ffffff' : '#c9d2e8';
         ctx.fillStyle = text;
         ctx.font = `30px ${FONT}`;
         const name = item.folder ? item.folder.name : String(item.video.name || '');
         const lines = wrapLines(ctx, name, tileW - 36, 2);
-        lines.forEach((line, li) => ctx.fillText(line, x + 18, y + 36 + li * 38));
+        // With a thumbnail the name sits on the scrim above the footer;
+        // without one it keeps its original top-aligned position.
+        const nameBase = hasThumb ? y + tileH - 58 - (lines.length - 1) * 38 : y + 36;
+        lines.forEach((line, li) => ctx.fillText(line, x + 18, nameBase + li * 38));
         ctx.font = `24px ${FONT}`;
         ctx.fillStyle = '#8b93ad';
         if (item.folder) {
