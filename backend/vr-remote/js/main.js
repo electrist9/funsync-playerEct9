@@ -125,6 +125,7 @@ class VrApp {
     this._screenDist = 2.6;  // flat-screen placement (left thumbstick; see _updateScreenControls)
     this._screenScale = 1;
     this._panelActiveUntil = 0; // player-panel auto-hide deadline (see _updatePanelFade)
+    this.session = null; // active XR session (the VR exit buttons call session.end())
     this._raycaster = new THREE.Raycaster();
     this._tmpMatrix = new THREE.Matrix4();
     this._origin = new THREE.Vector3();
@@ -179,6 +180,7 @@ class VrApp {
       document.body.appendChild(this.renderer.domElement);
       await this.renderer.xr.setSession(session);
 
+      this.session = session;
       session.addEventListener('end', () => this._exitSession());
 
       this.scene = new THREE.Scene();
@@ -216,6 +218,7 @@ class VrApp {
   }
 
   _exitSession() {
+    this.session = null;
     this.renderer.setAnimationLoop(null);
     this._disableSlideshow();
     if (this.vrScreen) {
@@ -236,6 +239,23 @@ class VrApp {
     const button = document.getElementById('enter-vr');
     button.disabled = false;
     document.getElementById('overlay-status').textContent = 'VR セッションを終了しました。';
+  }
+
+  /**
+   * Headset-side "exit VR" (see the VR終了 buttons on both panels): end the
+   * XR session. The session's 'end' listener then runs _exitSession, which
+   * tears the scene down and restores the DOM overlay with [VR を開始], so
+   * the user can re-enter from the browser page. Safe to call from a panel
+   * click inside the frame loop — the session tears down asynchronously,
+   * after this frame finishes.
+   */
+  _endVrSession() {
+    const session = this.session;
+    if (!session) return;
+    try {
+      const p = session.end();
+      if (p && p.catch) p.catch(() => { /* already ending */ });
+    } catch { /* already ending */ }
   }
 
   // -------------------------------------------------------------------------
@@ -776,9 +796,16 @@ class VrApp {
     regions.push({ x: W - 172, y: H - 96, w: 140, h: 64, id: 'next', label: '次 ▶',
       disabled: view.page + 1 >= view.pages,
       onClick: () => { this.library.nextPage(); this._redrawLibrary(); } });
+    // Exit VR bottom-center: always visible in library mode.
+    regions.push({ x: W / 2 - 80, y: H - 96, w: 160, h: 64, id: 'vr', label: 'VR終了',
+      onClick: () => this._endVrSession() });
 
     for (const r of regions) {
       if (r.id.startsWith('video:')) continue; // rows have their own painting
+      if (r.id === 'vr') {
+        drawButton(ctx, r, this.libraryPanel, { fontSize: 28, base: '#5a2438', hover: '#8a3a52', text: '#ffdfe3' });
+        continue;
+      }
       drawButton(ctx, r, this.libraryPanel, { fontSize: 28 });
     }
     this.libraryPanel.setRegions(regions);
@@ -853,10 +880,10 @@ class VrApp {
     ctx.fill();
 
     const playing = !this.player.paused;
-    const bw = 152;
+    const bw = 138;
     const bh = 96;
-    const gap = 10;
-    const total = bw * 7 + gap * 6;
+    const gap = 8;
+    const total = bw * 8 + gap * 7;
     const x0 = (W - total) / 2;
     const y0 = 152;
 
@@ -872,9 +899,17 @@ class VrApp {
         !this._canSlideshow()),
       mk(6, 'projection', overrideButtonLabel(this.vrOverride),
         () => this._cycleProjectionOverride()),
+      mk(7, 'vr', 'VR終了', () => this._endVrSession()),
     ];
 
-    for (const r of buttons) drawButton(ctx, r, this.playerPanel, { fontSize: 30 });
+    for (const r of buttons) {
+      // Exit VR gets a red palette so it never reads like a transport control.
+      if (r.id === 'vr') {
+        drawButton(ctx, r, this.playerPanel, { fontSize: 30, base: '#5a2438', hover: '#8a3a52', text: '#ffdfe3' });
+        continue;
+      }
+      drawButton(ctx, r, this.playerPanel, { fontSize: 30 });
+    }
     // Seek strip first so a stray overlap can never steal a button press
     // (hitRegion lets later regions win).
     this.playerPanel.setRegions([
