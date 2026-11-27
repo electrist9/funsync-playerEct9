@@ -677,11 +677,15 @@ class VrApp {
 
   _targets() {
     if (this.mode === 'library') return [this.libraryPanel.mesh];
-    const targets = [this.screenMesh];
-    // Raycasts hit invisible meshes too, so the hidden control row must be
-    // swapped OUT (not just overlaid) while the picker is open.
-    if (this.folderPanel && this._fp) targets.push(this.folderPanel.mesh);
-    else targets.push(this.playerPanel.mesh);
+    // The folder picker is modal for raycasts too: it is always DRAWN in
+    // front (depthTest off, renderOrder 4) but sits at a fixed 2.2 m, while
+    // the video quad lives at the user's saved screen distance. Whenever the
+    // screen is closer than that, the quad geometrically wins every press —
+    // the picker looks tappable but never gets the hit. So while it is open,
+    // ONLY the picker may be hit; the hidden control row and the screen/sphere
+    // are swapped out entirely (raycasts hit invisible meshes too).
+    if (this.folderPanel && this._fp) return [this.folderPanel.mesh];
+    const targets = [this.screenMesh, this.playerPanel.mesh];
     if (this.vrScreen && this.vrScreen.sphere) targets.push(this.vrScreen.sphere);
     return targets;
   }
