@@ -45,6 +45,9 @@ const SORT_CYCLE = ['name', 'recent', 'duration'];
 // Library display settings (folder ON/OFF, tile/list, sort) persist in the
 // browser's localStorage so reopening the VR page keeps them.
 const SETTINGS_KEY = 'funsync.vr.library-settings';
+// Flat-screen placement (left-thumbstick distance + size) persists in the
+// browser's localStorage so the next VR session opens where the user left it.
+const PLAYER_SETTINGS_KEY = 'funsync.vr.player-settings';
 // Player-panel auto-hide: after this much idle time during playback the
 // control panel fades fully out of view (see _updatePanelFade). The mesh
 // stays visible=true at opacity 0, which keeps it raycastable so aiming
@@ -155,6 +158,8 @@ class VrApp {
     this._scrubT = null;  // last scrub seek time (throttle; see _seekToUv)
     this._screenDist = 2.6;  // flat-screen placement (left thumbstick; see _updateScreenControls)
     this._screenScale = 1;
+    this._loadPlayerSettings(); // may override both from localStorage
+    this._playerSaveTimer = null; // debounced placement save (see _schedulePlayerSave)
     this._panelActiveUntil = 0; // player-panel auto-hide deadline (see _updatePanelFade)
     this._libScrollAcc = 0; // fractional right-stick library scroll carry (see _updateLibraryScroll)
     this._thumbs = new Map(); // video.id → { img, state, attempts } (grid tiles)
@@ -259,6 +264,7 @@ class VrApp {
   }
 
   _exitSession() {
+    this._flushPlayerSave();
     this.session = null;
     this.renderer.setAnimationLoop(null);
     this._disableSlideshow();
@@ -540,12 +546,8 @@ class VrApp {
     if (dist === this._screenDist && scale === this._screenScale) return;
     this._screenDist = dist;
     this._screenScale = scale;
-    this.vrScreen.setPlacement(dist, scale);
-    // Panel sits in the screen's own plane (no overlap: panel top edge
-    // y 0.725 stays below the screen's pinned bottom edge y 0.75); the
-    // subtitle hides just behind it so the panel still occludes captions.
-    this.playerPanel.mesh.position.z = -dist;
-    this.subtitlePanel.mesh.position.z = -dist - 0.1;
+    this._applyScreenPlacement();
+    this._schedulePlayerSave();
   }
 
   /**
@@ -722,6 +724,74 @@ class VrApp {
     }
   }
 
+  // Flat-screen placement persistence. Only _updateScreenControls changes
+  // it (per-frame while the stick is held), so writes are debounced and
+  // flushed on leaving playback / the session. Values are re-validated on
+  // load so a tampered or stale entry can never place the screen outside
+  // the thumbstick range.
+  _loadPlayerSettings() {
+    let raw = null;
+    try {
+      raw = localStorage.getItem(PLAYER_SETTINGS_KEY);
+    } catch {
+      return; // Storage blocked: defaults stay.
+    }
+    if (!raw) return;
+    let saved;
+    try {
+      saved = JSON.parse(raw);
+    } catch {
+      return;
+    }
+    if (!saved || typeof saved !== 'object') return;
+    if (Number.isFinite(saved.screenDist)) {
+      this._screenDist = Math.max(SCREEN_DIST_MIN, Math.min(SCREEN_DIST_MAX, saved.screenDist));
+    }
+    if (Number.isFinite(saved.screenScale)) {
+      this._screenScale = Math.max(SCREEN_SCALE_MIN, Math.min(SCREEN_SCALE_MAX, saved.screenScale));
+    }
+  }
+
+  _savePlayerSettings() {
+    try {
+      localStorage.setItem(PLAYER_SETTINGS_KEY, JSON.stringify({
+        screenDist: this._screenDist,
+        screenScale: this._screenScale,
+      }));
+    } catch {
+      // Storage full/blocked: placement simply stays session-only.
+    }
+  }
+
+  _schedulePlayerSave() {
+    if (this._playerSaveTimer) clearTimeout(this._playerSaveTimer);
+    this._playerSaveTimer = setTimeout(() => {
+      this._playerSaveTimer = null;
+      this._savePlayerSettings();
+    }, 800);
+  }
+
+  _flushPlayerSave() {
+    if (this._playerSaveTimer) {
+      clearTimeout(this._playerSaveTimer);
+      this._playerSaveTimer = null;
+    }
+    this._savePlayerSettings();
+  }
+
+  // Apply the stored/computed placement to the quad and the panels that
+  // ride in its plane. Called on open (so a reloaded page restores it) and
+  // from the thumbstick handler.
+  _applyScreenPlacement() {
+    const dist = this._screenDist;
+    this.vrScreen.setPlacement(dist, this._screenScale);
+    // Panel sits in the screen's own plane (no overlap: panel top edge
+    // y 0.725 stays below the screen's pinned bottom edge y 0.75); the
+    // subtitle hides just behind it so the panel still occludes captions.
+    this.playerPanel.mesh.position.z = -dist;
+    this.subtitlePanel.mesh.position.z = -dist - 0.1;
+  }
+
   /**
    * Grid-tile thumbnail, mirroring the 2D remote's wireThumb ladder:
    * /api/media/thumb/<id> returns a 1x1 transparent PNG while ffmpeg is
@@ -803,6 +873,9 @@ class VrApp {
     this.vrMode = resolveVRMode(video, this.vrOverride);
     this.vrScreen.applyMode(this.renderer, this.vrMode);
     this._updateGridVisibility();
+    // Restore the persisted (or last-session) screen distance/size; the
+    // quad's own defaults only match the built-in ones, not stored values.
+    this._applyScreenPlacement();
     if (this.vrMode.projection !== 'flat') {
       this.toast = { text: `VR 投影: ${modeLabel(this.vrMode)}`, until: Date.now() + 3000 };
     }
@@ -867,6 +940,7 @@ class VrApp {
   }
 
   _closePlayback(toastText) {
+    this._flushPlayerSave();
     this._disableSlideshow();
     // Tear the surround sphere down so nothing hangs around in library mode.
     if (this.vrScreen) this.vrScreen.applyMode(this.renderer, { projection: 'flat', stereo: 'mono', fovDeg: 0 });
