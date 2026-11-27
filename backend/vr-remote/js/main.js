@@ -707,7 +707,9 @@ class VrApp {
     const { ctx } = this.libraryPanel;
     const W = this.libraryPanel.pixelWidth;
     const H = this.libraryPanel.pixelHeight;
-    drawPanelBackground(ctx, W, H);
+    // Fully opaque fill: the default 94% alpha let the floor grid ghost
+    // through the panel on-device (reported on Quest).
+    drawPanelBackground(ctx, W, H, { fill: '#0e101a' });
 
     ctx.textBaseline = 'middle';
     ctx.textAlign = 'left';
@@ -819,7 +821,9 @@ class VrApp {
     const { ctx } = this.playerPanel;
     const W = this.playerPanel.pixelWidth;
     const H = this.playerPanel.pixelHeight;
-    drawPanelBackground(ctx, W, H);
+    // Fully opaque fill: the default 94% alpha let the floor grid ghost
+    // through the panel on-device (reported on Quest).
+    drawPanelBackground(ctx, W, H, { fill: '#0e101a' });
 
     ctx.textBaseline = 'middle';
 
