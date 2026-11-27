@@ -25,7 +25,8 @@ describe('LibraryModel view caching', () => {
     const b = m.view();
     expect(b).toBe(a);
     expect(a.total).toBe(2496);
-    expect(a.items.length).toBe(12);
+    // pageSize + 1 buffer item for the row sliding in during smooth scroll.
+    expect(a.items.length).toBe(13);
   });
 
   it('recomputes after setSort', () => {
@@ -42,6 +43,7 @@ describe('LibraryModel view caching', () => {
   it('recomputes after setVideos and resets the scroll', () => {
     const m = new LibraryModel(mkVideos(30));
     m.scrollBy(25);
+    while (m.tickScroll()) { /* ease to target */ }
     const v1 = m.view();
     m.setVideos(mkVideos(3));
     const v2 = m.view();
@@ -51,23 +53,46 @@ describe('LibraryModel view caching', () => {
     expect(v2.end).toBe(3);
   });
 
-  it('scrollBy windows items and clamps at both ends', () => {
+  it('scrollBy eases the window toward its target and clamps at both ends', () => {
     const m = new LibraryModel(mkVideos(30));
     const v0 = m.view();
     expect(v0.start).toBe(0);
     expect(v0.items[0].video.name).toBe('Video 0000');
     m.scrollBy(10);
+    // Smooth scrolling: the stick moves the target, the view eases there.
+    expect(m.view().start).toBe(0);
+    expect(m.tickScroll()).toBe(true);
+    expect(m.view().start).toBeLessThan(10);
+    while (m.tickScroll()) { /* settle */ }
+    expect(m.scroll).toBe(10);
     const v1 = m.view();
     expect(v1.start).toBe(10);
-    expect(v1.items.length).toBe(12);
+    expect(v1.items.length).toBe(13); // +1 buffer item for the sliding row
     expect(v1.items[0].video.name).toBe('Video 0010');
     // Past the end: the window slides back to show a full page of items.
     m.scrollBy(999);
+    while (m.tickScroll()) { /* settle */ }
     const clamped = m.view();
     expect(clamped.start).toBe(30 - 12);
     expect(clamped.end).toBe(30);
     m.scrollTo(-5);
     expect(m.view().start).toBe(0);
+  });
+
+  it('grid mode steps whole rows and rests on row edges', () => {
+    const m = new LibraryModel(mkVideos(20)); // pageSize 12 → raw max 8
+    m.setViewMode('grid');
+    expect(m.scrollStep()).toBe(3);
+    expect(m.maxScroll(20)).toBe(6); // floor(8/3)*3: last stop shows whole rows
+    m.scrollBy(m.scrollStep()); // one notch = one row of three tiles
+    while (m.tickScroll()) { /* settle */ }
+    expect(m.view().start).toBe(3);
+    m.scrollBy(1); // sub-row deltas quantize away in grid mode
+    expect(m.view().start).toBe(3);
+    m.scrollBy(99);
+    while (m.tickScroll()) { /* settle */ }
+    expect(m.view().start).toBe(6);
+    expect(m.view().end).toBe(18);
   });
 
   it('view changes (folder mode, view mode) invalidate the cache', () => {

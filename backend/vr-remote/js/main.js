@@ -415,6 +415,7 @@ class VrApp {
       if (this.vrScreen) this.vrScreen.recenter(this.renderer);
       this._updateScreenControls();
       this._updateLibraryScroll();
+      this._tickLibraryScroll();
       if (this.toast && Date.now() > this.toast.until) {
         this.toast = null;
         this._redrawActivePanel();
@@ -544,8 +545,13 @@ class VrApp {
 
   /**
    * Right-thumbstick scrolling in library mode (paging buttons are gone —
-   * stick down advances the list, stick up rewinds). Fractional steps
-   * accumulate so slow tilts still register; the rate scales with tilt.
+   * stick down advances the list, stick up rewinds). The stick drives the
+   * model's scroll *target* in whole notches: grid mode steps one row (3
+   * items) at a time (scrollStep), list mode one row. Fractional tilts
+   * accumulate so slow tilts still register; the step rate scales with
+   * tilt, normalized by 1/scrollStep() so both modes travel at roughly
+   * the same pixels-per-second. The visible motion eases toward the
+   * target in _tickLibraryScroll — smooth scrolling, not item jumps.
    */
   _updateLibraryScroll() {
     if (this.mode !== 'library') {
@@ -567,17 +573,25 @@ class VrApp {
       return;
     }
     const mag = (Math.abs(y) - STICK_DEADZONE) / (1 - STICK_DEADZONE);
-    this._libScrollAcc += Math.sign(y) * mag * 0.3;
-    let delta = 0;
+    const step = this.library.scrollStep();
+    this._libScrollAcc += Math.sign(y) * mag * (0.25 / step);
+    let steps = 0;
     while (Math.abs(this._libScrollAcc) >= 1) {
-      const step = Math.sign(this._libScrollAcc);
-      this._libScrollAcc -= step;
-      delta += step;
+      const dir = Math.sign(this._libScrollAcc);
+      this._libScrollAcc -= dir;
+      steps += dir;
     }
-    if (!delta) return;
-    const before = this.library.scroll;
-    this.library.scrollBy(delta);
-    if (this.library.scroll !== before) this._redrawLibrary();
+    if (steps) this.library.scrollBy(steps * step);
+  }
+
+  /**
+   * Ease the library scroll toward its target (LibraryModel.tickScroll)
+   * and repaint while it moves. Separate from the stick handler so the
+   * animation still finishes after the stick returns to center.
+   */
+  _tickLibraryScroll() {
+    if (this.mode !== 'library') return;
+    if (this.library.tickScroll()) this._redrawLibrary();
   }
 
   _targets() {
@@ -849,15 +863,29 @@ class VrApp {
     ctx.fillText(`${view.total} 本${range}${crumb}`, statusX, 124);
 
     const startY = 180;
+    // The scrollable band is clipped so partial rows slide under the
+    // header and stop above the VR終了 row while the smooth-scroll
+    // easing animates — instead of items popping in per row.
+    const bandTop = 156;
+    const bandBottom = 856;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(24, bandTop, W - 48, bandBottom - bandTop);
+    ctx.clip();
     if (lib.viewMode === 'grid') {
       // Tiles: 3×3 cards, names wrapped to two lines.
       const cols = 3;
       const gap = 16;
       const tileW = Math.floor((W - 64 - gap * (cols - 1)) / cols);
       const tileH = 208;
+      const rowPitch = tileH + 14;
       view.items.forEach((item, i) => {
-        const x = 32 + (i % cols) * (tileW + gap);
-        const y = startY + Math.floor(i / cols) * (tileH + 14);
+        // Global index placement: the slice can start mid-row while the
+        // easing runs, and fractional lib.scroll shifts rows smoothly.
+        const gi = view.start + i;
+        const x = 32 + (gi % cols) * (tileW + gap);
+        const y = startY + (Math.floor(gi / cols) - lib.scroll / cols) * rowPitch;
+        if (y + tileH <= bandTop || y >= bandBottom) return; // fully outside the band
         const region = item.folder
           ? { x, y, w: tileW, h: tileH, id: `folder:${item.folder.path}`, label: '',
             onClick: () => { lib.setFolder(item.folder.path); this._redrawLibrary(); } }
@@ -899,7 +927,9 @@ class VrApp {
       // List: full-width rows (folders first when folder mode is on).
       const rowH = 72;
       view.items.forEach((item, i) => {
-        const y = startY + i * rowH;
+        const gi = view.start + i;
+        const y = startY + (gi - lib.scroll) * rowH;
+        if (y + rowH <= bandTop || y >= bandBottom) return; // fully outside the band
         const region = item.folder
           ? { x: 32, y, w: W - 64, h: rowH - 10, id: `folder:${item.folder.path}`, label: '',
             onClick: () => { lib.setFolder(item.folder.path); this._redrawLibrary(); } }
@@ -948,6 +978,7 @@ class VrApp {
         ctx.textAlign = 'left';
       });
     }
+    ctx.restore();
 
     if (!view.items.length) {
       ctx.fillStyle = '#8b93ad';
