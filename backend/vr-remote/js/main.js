@@ -2002,18 +2002,29 @@ class VrApp {
       }
     }
 
-    // Directory list.
-    const listTop = st && st.error ? 196 : 160;
-    const rowH = 74;
-    const rows = 8;
+    // Directory tiles: a 3×3 folder grid, styled like the library grid.
+    const gridTop = st && st.error ? 196 : 160;
+    const cols = 3;
+    const rows = 3;
+    const perPage = cols * rows;
+    const gap = 16;
+    const tileW = Math.floor((W - 64 - gap * (cols - 1)) / cols);
+    const tileH = 180;
+    const rowPitch = tileH + 14;
     const dirs = st && !st.loading ? st.dirs : [];
-    const pageCount = Math.max(1, Math.ceil(dirs.length / rows));
+    const pageCount = Math.max(1, Math.ceil(dirs.length / perPage));
     const page = Math.min(Math.max(0, st ? st.page : 0), pageCount - 1);
+    // Path equality for the "configured" highlight: separators and drive
+    // letter case may differ between config and browse responses.
+    const samePath = (a, b) => {
+      const n = (p) => String(p).replace(/[\\/]+/g, '/').replace(/\/+$/, '').toLowerCase();
+      return n(a) === n(b);
+    };
     if (st && st.loading) {
       ctx.textAlign = 'center';
       ctx.fillStyle = '#8b93ad';
       ctx.font = `600 30px ${FONT}`;
-      ctx.fillText('読み込み中…', W / 2, listTop + 90);
+      ctx.fillText('読み込み中…', W / 2, gridTop + 240);
       ctx.textAlign = 'left';
     } else if (!dirs.length) {
       ctx.textAlign = 'center';
@@ -2021,24 +2032,44 @@ class VrApp {
       ctx.font = `600 30px ${FONT}`;
       ctx.fillText(
         st && st.path ? '下位にフォルダはありません — 現在地を設定できます' : '参照できるフォルダがありません（メディアソース／ドライブ）',
-        W / 2, listTop + 90,
+        W / 2, gridTop + 240,
       );
       ctx.textAlign = 'left';
     } else {
-      ctx.font = `600 30px ${FONT}`;
-      for (let i = 0; i < rows; i++) {
-        const d = dirs[page * rows + i];
+      for (let i = 0; i < perPage; i++) {
+        const d = dirs[page * perPage + i];
         if (!d) break;
-        const y = listTop + i * rowH;
+        const x = 32 + (i % cols) * (tileW + gap);
+        const y = gridTop + Math.floor(i / cols) * rowPitch;
+        const cx = x + tileW / 2;
         const hovered = panel.hoverId === `dir${i}`;
-        roundRect(ctx, 40, y + 4, W - 80, rowH - 8, 12);
+        roundRect(ctx, x, y, tileW, tileH, 12);
         ctx.fillStyle = hovered ? '#3d4a7a' : '#232a40';
         ctx.fill();
+        // The folder that is currently configured gets a gold frame so the
+        // picker (which now opens right on top of it) makes that obvious.
+        const isCurrent = !!(st && st.current && d.path && samePath(d.path, st.current));
+        if (isCurrent) {
+          ctx.strokeStyle = '#ffd76a';
+          ctx.lineWidth = 3;
+          roundRect(ctx, x + 1.5, y + 1.5, tileW - 3, tileH - 3, 11);
+          ctx.stroke();
+        }
+        // Big folder glyph, name below — everything centered in the tile.
+        ctx.textAlign = 'center';
         ctx.fillStyle = '#e8ecf8';
-        const name = ellipsize(ctx, `📁 ${d.name || d.path}`, W - 110);
-        ctx.fillText(name, 60, y + rowH / 2);
+        ctx.font = `600 56px ${FONT}`;
+        ctx.fillText('📁', cx, y + 62);
+        ctx.font = `600 26px ${FONT}`;
+        ctx.fillText(ellipsize(ctx, d.name || d.path, tileW - 24), cx, y + tileH - 44);
+        if (isCurrent) {
+          ctx.fillStyle = '#ffd76a';
+          ctx.font = `600 20px ${FONT}`;
+          ctx.fillText('設定済み', cx, y + tileH - 16);
+        }
+        ctx.textAlign = 'left';
         regions.push({
-          x: 40, y, w: W - 80, h: rowH, id: `dir${i}`, label: '',
+          x, y, w: tileW, h: tileH, id: `dir${i}`, label: '',
           disabled: !!(st && (st.loading || st.busy)),
           onClick: () => this._fpLoad(d.path),
         });
@@ -2046,7 +2077,7 @@ class VrApp {
     }
 
     // Pager row (only with more than one page of folders).
-    if (dirs.length > rows) {
+    if (dirs.length > perPage) {
       const py = 800;
       const pager = [];
       if (page > 0) {
