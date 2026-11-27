@@ -55,6 +55,19 @@ const SEEK_CY = 112;    // track centre line (y)
 const SEEK_HIT_Y = 96;  // invisible touch strip around the track
 const SEEK_HIT_H = 36;
 
+// Left-thumbstick control of the flat (2D) screen: up/down = viewing
+// distance, left/right = size. Quest Browser exposes the left thumbstick
+// on gamepad axes 2/3 (0/1 is the legacy touchpad pair, 4/5 the right
+// stick). Rates are per frame at full tilt; deadzone keeps resting
+// thumbs from drifting the screen.
+const STICK_AXIS_X = 2;
+const STICK_AXIS_Y = 3;
+const STICK_DEADZONE = 0.25;
+const SCREEN_DIST_MIN = 1.6;
+const SCREEN_DIST_MAX = 6.0;
+const SCREEN_SCALE_MIN = 0.5;
+const SCREEN_SCALE_MAX = 2.2;
+
 class VrApp {
   constructor() {
     this.renderer = null;
@@ -109,6 +122,8 @@ class VrApp {
     this._hover = null; // { controller, mesh, uv, distance }
     this._playerSig = ''; // player-panel refresh gate (see _playerSignature)
     this._scrubT = null;  // last scrub seek time (throttle; see _seekToUv)
+    this._screenDist = 2.6;  // flat-screen placement (left thumbstick; see _updateScreenControls)
+    this._screenScale = 1;
     this._panelActiveUntil = 0; // player-panel auto-hide deadline (see _updatePanelFade)
     this._panelWasPointed = false; // edge-detect aiming at the panel
     this._raycaster = new THREE.Raycaster();
@@ -297,13 +312,16 @@ class VrApp {
       // highlighted video row up/down).
       controller.userData.connected = false;
       controller.userData.selecting = false;
+      controller.userData.inputSource = null; // XRInputSource: gamepad axes for the thumbstick
       controller.addEventListener('connected', (e) => {
         controller.userData.connected = !!(e.data && e.data.targetRayMode === 'tracked-pointer');
         controller.userData.selecting = false;
+        controller.userData.inputSource = e.data || null;
       });
       controller.addEventListener('disconnected', () => {
         controller.userData.connected = false;
         controller.userData.selecting = false;
+        controller.userData.inputSource = null;
       });
       // Trigger hold state drives seek-bar scrubbing (see _updateHover);
       // selectstart still fires the normal press action.
@@ -340,6 +358,7 @@ class VrApp {
       if (this.slideshow) this._slideshowTick();
       this._updateSubtitle();
       if (this.vrScreen) this.vrScreen.recenter(this.renderer);
+      this._updateScreenControls();
       if (this.toast && Date.now() > this.toast.until) {
         this.toast = null;
         this._redrawActivePanel();
@@ -427,6 +446,43 @@ class VrApp {
   /** True while at least one tracked-pointer input source is connected. */
   _hasTrackedController() {
     return this.controllers.some((c) => c.userData.connected);
+  }
+
+  /**
+   * Left thumbstick drives the flat (2D) screen: stick up/down pushes it
+   * farther / pulls it closer, left/right grows / shrinks it. The control
+   * panel and subtitle ride along at their fixed offsets in front of the
+   * screen so they stay reachable at any distance; the screen's bottom
+   * edge stays pinned above the panel at any size (see VRScreen). Ignored
+   * in the library and in surround-sphere modes (there is no quad there).
+   */
+  _updateScreenControls() {
+    if (this.mode !== 'player' || !this.vrScreen || this.vrScreen.sphere) return;
+    let x = 0;
+    let y = 0;
+    for (const controller of this.controllers) {
+      const src = controller.userData.inputSource;
+      if (!src || src.handedness !== 'left') continue;
+      const gp = src.gamepad;
+      if (!gp || !gp.axes || gp.axes.length <= STICK_AXIS_Y) continue;
+      const ax = gp.axes[STICK_AXIS_X] || 0;
+      const ay = gp.axes[STICK_AXIS_Y] || 0;
+      if (Math.abs(ax) >= STICK_DEADZONE) x = ax;
+      if (Math.abs(ay) >= STICK_DEADZONE) y = ay; // gamepad Y: stick up = negative
+      break;
+    }
+    if (!x && !y) return;
+    const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+    // Stick up (y negative) pushes the screen away, like physically
+    // shoving it; right grows it. Tilt depth scales the rate.
+    const dist = clamp(this._screenDist - y * 0.04, SCREEN_DIST_MIN, SCREEN_DIST_MAX);
+    const scale = clamp(this._screenScale + x * 0.015, SCREEN_SCALE_MIN, SCREEN_SCALE_MAX);
+    if (dist === this._screenDist && scale === this._screenScale) return;
+    this._screenDist = dist;
+    this._screenScale = scale;
+    this.vrScreen.setPlacement(dist, scale);
+    this.playerPanel.mesh.position.z = -dist + 0.25;
+    this.subtitlePanel.mesh.position.z = -dist + 0.1;
   }
 
   _targets() {

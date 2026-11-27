@@ -25,6 +25,10 @@ import { SPHERE_VERT, EQUIRECT_FRAG, FISHEYE_FRAG } from './vr-shaders.js';
 
 const STEREO_CODE = { mono: 0, sbs: 1, tb: 2 };
 
+// The flat quad's bottom edge is pinned this high so a thumbstick-enlarged
+// screen grows upward and never covers the control panel below it.
+const SCREEN_BOTTOM_Y = 0.75;
+
 export class VRScreen {
   /**
    * @param {THREE.Texture} texture the VideoTexture / CanvasTexture to show
@@ -40,6 +44,13 @@ export class VRScreen {
       new THREE.MeshBasicMaterial({ map: texture, toneMapped: false }),
     );
     this.quad.position.set(0, 1.65, -2.6);
+
+    // Flat-screen placement state (aspect scale × thumbstick placement; see
+    // setAspect / setPlacement). Defaults reproduce the constructor layout.
+    this._ax = 1;
+    this._ay = 1;
+    this._dist = 2.6;
+    this._scale = 1;
 
     this.sphere = null;
     this.mode = { projection: 'flat', stereo: 'mono', fovDeg: 0 };
@@ -60,9 +71,9 @@ export class VRScreen {
    * Fit the flat quad to a source's aspect ratio (only matters in flat
    * mode; the surround sphere always wraps the full frame). The quad is
    * built 3.2 × 1.8 m (16:9), so a source of any other ratio would be
-   * stretched — scale it down one axis instead, centred, keeping the same
-   * mid-height position. Called from the video's loadedmetadata event and
-   * when the slideshow swaps in its 16:9 canvas.
+   * stretched — scale it down one axis instead, keeping the bottom edge
+   * pinned (see _applyQuad). Called from the video's loadedmetadata event
+   * and when the slideshow swaps in its 16:9 canvas.
    */
   setAspect(width, height) {
     const w = Number(width);
@@ -77,7 +88,27 @@ export class VRScreen {
       sh = MAX_H;
       sw = MAX_H * a;
     }
-    this.quad.scale.set(sw / MAX_W, sh / MAX_H, 1);
+    this._ax = sw / MAX_W;
+    this._ay = sh / MAX_H;
+    this._applyQuad();
+  }
+
+  /**
+   * Thumbstick-driven placement for the flat screen: viewing distance in
+   * metres and a size multiplier (both already clamped by the caller).
+   * The quad's bottom edge stays pinned at SCREEN_BOTTOM_Y, so enlarging
+   * the picture grows it upward, clear of the control panel underneath.
+   */
+  setPlacement(dist, scale) {
+    this._dist = dist;
+    this._scale = scale;
+    this._applyQuad();
+  }
+
+  _applyQuad() {
+    const halfH = 0.9 * this._ay * this._scale; // visual half-height (m)
+    this.quad.scale.set(this._ax * this._scale, this._ay * this._scale, 1);
+    this.quad.position.set(0, SCREEN_BOTTOM_Y + halfH, -this._dist);
   }
 
   /**
