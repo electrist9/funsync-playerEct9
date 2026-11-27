@@ -69,10 +69,12 @@ const SEEK_HIT_H = 36;
 const STICK_AXIS_X = 2;
 const STICK_AXIS_Y = 3;
 // Folder-picker grid: 3 tile columns, 3 rows visible at rest — the right
-// thumbstick scrolls whole rows (step FP_COLS) over a 9-tile window,
-// exactly like the library grid.
+// thumbstick scrolls whole rows (step FP_COLS) over a 12-tile window,
+// exactly like the library grid. The error strip shifts the grid down
+// by 36px, which only leaves room for three rows then.
 const FP_COLS = 3;
-const FP_VISIBLE_ROWS = 3;
+const FP_VISIBLE_ROWS = 4;
+const FP_ERROR_ROWS = 3;
 const STICK_DEADZONE = 0.25;
 // Left thumbstick click resets distance/size to the built-in defaults.
 // Quest Browser reports it as gamepad button 3 (verified on-device; the
@@ -751,8 +753,10 @@ class VrApp {
     if (!steps) return;
     // Clamp like LibraryModel.maxScroll in grid mode: the row-aligned
     // window still scrolls far enough to reveal the final partial row.
+    // (An error strip shrinks the visible window to FP_ERROR_ROWS rows.)
     const total = st.dirs ? st.dirs.length : 0;
-    const pageSize = FP_COLS * FP_VISIBLE_ROWS;
+    const rowsVisible = st.error ? FP_ERROR_ROWS : FP_VISIBLE_ROWS;
+    const pageSize = FP_COLS * rowsVisible;
     const aligned = Math.ceil(total / FP_COLS) * FP_COLS - pageSize;
     const max = Math.max(0, Math.floor(aligned / FP_COLS) * FP_COLS);
     const next = Math.min(max, Math.max(0, st.scrollTarget + steps * FP_COLS));
@@ -2068,11 +2072,11 @@ class VrApp {
     // Directory tiles: a 3-column folder grid scrolled smoothly with the
     // right thumbstick (paging is gone) — same feel as the library grid.
     const cols = FP_COLS;
-    const rows = FP_VISIBLE_ROWS;
+    const rows = st && st.error ? FP_ERROR_ROWS : FP_VISIBLE_ROWS;
     const gridTop = st && st.error ? 196 : 160;
     const gap = 16;
     const tileW = Math.floor((W - 64 - gap * (cols - 1)) / cols);
-    const tileH = 180;
+    const tileH = 166;
     const rowPitch = tileH + 14;
     const bandBottom = gridTop + rows * rowPitch;
     const dirs = st && !st.loading ? st.dirs : [];
@@ -2087,7 +2091,7 @@ class VrApp {
       ctx.textAlign = 'center';
       ctx.fillStyle = '#8b93ad';
       ctx.font = `600 30px ${FONT}`;
-      ctx.fillText('読み込み中…', W / 2, gridTop + 240);
+      ctx.fillText('読み込み中…', W / 2, gridTop + (rows * rowPitch) / 2);
       ctx.textAlign = 'left';
     } else if (!dirs.length) {
       ctx.textAlign = 'center';
@@ -2095,7 +2099,7 @@ class VrApp {
       ctx.font = `600 30px ${FONT}`;
       ctx.fillText(
         st && st.path ? '下位にフォルダはありません — 現在地を設定できます' : '参照できるフォルダがありません（メディアソース／ドライブ）',
-        W / 2, gridTop + 240,
+        W / 2, gridTop + (rows * rowPitch) / 2,
       );
       ctx.textAlign = 'left';
     } else {
