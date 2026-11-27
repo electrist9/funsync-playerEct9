@@ -39,6 +39,7 @@ export class RemoteBridge {
     this.onPhoneSwitchVariant = null;  // (label, ip) => {} — phone tapped a variant in the player view
     this.onPhoneOrgasmHold = null;     // (active, ip) => {} — phone orgasm button press/release (F2)
     this.onPhoneSetOffset = null;      // (device, ms, ip) => {} — phone offset slider (F4)
+    this.onSlideshowFolderChanged = null; // (path) => {} — backend (VR picker) wrote player.slideshowFolder
     this.onBridgeOpen = null;          // () => {}
     this.onBridgeClose = null;         // () => {}
   }
@@ -190,6 +191,16 @@ export class RemoteBridge {
         // the videoId so downstream can resolve the script.
         if (this.onPhoneConnected && msg.videoId && this._dedupConnect(ip, msg.videoId)) {
           this.onPhoneConnected(ip, msg.videoId, msg.videoPath);
+        }
+        break;
+      case 'slideshow-folder-changed':
+        // Server-originated (no `ip`): the backend persisted
+        // settings.player.slideshowFolder from the VR picker. Re-apply the
+        // same value through the store so electron-conf's cached copy stays
+        // current — a later desktop save would otherwise rewrite the whole
+        // store and roll the change back.
+        if (this.onSlideshowFolderChanged && typeof msg.path === 'string') {
+          this.onSlideshowFolderChanged(msg.path);
         }
         break;
       default:

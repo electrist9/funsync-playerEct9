@@ -62,6 +62,23 @@ KICK_REPLACED = "Another device took over this session."
 KICK_OBSERVER_REPLACED = "Replaced by a newer observer."
 
 
+def has_observer() -> bool:
+    """True while a desktop observer socket is connected."""
+    return _observer is not None
+
+
+async def notify_observer(payload: dict) -> bool:
+    """Push a server-originated message to the desktop observer, if any.
+
+    Used by routes/slideshow.py after changing a desktop-owned setting from
+    the backend: the running desktop keeps the whole config store in memory
+    (electron-conf) and rewrites it on any of its own saves, so it must
+    learn the new value or it could roll the change back. The renderer's
+    remote-bridge handles the message type; unknown types are ignored.
+    """
+    return await _safe_send(_observer, payload)
+
+
 async def _safe_send(ws: WebSocket | None, payload: dict) -> bool:
     """Send JSON, swallow errors. Returns False on failure."""
     if ws is None:

@@ -19,7 +19,10 @@ Electron, so the backend exposes the SAME configured folder
 
 Listing mirrors electron/slideshow-images.js: same extension whitelist,
 dot-file/dot-directory skipping, natural (numeric-aware) sort by basename,
-hard cap at MAX_IMAGES. Folder selection itself stays desktop-only.
+hard cap at MAX_IMAGES. Folder selection is NOT desktop-only: the VR picker
+uses GET /browse (one level of the tree, roots = video sources + drives) and
+PUT /folder (merge-preserving atomic write of settings.player.slideshowFolder
+plus an observer push so a running desktop adopts the change).
 """
 
 import hashlib
@@ -224,6 +227,159 @@ async def slideshow_images():
             for i in range(len(images))
         ],
     }
+
+
+# --- folder browsing + selection (VR picker) --------------------------------
+
+# The desktop settings own player.slideshowFolder (config.json), but the VR
+# client can now change it too. Writing the file is done as a merge-
+# preserving read-modify-write, and after every backend-side write the
+# observer (remote_sync) is notified so a RUNNING desktop — electron-conf
+# caches the whole store in memory and rewrites it on any change — adopts
+# the new value instead of later clobbering it with a full save.
+
+def _browse_roots() -> list:
+    """Root folders the browse endpoint may list. Enabled video sources keep
+    their display names; on Windows every drive root is also browsable, on
+    POSIX the filesystem root. Listing exposes DIRECTORY NAMES only, never
+    file contents, and the backend is LAN-bound — the same trust level as
+    the existing video/thumbnail/slideshow streaming endpoints."""
+    from routes.media import get_sources  # lazy import: avoid cycles
+    roots = []
+    seen = set()
+    for s in get_sources():
+        if s.get("enabled") is False:
+            continue
+        p = s.get("path") or ""
+        if not p or not os.path.isdir(p):
+            continue
+        rp = os.path.realpath(p)
+        if rp in seen:
+            continue
+        seen.add(rp)
+        name = s.get("name") or os.path.basename(p.rstrip("\\/")) or p
+        roots.append({"name": str(name), "path": rp})
+    if os.name == "nt":
+        for letter in "CDEFGHIJKLMNOPQRSTUVWXYZ":
+            drive = f"{letter}:\\"
+            if os.path.isdir(drive):
+                roots.append({"name": drive, "path": drive})
+    else:
+        roots.append({"name": "/", "path": "/"})
+    return roots
+
+
+def _within(root: str, path: str) -> bool:
+    """True when `path` is `root` or below it (case-normalized on Windows)."""
+    rr = os.path.normcase(os.path.realpath(root)).rstrip("\\/")
+    rp = os.path.normcase(os.path.realpath(path))
+    if not rr:
+        return True  # POSIX filesystem root contains everything
+    return rp == rr or rp.startswith(rr + os.sep)
+
+
+def _root_for(path: str) -> str:
+    """Realpath of the browse root containing `path`, or "" when none does."""
+    for root in _browse_roots():
+        if _within(root["path"], path):
+            return os.path.realpath(root["path"])
+    return ""
+
+
+@router.get("/browse")
+async def slideshow_browse(path: str | None = None):
+    """One level of the folder tree for the VR slideshow picker.
+
+    No `path` → the browse roots (enabled video sources + drive roots).
+    Otherwise the immediate sub-directories of `path`, naturally sorted,
+    dot-directories skipped. Sub-paths outside the roots 403."""
+    if not path:
+        return {
+            "path": "",
+            "parent": None,
+            "dirs": [{"name": r["name"], "path": r["path"]} for r in _browse_roots()],
+        }
+    if not os.path.isdir(path):
+        raise HTTPException(status_code=404, detail="folder not found")
+    if not _root_for(path):
+        raise HTTPException(status_code=403, detail="folder not browsable")
+    names = []
+    try:
+        with os.scandir(path) as it:
+            for e in it:
+                if e.name.startswith("."):
+                    continue
+                try:
+                    if e.is_dir():
+                        names.append(e.name)
+                except OSError:
+                    continue
+    except OSError:
+        raise HTTPException(status_code=404, detail="folder not readable")
+    names.sort(key=natural_compare_key)
+    parent = os.path.dirname(os.path.normpath(path))
+    if parent == os.path.normpath(path) or not _root_for(parent):
+        parent = None  # stop the picker's "up" at the browse root (no 403 dead-end)
+    return {
+        "path": path,
+        "parent": parent,
+        "dirs": [{"name": n, "path": os.path.join(path, n)} for n in names],
+    }
+
+
+@router.put("/folder")
+async def slideshow_set_folder(payload: dict):
+    """Set settings.player.slideshowFolder from the VR picker ({path} body).
+
+    Merge-preserving: config.json is read, only the player.slideshowFolder
+    key is touched, and the result is written atomically (tmp + rename).
+    Afterwards the observer is pushed a slideshow-folder-changed message so
+    the running desktop's cached store stays current (no-op when the
+    desktop is closed; the file write stands on its own then)."""
+    folder = payload.get("path") if isinstance(payload, dict) else None
+    if not isinstance(folder, str) or not folder:
+        raise HTTPException(status_code=400, detail="path required")
+    folder = os.path.abspath(folder)
+    if not os.path.isdir(folder):
+        raise HTTPException(status_code=404, detail="folder not found")
+    if not _root_for(folder):
+        raise HTTPException(status_code=403, detail="folder not browsable")
+
+    user_data_dir = get_user_data_dir()
+    if not user_data_dir:
+        raise HTTPException(status_code=503, detail="server storage unavailable")
+    config_path = os.path.join(user_data_dir, "config.json")
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            data = {}
+    except FileNotFoundError:
+        data = {}
+    except (OSError, json.JSONDecodeError, ValueError):
+        # Corrupt config.json: refuse rather than clobber the user's store.
+        raise HTTPException(status_code=500, detail="could not read config.json")
+    settings = data.get("settings")
+    if not isinstance(settings, dict):
+        settings = {}
+    player = settings.get("player")
+    if not isinstance(player, dict):
+        player = {}
+    player["slideshowFolder"] = folder
+    settings["player"] = player
+    data["settings"] = settings
+
+    tmp_path = config_path + ".tmp"
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, config_path)
+    except OSError:
+        raise HTTPException(status_code=500, detail="could not write config.json")
+
+    from routes.remote_sync import notify_observer  # lazy import: avoid cycles
+    await notify_observer({"type": "slideshow-folder-changed", "path": folder})
+    return {"ok": True}
 
 
 # --- image bytes (mounted at /api/media/slideshow) ---------------------------

@@ -2490,6 +2490,17 @@ class App {
     this.remoteBridge.onPhoneSetOffset = (device, ms) => {
       this._applyRemoteOffset(device, ms);
     };
+    // The VR player panel persisted settings.player.slideshowFolder through
+    // the backend (config.json). Re-apply the SAME value through the store
+    // so electron-conf's in-memory copy stays current — any later desktop
+    // save rewrites the whole store and would roll the file change back.
+    this.remoteBridge.onSlideshowFolderChanged = (path) => {
+      try {
+        this.settings.set('player.slideshowFolder', path);
+      } catch (err) {
+        console.warn('[Remote] slideshow-folder-changed handler failed:', err);
+      }
+    };
   }
 
   /**
