@@ -196,6 +196,14 @@ class VrApp {
       this.grid = new THREE.GridHelper(12, 24, 0x2a3050, 0x171c2c);
       this.grid.material.transparent = true;
       this.grid.material.opacity = 0.5;
+      // Draw the grid BEFORE the other transparent objects. The player
+      // panel keeps depthWrite off (so its opacity-0 ghost never punches
+      // depth holes), and three sorts transparents by object-center
+      // distance — the grid's center (origin) is nearest, so it would
+      // otherwise paint its lines OVER the panel in flat mode ("the
+      // panel is see-through, I can see the grid"). Forcing it first lets
+      // the panel blend over it instead.
+      this.grid.renderOrder = -1;
       this.scene.add(this.grid);
 
       this._buildLibraryPanel();
