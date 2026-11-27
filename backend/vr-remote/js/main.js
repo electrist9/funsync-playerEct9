@@ -1815,21 +1815,39 @@ class VrApp {
    */
   _openFolderPicker() {
     if (!this.folderPanel || this._fp) return;
-    this._fp = { path: '', parent: null, dirs: [], page: 0, loading: true, busy: false, error: null, current: null };
+    const st = this._fp = { path: '', parent: null, dirs: [], page: 0, loading: true, busy: false, error: null, current: null };
     if (this.playerPanel) this.playerPanel.mesh.visible = false;
     this.folderPanel.clearHover();
     this.folderPanel.mesh.visible = true;
-    this._fpLoad(null);
-    // Best effort: show which folder is configured right now.
-    fetch('/api/remote/slideshow/config', { cache: 'no-store' })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((cfg) => {
-        if (this._fp && cfg && typeof cfg.folder === 'string') {
-          this._fp.current = cfg.folder;
-          this.folderPanel.redraw();
-        }
-      })
-      .catch(() => { /* purely informational */ });
+    this._fpOpen(st);
+  }
+
+  // Open the picker AT the currently configured slideshow folder (field
+  // request), falling back to the root list when unset, missing or not
+  // browsable. The backend only reveals cfg.folder for folders inside a
+  // registered source root, so a stale/closed picker never dereferences it.
+  async _fpOpen(st) {
+    let start = null;
+    try {
+      const res = await fetch('/api/remote/slideshow/config', { cache: 'no-store' });
+      const cfg = res.ok ? await res.json() : null;
+      if (this._fp !== st) return; // closed meanwhile
+      if (cfg && typeof cfg.folder === 'string') {
+        st.current = cfg.folder;
+        if (cfg.configured && cfg.folderExists) start = cfg.folder;
+      }
+    } catch (err) {
+      // No config — just start at the root list below.
+    }
+    if (this._fp !== st) return;
+    await this._fpLoad(start);
+    if (this._fp !== st) return;
+    if (start && st.error) {
+      // The configured folder went un-browsable between the config fetch
+      // and the browse: show the root list instead of a dead end.
+      st.error = null;
+      await this._fpLoad(null);
+    }
   }
 
   /** Safe to call even when the picker was never built/opened. */

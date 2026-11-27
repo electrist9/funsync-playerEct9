@@ -193,7 +193,7 @@ async def slideshow_config():
                 "order": p_order if p_order in ("forward", "pingpong") else "forward",
             })
 
-    return {
+    body = {
         "configured": True,
         "folderExists": os.path.isdir(folder),
         "corner": corner,
@@ -204,6 +204,13 @@ async def slideshow_config():
         "preset": preset,
         "presets": presets,
     }
+    # Reveal the folder path ONLY when it already sits inside a registered
+    # media source root — the VR picker's browse API exposes those paths to
+    # every client anyway, and the picker needs it to open AT the configured
+    # folder. A desktop-configured folder outside all roots stays private.
+    if _root_for(folder):
+        body["folder"] = folder
+    return body
 
 
 @router.get("/images")

@@ -125,6 +125,29 @@ async def test_config_missing_folder_flagged(client, tmp_user_data):
     assert body["folderExists"] is False
 
 
+async def test_config_exposes_folder_only_within_sources(client, tmp_user_data, source_root, monkeypatch):
+    # Inside a registered source root the path is already visible through
+    # /browse, so /config reveals it (the VR picker opens at this folder).
+    photos = os.path.join(source_root, "photos")
+    make_photos(photos, ["a.png"])
+    write_config(tmp_user_data, {"slideshowFolder": photos})
+    set_user_data_dir(tmp_user_data)
+    register_sources([{"id": "1", "name": "S", "path": source_root}])
+    body = (await client.get("/api/remote/slideshow/config")).json()
+    assert body["folder"] == photos
+    # Outside every root the raw path stays private (desktop-only setting).
+    # Windows _browse_roots() probes drive letters (the picker can already
+    # browse whole drives), so pin the roots to source_root to exercise the
+    # not-browsable case deterministically.
+    monkeypatch.setattr(slideshow, "_browse_roots", lambda: [{"name": "S", "path": source_root}])
+    outside = os.path.join(tmp_user_data, "outside")
+    make_photos(outside, ["a.png"])
+    write_config(tmp_user_data, {"slideshowFolder": outside})
+    body = (await client.get("/api/remote/slideshow/config")).json()
+    assert "folder" not in body
+    assert outside not in json.dumps(body)
+
+
 async def test_config_sanitizes_bad_values(client, tmp_user_data):
     photos = os.path.join(tmp_user_data, "photos")
     make_photos(photos, ["a.png"])
@@ -333,6 +356,7 @@ async def test_folder_put_writes_config_preserving_siblings(client, tmp_user_dat
     cfg = (await client.get("/api/remote/slideshow/config")).json()
     assert cfg["configured"] is True
     assert cfg["folderExists"] is True
+    assert cfg["folder"] == os.path.abspath(photos)  # within the source root
     body = (await client.get("/api/remote/slideshow/images")).json()
     assert body["count"] == 1
     assert body["token"] == slideshow.folder_token(photos)
