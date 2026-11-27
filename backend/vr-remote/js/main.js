@@ -42,6 +42,9 @@ import { formatTime } from './util.js';
 const FONT = '"Noto Sans JP", "Hiragino Kaku Gothic ProN", Meiryo, sans-serif';
 const SORT_LABELS = { name: '名前', recent: '追加日', duration: '長さ' };
 const SORT_CYCLE = ['name', 'recent', 'duration'];
+// Library display settings (folder ON/OFF, tile/list, sort) persist in the
+// browser's localStorage so reopening the VR page keeps them.
+const SETTINGS_KEY = 'funsync.vr.library-settings';
 // Player-panel auto-hide: after this much idle time during playback the
 // control panel fades fully out of view (see _updatePanelFade). The mesh
 // stays visible=true at opacity 0, which keeps it raycastable so aiming
@@ -110,6 +113,7 @@ class VrApp {
     // scroll hint at H-52; the grid (3×3 tiles of 208 px) ends at 822.
     // (The model default of 12 overflowed the 960 px canvas.)
     this.library.pageSize = 9;
+    this._loadLibrarySettings(); // restore folder/view/sort from localStorage
     this.libraryPanel = null;
     this.playerPanel = null;
     this.subtitlePanel = null; // world-anchored subtitle quad (Phase 3)
@@ -680,6 +684,43 @@ class VrApp {
   // Library mode
   // -------------------------------------------------------------------------
 
+  /**
+   * Restore folder/view/sort from localStorage. Every failure path (storage
+   * blocked, corrupt JSON, unknown values) just keeps the built-in defaults,
+   * so a bad entry can never break the frame loop.
+   */
+  _loadLibrarySettings() {
+    let raw = null;
+    try {
+      raw = localStorage.getItem(SETTINGS_KEY);
+    } catch {
+      return; // storage unavailable (private mode / blocked cookies)
+    }
+    if (!raw) return;
+    let saved;
+    try {
+      saved = JSON.parse(raw);
+    } catch {
+      return;
+    }
+    if (!saved || typeof saved !== 'object') return;
+    if (typeof saved.folderMode === 'boolean') this.library.setFolderMode(saved.folderMode);
+    if (saved.viewMode === 'grid' || saved.viewMode === 'list') this.library.setViewMode(saved.viewMode);
+    if (SORT_CYCLE.includes(saved.sort)) this.library.setSort(saved.sort);
+  }
+
+  _saveLibrarySettings() {
+    try {
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify({
+        folderMode: this.library.folderMode,
+        viewMode: this.library.viewMode,
+        sort: this.library.sort,
+      }));
+    } catch {
+      // Storage full/blocked: settings simply stay session-only.
+    }
+  }
+
   async _refreshLibrary(initial = false) {
     try {
       const videos = await fetchVideos();
@@ -835,14 +876,15 @@ class VrApp {
       onClick: () => {
         const i = SORT_CYCLE.indexOf(lib.sort);
         lib.setSort(SORT_CYCLE[(i + 1) % SORT_CYCLE.length]);
+        this._saveLibrarySettings();
         this._redrawLibrary();
       } });
     bx -= 16;
     regions.push({ x: (bx -= width(viewLabel)), y: 40, w: width(viewLabel), h: 64, id: 'view', label: viewLabel,
-      onClick: () => { lib.setViewMode(lib.viewMode === 'grid' ? 'list' : 'grid'); this._redrawLibrary(); } });
+      onClick: () => { lib.setViewMode(lib.viewMode === 'grid' ? 'list' : 'grid'); this._saveLibrarySettings(); this._redrawLibrary(); } });
     bx -= 16;
     regions.push({ x: (bx -= width(folderLabel)), y: 40, w: width(folderLabel), h: 64, id: 'foldermode', label: folderLabel,
-      onClick: () => { lib.setFolderMode(!lib.folderMode); this._redrawLibrary(); } });
+      onClick: () => { lib.setFolderMode(!lib.folderMode); this._saveLibrarySettings(); this._redrawLibrary(); } });
 
     // Status line: totals + visible range (scroll position), plus a
     // breadcrumb and an "up" button while folder mode is on. Labels come
