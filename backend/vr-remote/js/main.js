@@ -405,6 +405,15 @@ class VrApp {
         new THREE.Vector3(0, 0, -1),
       ]);
       const ray = new THREE.Line(rayGeo, new THREE.LineBasicMaterial({ color: 0x86a8ff }));
+      // Draw the pointer ray ON TOP of every panel. The panels use
+      // depthTest:false with high renderOrder, so without this the ray line
+      // (renderOrder 0) is painted over by a panel it points at — inside the
+      // opaque folder picker the ray vanished entirely and gave no pointer
+      // cue (field report). Forcing the ray last keeps it visible over the
+      // picker, the video, and the fade-ghosted player row alike.
+      ray.renderOrder = 10;
+      ray.material.depthTest = false;
+      ray.frustumCulled = false;
       ray.scale.z = 4;
       controller.add(ray);
       controller.userData.ray = ray;
@@ -1921,6 +1930,9 @@ class VrApp {
       },
     ];
     for (const r of actions) drawButton(ctx, r, panel, { fontSize: 28 });
+    // drawButton leaves textAlign='center' behind — reset before any
+    // left-aligned text (path line, error, list rows).
+    ctx.textAlign = 'left';
     const regions = actions.map((r) => ({ ...r }));
 
     // Path line: what would be set right now, else what is configured.
