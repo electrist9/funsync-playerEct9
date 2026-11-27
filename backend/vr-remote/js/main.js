@@ -800,8 +800,10 @@ class VrApp {
     ctx.textBaseline = 'middle';
     ctx.textAlign = 'left';
     ctx.fillStyle = '#e8ecf8';
-    ctx.font = `600 44px ${FONT}`;
-    ctx.fillText('FunSync VR — ライブラリ', 40, 64);
+    // Short title: at 44px the full brand name ran underneath the header
+    // button cluster on the right (reported overlapping on-device).
+    ctx.font = `600 40px ${FONT}`;
+    ctx.fillText('VRライブラリ', 40, 64);
 
     // Header buttons (right to left): refresh, sort, view-mode, folder.
     const regions = [];
@@ -838,13 +840,15 @@ class VrApp {
     const range = view.total ? ` • ${view.start + 1}–${view.end}` : '';
     let statusX = 40;
     if (inFolder) {
-      regions.push({ x: 40, y: 92, w: 150, h: 52, id: 'up', label: '↑ 上位へ',
+      // y 96 (was 92): keep clear of the title's descenders; statusX 214
+      // (was 206): a real gap after the button, not a shared edge.
+      regions.push({ x: 40, y: 96, w: 150, h: 52, id: 'up', label: '↑ 上位へ',
         onClick: () => { lib.setFolder(lib.folderParent()); this._redrawLibrary(); } });
-      statusX = 206;
+      statusX = 214;
     }
-    ctx.fillText(`${view.total} 本${range}${crumb}`, statusX, 118);
+    ctx.fillText(`${view.total} 本${range}${crumb}`, statusX, 124);
 
-    const startY = 170;
+    const startY = 180;
     if (lib.viewMode === 'grid') {
       // Tiles: 3×3 cards, names wrapped to two lines.
       const cols = 3;
@@ -956,11 +960,12 @@ class VrApp {
     }
 
     // Scrolling hint (paging buttons were replaced by the right stick).
+    // Bottom-left corner: centered here it sat directly under the VR終了
+    // button, so the button covered the text (reported on-device).
     ctx.fillStyle = '#5b6380';
     ctx.font = `24px ${FONT}`;
-    ctx.textAlign = 'center';
-    ctx.fillText('右スティック上下でスクロール', W / 2, H - 52);
     ctx.textAlign = 'left';
+    ctx.fillText('右スティック上下でスクロール', 40, H - 40);
 
     // Status line: toasts and frame errors surface here in library mode
     // (the head-attached OSD is gone; every message rides on the open panel).
