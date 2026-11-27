@@ -31,13 +31,13 @@
 
 import * as THREE from '../vendor/three/three.module.js';
 import { UIPanel, drawPanelBackground, drawButton, ellipsize, roundRect } from './panel.js';
-import { LibraryModel, fetchVideos } from './library.js';
+import { LibraryModel, fetchVideos, fetchSources } from './library.js';
 import { VideoPlayer } from './player.js';
 import { SlideshowModel, SlideshowRenderer } from './slideshow.js';
 import { VRScreen } from './vr-screen.js';
 import { resolveVRMode, nextOverride, modeLabel, overrideButtonLabel } from './vr-mode.js';
 import { parseSubtitles, activeCue } from './subtitles.js';
-import { formatTime, baseName } from './util.js';
+import { formatTime } from './util.js';
 
 const FONT = '"Noto Sans JP", "Hiragino Kaku Gothic ProN", Meiryo, sans-serif';
 const SORT_LABELS = { name: '名前', recent: '追加日', duration: '長さ' };
@@ -676,6 +676,14 @@ class VrApp {
     } catch {
       this.toast = { text: 'ライブラリを読み込めませんでした（接続を確認してください）', until: Date.now() + 5000 };
     }
+    // The folder tree mirrors the desktop 「フォルダを閲覧」 view, which is
+    // rooted at the configured library sources. A sources fetch failure is
+    // non-fatal: the flat list still works, folder view just comes up empty.
+    try {
+      this.library.setSources(await fetchSources());
+    } catch {
+      /* keep whatever sources we already had */
+    }
     this._redrawLibrary();
   }
 
@@ -821,16 +829,17 @@ class VrApp {
       onClick: () => { lib.setFolderMode(!lib.folderMode); this._redrawLibrary(); } });
 
     // Status line: totals + visible range (scroll position), plus a
-    // breadcrumb and an "up" button while drilled into a folder.
+    // breadcrumb and an "up" button while folder mode is on. Labels come
+    // from the folder index (source name at a source root), like desktop.
     const inFolder = lib.folderMode && lib.folder !== null;
     ctx.font = `26px ${FONT}`;
     ctx.fillStyle = '#8b93ad';
-    const crumb = inFolder ? ` • 📂 ${baseName(lib.folder)}` : '';
+    const crumb = inFolder ? ` • 📂 ${lib.folderLabel()}` : (lib.folderMode ? ' • 📂 ソース一覧' : '');
     const range = view.total ? ` • ${view.start + 1}–${view.end}` : '';
     let statusX = 40;
     if (inFolder) {
       regions.push({ x: 40, y: 92, w: 150, h: 52, id: 'up', label: '↑ 上位へ',
-        onClick: () => { lib.setFolder(this._parentFolder(lib.folder)); this._redrawLibrary(); } });
+        onClick: () => { lib.setFolder(lib.folderParent()); this._redrawLibrary(); } });
       statusX = 206;
     }
     ctx.fillText(`${view.total} 本${range}${crumb}`, statusX, 118);
@@ -940,7 +949,9 @@ class VrApp {
       ctx.fillStyle = '#8b93ad';
       ctx.font = `30px ${FONT}`;
       ctx.fillText(lib.folderMode
-        ? 'このフォルダにビデオはありません。'
+        ? (lib.folder === null
+          ? '表示できるソースがありません。デスクトップのソース設定とスキャンを確認してください。'
+          : 'このフォルダにビデオはありません。')
         : 'ビデオが見つかりません。デスクトップでライブラリをスキャンしてください。', 56, startY + 40);
     }
 
@@ -979,13 +990,6 @@ class VrApp {
       drawButton(ctx, r, this.libraryPanel, { fontSize: 28 });
     }
     this.libraryPanel.setRegions(regions);
-  }
-
-  /** Parent of a library folder path (null = back to the auto root). */
-  _parentFolder(folder) {
-    const s = String(folder || '').replace(/\\/g, '/').replace(/\/+$/, '');
-    const i = s.lastIndexOf('/');
-    return i < 0 ? null : s.slice(0, i);
   }
 
   // -------------------------------------------------------------------------

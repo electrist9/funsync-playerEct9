@@ -94,58 +94,104 @@ describe('LibraryModel view caching', () => {
 });
 
 describe('LibraryModel folder browsing', () => {
+  // Desktop 「フォルダを閲覧」 semantics: the configured SOURCES are the
+  // roots (label = source name), unowned videos are hidden, and cards with
+  // zero filtered descendants disappear.
+  const sources = [
+    { id: 's1', name: 'Library A', path: 'C:\\Videos' },
+    { id: 's2', name: 'Empty Bin', path: 'D:\\Empty' },
+  ];
   const videos = [
     { id: 'a', name: 'A', path: 'C:\\Videos\\Set A\\a.mp4' },
     { id: 'b', name: 'B', path: 'C:\\Videos\\Set A\\deep\\b.mp4' },
     { id: 'c', name: 'C', path: 'C:\\Videos\\Set B\\c.mp4' },
-    { id: 'd', name: 'D', path: 'C:\\Videos\\rootish.mp4' },
-    { id: 'e', name: 'E', path: '' },
+    { id: 'd', name: 'D', path: 'C:\\Videos\\d.mp4' },
+    { id: 'e', name: 'E', path: 'E:\\Lost\\e.mp4' }, // belongs to no source
   ];
 
-  it('auto root lists minimal source folders plus path-less videos', () => {
-    const m = new LibraryModel(videos);
+  it('root lists one card per non-empty source, labelled with its name', () => {
+    const m = new LibraryModel(videos, sources);
     m.setFolderMode(true);
     const v = m.view();
-    expect(v.items.filter((it) => it.folder).map((it) => it.folder.name)).toEqual(['Videos']);
-    expect(v.items.filter((it) => it.video).map((it) => it.video.id)).toEqual(['e']);
+    expect(v.items.filter((it) => it.folder).map((it) => [it.folder.name, it.folder.count]))
+      .toEqual([['Library A', 4]]); // Empty Bin (0) and orphan video E hidden
+    expect(v.items.filter((it) => it.video)).toEqual([]);
   });
 
-  it('drilling down shows direct subfolders with recursive counts', () => {
-    const m = new LibraryModel(videos);
+  it('flat view still shows unowned videos; folder view does not', () => {
+    const m = new LibraryModel(videos, sources);
+    expect(m.view().total).toBe(5);
     m.setFolderMode(true);
-    m.setFolder('C:/Videos');
+    expect(m.view().total).toBe(1);
+  });
+
+  it('drilling down shows direct subfolders with recursive counts, then direct videos', () => {
+    const m = new LibraryModel(videos, sources);
+    m.setFolderMode(true);
+    m.setFolder('C:\\Videos'); // non-canonical input is canonicalised
+    expect(m.folder).toBe('c:/Videos');
     const v = m.view();
-    const folders = v.items.filter((it) => it.folder);
-    expect(folders.map((it) => [it.folder.name, it.folder.count])).toEqual([
-      ['Set A', 2],
-      ['Set B', 1],
-    ]);
+    expect(v.items.filter((it) => it.folder).map((it) => [it.folder.name, it.folder.count]))
+      .toEqual([['Set A', 2], ['Set B', 1]]);
     expect(v.items.filter((it) => it.video).map((it) => it.video.id)).toEqual(['d']);
     m.setFolder('C:/Videos/Set A');
     const deep = m.view();
-    expect(deep.items.filter((it) => it.folder).map((it) => it.folder.name)).toEqual(['deep']);
+    expect(deep.items.filter((it) => it.folder).map((it) => [it.folder.name, it.folder.count]))
+      .toEqual([['deep', 1]]);
     expect(deep.items.filter((it) => it.video).map((it) => it.video.id)).toEqual(['a']);
+    m.setFolder('C:/Videos/Set A/deep');
+    expect(m.view().items.map((it) => it.video?.id)).toEqual(['b']);
   });
 
   it('folder counts respect the active query filter', () => {
-    const m = new LibraryModel(videos);
-    m.query = 'b'; // only video B survives the name filter
+    const m = new LibraryModel(videos, sources);
+    m.query = 'B'; // only video B survives the name filter
     m.setFolderMode(true);
+    expect(m.view().items.filter((it) => it.folder).map((it) => [it.folder.name, it.folder.count]))
+      .toEqual([['Library A', 1]]);
     m.setFolder('C:/Videos');
-    const v = m.view();
-    const folders = v.items.filter((it) => it.folder);
+    const folders = m.view().items.filter((it) => it.folder);
     expect(folders.map((it) => [it.folder.name, it.folder.count])).toEqual([['Set A', 1]]);
     expect(folders.some((it) => it.folder.name === 'Set B')).toBe(false);
   });
 
-  it('setFolderMode resets the drilled folder and scrolling', () => {
-    const m = new LibraryModel(videos);
+  it('source roots label with the source name and go up to the root list', () => {
+    const m = new LibraryModel(videos, sources);
+    m.setFolderMode(true);
+    m.setFolder('C:/Videos/Set A');
+    expect(m.folderLabel()).toBe('Set A');
+    expect(m.folderParent()).toBe('c:/Videos');
+    m.setFolder(m.folderParent());
+    expect(m.folderLabel()).toBe('Library A');
+    expect(m.folderParent()).toBeNull();
+    m.setFolder(null);
+    expect(m.folderLabel()).toBe('');
+    expect(m.folder).toBeNull();
+  });
+
+  it('setFolderMode off clears the folder; toggling on keeps a known folder', () => {
+    const m = new LibraryModel(videos, sources);
     m.setFolderMode(true);
     m.setFolder('C:/Videos');
     m.scrollBy(1);
-    expect(m.folder).toBe('C:/Videos');
     m.setFolderMode(false);
     expect(m.folder).toBeNull();
     expect(m.scroll).toBe(0);
+    m.setFolder('C:/Videos/Set A');
+    m.setFolderMode(false);
+    m.setFolderMode(true); // re-enabling keeps a folder that exists in the index
+    expect(m.folder).toBe('c:/Videos/Set A');
+  });
+
+  it('setSources rebuilds the tree and drops a vanished folder', () => {
+    const m = new LibraryModel(videos, sources);
+    m.setFolderMode(true);
+    m.setFolder('C:/Videos/Set A');
+    m.setSources([{ id: 's2', name: 'Empty Bin', path: 'D:\\Empty' }]);
+    expect(m.folder).toBeNull();
+    expect(m.view().items).toEqual([]);
+    m.setVideos([]);
+    m.setSources(sources);
+    expect(m.view().items.filter((it) => it.folder)).toEqual([]); // no videos → no cards
   });
 });

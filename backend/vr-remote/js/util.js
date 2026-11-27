@@ -89,109 +89,153 @@ export function hitRegion(regions, u, v, pixelWidth, pixelHeight) {
 }
 
 // ---------------------------------------------------------------------------
-// Folder browsing helpers (pure path logic, unit-testable in plain Node).
-// Video records carry absolute Windows paths from the scanner; we only ever
-// treat them as opaque strings — the VR client never touches the filesystem.
+// Folder browsing — a verbatim port of the desktop app's folder model
+// (renderer/js/folder-index.js + the canonicalPath rule from
+// renderer/js/path-utils.js). The VR "フォルダ" view must behave exactly like
+// the desktop library's 「フォルダを閲覧」 toggle:
+//   * the configured library SOURCES (GET /api/remote/sources, already
+//     enabled-only) are the roots — the tree never walks above a source;
+//   * source cards carry the source NAME as their label;
+//   * videos that belong to no source are hidden in folder view;
+//   * folder cards hide when their (filtered) descendant count is zero;
+//   * counts are descendant totals; folders sort by label, folders come
+//     before the folder's direct videos.
+// Paths are opaque strings — the VR client never touches the filesystem.
 // ---------------------------------------------------------------------------
 
-/** Normalize separators to '/' and drop trailing ones ('' for invalid input). */
-export function normalizePath(path) {
-  const s = String(path || '').replace(/\\/g, '/');
-  const trimmed = s.replace(/\/+$/, '');
-  return trimmed;
-}
-
-/** Parent directory of a normalized path ('' when there is none). */
-export function parentDir(path) {
-  const s = normalizePath(path);
-  const i = s.lastIndexOf('/');
-  if (i < 0) return '';
-  return s.slice(0, i);
-}
-
-/** Last path segment (the whole string when there is no separator). */
-export function baseName(path) {
-  const s = normalizePath(path);
-  const i = s.lastIndexOf('/');
-  return i < 0 ? s : s.slice(i + 1);
-}
-
-/** Case-insensitive "child sits strictly inside parent" for normalized paths. */
-function isUnder(child, parent) {
-  if (!child || !parent) return false;
-  return child.toLowerCase().startsWith(parent.toLowerCase() + '/');
+/**
+ * Canonicalise a path for tree keys and prefix matching (same rule as the
+ * desktop): backslashes to '/', trailing slashes stripped (a lone unix '/'
+ * survives), and ONLY a leading Windows drive letter lower-cased. The rest
+ * of the path stays case-sensitive, exactly like the desktop folder index.
+ */
+export function canonicalPath(p) {
+  if (!p) return '';
+  let out = String(p).replace(/\\/g, '/');
+  while (out.length > 1 && out.endsWith('/')) out = out.slice(0, -1);
+  if (/^[A-Za-z]:/.test(out)) out = out[0].toLowerCase() + out.slice(1);
+  return out;
 }
 
 /**
- * Split `videos` (already filtered/sorted) into the subfolders directly
- * under `folder` plus the videos stored directly in it.
- *
- * `folder` is a normalized directory path, or null for the auto root — at
- * the root the "subfolders" are the minimal set of directories that contain
- * videos (one entry per source tree instead of every intermediate folder).
- * Inside a folder, children are derived from the FIRST path segment below
- * it, so intermediate levels always appear even when videos live deeper.
- * Videos with no usable path show up as `direct` entries at the root only.
- * Folder entries are {path, name, count} sorted by name; count includes
- * videos in nested subfolders. Comparison is case-insensitive throughout
- * (Windows paths), display keeps the first-seen casing.
+ * @typedef FolderNode
+ * @property {string} path         canonicalised path (the key)
+ * @property {string} label        display label (source name at the root, basename otherwise)
+ * @property {string|null} parent  canonical parent path, or null for source roots
+ * @property {Set<string>} childFolders  canonical child paths
+ * @property {Array<object>} videos     videos located directly in this folder
+ * @property {boolean} isSourceRoot true when this folder is the top-level of a source
+ * @property {string|null} sourceId one of `sources[].id` when `isSourceRoot`
  */
-export function folderGroups(videos, folder) {
-  const uniqueParents = [];
-  const seen = new Set();
-  for (const v of videos) {
-    const p = parentDir(normalizePath(v.path));
-    if (!p) continue;
-    const k = p.toLowerCase();
-    if (!seen.has(k)) {
-      seen.add(k);
-      uniqueParents.push(p);
-    }
-  }
-  const normFolder = folder == null ? '' : normalizePath(folder);
 
-  let paths;
-  if (!normFolder) {
-    // Auto root: keep only the outermost containing directories.
-    const deduped = [];
-    const keys = new Set();
-    for (const p of uniqueParents) {
-      const k = p.toLowerCase();
-      if (keys.has(k)) continue;
-      keys.add(k);
-      deduped.push(p);
+/**
+ * Build a folder index from a flat video list and the list of source folders.
+ * Ported verbatim from renderer/js/folder-index.js#buildFolderIndex.
+ *
+ * @param {Array<{path: string, name?: string}>} videos
+ * @param {Array<{id: string, name: string, path: string, enabled?: boolean}>} sources
+ * @returns {Map<string, FolderNode>}
+ */
+export function buildFolderIndex(videos, sources) {
+  const index = new Map();
+  const sourceByCanonical = new Map();
+
+  const ensure = (canonical, seed = {}) => {
+    let node = index.get(canonical);
+    if (!node) {
+      node = {
+        path: canonical,
+        label: canonical.split('/').pop() || canonical,
+        parent: null,
+        childFolders: new Set(),
+        videos: [],
+        isSourceRoot: false,
+        sourceId: null,
+        ...seed,
+      };
+      index.set(canonical, node);
+    } else if (seed) {
+      Object.assign(node, seed);
     }
-    paths = deduped.filter((p) => !deduped.some((q) => q !== p && isUnder(p, q)));
-  } else {
-    // Drill exactly one level: first segment below the current folder.
-    const childMap = new Map();
-    for (const p of uniqueParents) {
-      if (!isUnder(p, normFolder)) continue;
-      const seg = p.slice(normFolder.length + 1).split('/')[0];
-      if (!seg) continue;
-      const full = normFolder + '/' + seg;
-      const k = full.toLowerCase();
-      if (!childMap.has(k)) childMap.set(k, full);
-    }
-    paths = [...childMap.values()];
+    return node;
+  };
+
+  // Seed an entry for every enabled source so empty sources still appear.
+  for (const src of sources || []) {
+    if (src.enabled === false) continue;
+    const canonical = canonicalPath(src.path);
+    sourceByCanonical.set(canonical, src);
+    ensure(canonical, {
+      label: src.name || canonical.split('/').pop() || canonical,
+      isSourceRoot: true,
+      sourceId: src.id,
+      parent: null,
+    });
   }
 
-  const folders = paths
-    .map((path) => ({ path, name: baseName(path) || path }))
-    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
-  for (const f of folders) {
-    const key = f.path.toLowerCase();
-    f.count = videos.reduce((n, v) => {
-      const p = parentDir(normalizePath(v.path));
-      const pk = p.toLowerCase();
-      return n + (pk === key || isUnder(p, f.path) ? 1 : 0);
-    }, 0);
+  // Place each video, walking parents up to (and including) its source root.
+  for (const video of videos || []) {
+    if (!video?.path) continue;
+
+    const videoPath = canonicalPath(video.path);
+    const lastSlash = videoPath.lastIndexOf('/');
+    if (lastSlash < 0) continue;
+    const dir = videoPath.slice(0, lastSlash) || '/';
+
+    // Find which source this video belongs to — longest matching source prefix.
+    let owningSource = null;
+    let owningCanonical = null;
+    for (const [canonical, src] of sourceByCanonical) {
+      if (videoPath.startsWith(canonical + '/') &&
+          (!owningCanonical || canonical.length > owningCanonical.length)) {
+        owningSource = src;
+        owningCanonical = canonical;
+      }
+    }
+    // If no source owns this video (possible for manually-added paths), skip;
+    // it simply won't appear in folder view.
+    if (!owningCanonical) continue;
+
+    // Ensure the direct parent folder exists and stash the video on it.
+    const leaf = ensure(dir);
+    leaf.videos.push(video);
+
+    // Walk up to the owning source root, wiring child->parent and adding
+    // intermediate folders as needed.
+    let current = dir;
+    while (current !== owningCanonical) {
+      const parentSlash = current.lastIndexOf('/');
+      if (parentSlash <= 0) break;
+      const parent = current.slice(0, parentSlash);
+      const parentNode = ensure(parent);
+      parentNode.childFolders.add(current);
+      index.get(current).parent = parent;
+      if (parent === owningCanonical) {
+        // Reached source root — stop here so we don't walk into the filesystem.
+        break;
+      }
+      current = parent;
+    }
   }
-  const folderKey = normFolder.toLowerCase();
-  const direct = videos.filter((v) => {
-    const p = parentDir(normalizePath(v.path));
-    if (!p) return !normFolder; // path-less videos live at the root view
-    return p.toLowerCase() === folderKey;
-  });
-  return { folders, direct };
+
+  return index;
+}
+
+/**
+ * Return every video located in `folderPath` or any of its descendants.
+ * Assumes `folderPath` is already canonical.
+ */
+export function descendantsOf(index, folderPath) {
+  const node = index.get(folderPath);
+  if (!node) return [];
+  const out = [...node.videos];
+  const stack = [...node.childFolders];
+  while (stack.length) {
+    const childPath = stack.pop();
+    const child = index.get(childPath);
+    if (!child) continue;
+    for (const v of child.videos) out.push(v);
+    for (const sub of child.childFolders) stack.push(sub);
+  }
+  return out;
 }

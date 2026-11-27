@@ -11,10 +11,9 @@ import {
   filterVideos,
   sortVideos,
   hitRegion,
-  normalizePath,
-  parentDir,
-  baseName,
-  folderGroups,
+  canonicalPath,
+  buildFolderIndex,
+  descendantsOf,
 } from '../../backend/vr-remote/js/util.js';
 
 describe('formatTime', () => {
@@ -133,52 +132,88 @@ describe('hitRegion', () => {
   });
 });
 
-describe('path helpers', () => {
-  it('normalizePath flips separators and trims trailing ones', () => {
-    expect(normalizePath('C:\\Videos\\Set A\\a.mp4')).toBe('C:/Videos/Set A/a.mp4');
-    expect(normalizePath('C:/Videos/')).toBe('C:/Videos');
-    expect(normalizePath('')).toBe('');
-    expect(normalizePath(undefined)).toBe('');
+describe('canonicalPath', () => {
+  it('flips separators, trims trailing slashes, keeps the unix root', () => {
+    expect(canonicalPath('C:\\Videos\\Set A\\a.mp4')).toBe('c:/Videos/Set A/a.mp4');
+    expect(canonicalPath('C:/Videos///')).toBe('c:/Videos');
+    expect(canonicalPath('/')).toBe('/');
+    expect(canonicalPath('')).toBe('');
+    expect(canonicalPath(undefined)).toBe('');
   });
 
-  it('parentDir / baseName split at the last separator', () => {
-    expect(parentDir('C:/Videos/a.mp4')).toBe('C:/Videos');
-    expect(parentDir('a.mp4')).toBe('');
-    expect(parentDir('')).toBe('');
-    expect(baseName('C:/Videos/Set A')).toBe('Set A');
-    expect(baseName('a.mp4')).toBe('a.mp4');
+  it('lowercases ONLY the leading drive letter (desktop rule, case-sensitive rest)', () => {
+    expect(canonicalPath('D:\\VR')).toBe('d:/VR');
+    expect(canonicalPath('c:\\Users\\me\\Downloads')).toBe('c:/Users/me/Downloads');
+    expect(canonicalPath('C:\\videos\\SET B')).toBe('c:/videos/SET B');
   });
 });
 
-describe('folderGroups', () => {
-  const videos = [
-    { id: 'a', path: 'C:\\Videos\\Set A\\a.mp4' },
-    { id: 'b', path: 'C:\\Videos\\Set A\\deep\\inner\\b.mp4' },
-    { id: 'c', path: 'C:\\videos\\SET B\\c.mp4' }, // case-differing root
-    { id: 'd', path: 'C:\\Videos\\d.mp4' },
-    { id: 'e', path: '' },
+describe('buildFolderIndex / descendantsOf', () => {
+  const sources = [
+    { id: 's1', name: 'VR Drive', path: 'D:\\VR' },
+    { id: 's2', name: 'Downloads', path: 'C:\\Users\\me\\Downloads' },
   ];
 
-  it('auto root collapses to the minimal containing folders', () => {
-    const g = folderGroups(videos, null);
-    expect(g.folders.map((f) => [f.path, f.name, f.count])).toEqual([
-      ['C:/Videos', 'Videos', 4], // A + B + C (case-differing root collapses) + D
-    ]);
-    expect(g.direct.map((v) => v.id)).toEqual(['e']); // path-less stay at root
+  it('seeds enabled source roots with their name labels even when empty', () => {
+    const index = buildFolderIndex([], sources);
+    expect([...index.keys()].sort()).toEqual(['c:/Users/me/Downloads', 'd:/VR']);
+    const root = index.get('d:/VR');
+    expect(root.isSourceRoot).toBe(true);
+    expect(root.sourceId).toBe('s1');
+    expect(root.label).toBe('VR Drive');
+    expect(root.parent).toBeNull();
   });
 
-  it('drills one level: Set A and Set B under C:/Videos', () => {
-    const g = folderGroups(videos, 'C:/Videos');
-    expect(g.folders.map((f) => [f.name, f.count])).toEqual([
-      ['Set A', 2], // a + b (b sits two levels deeper)
-      ['SET B', 1], // kept with its original casing
+  it('drops sources explicitly disabled', () => {
+    const index = buildFolderIndex([], [
+      { id: 's1', name: 'Off', path: 'D:\\VR', enabled: false },
     ]);
-    expect(g.direct.map((v) => v.id)).toEqual(['d']);
+    expect(index.size).toBe(0);
   });
 
-  it('empty folder yields no groups', () => {
-    const g = folderGroups([], 'C:/Videos');
-    expect(g.folders).toEqual([]);
-    expect(g.direct).toEqual([]);
+  it('wires videos to their folder, ancestors up to the source root', () => {
+    const videos = [
+      { id: 'a', path: 'D:\\VR\\japanese\\studio-x\\a.mp4' },
+      { id: 'b', path: 'C:\\Users\\me\\Downloads\\b.mp4' },
+    ];
+    const index = buildFolderIndex(videos, sources);
+    const leaf = index.get('d:/VR/japanese/studio-x');
+    expect(leaf.videos.map((v) => v.id)).toEqual(['a']);
+    expect(leaf.label).toBe('studio-x');
+    const mid = index.get('d:/VR/japanese');
+    expect([...mid.childFolders]).toEqual(['d:/VR/japanese/studio-x']);
+    expect(mid.parent).toBe('d:/VR');
+    expect(index.get('d:/VR').childFolders.has('d:/VR/japanese')).toBe(true);
+    expect(index.get('d:/VR/japanese').parent).toBe('d:/VR');
+    expect(index.get('c:/Users/me/Downloads').videos.map((v) => v.id)).toEqual(['b']);
+  });
+
+  it('never walks above a source root and skips videos no source owns', () => {
+    const index = buildFolderIndex([{ id: 'x', path: 'Z:\\Lost\\x.mp4' }], sources);
+    expect(index.has('z:/Lost')).toBe(false);
+    expect(index.has('z:')).toBe(false);
+    expect(index.get('d:/VR').videos).toEqual([]);
+    expect(index.get('c:/Users/me/Downloads').videos).toEqual([]);
+  });
+
+  it('treats mixed separators as the same folder', () => {
+    const index = buildFolderIndex([
+      { id: 'a', path: 'D:/VR/studio/a.mp4' },
+      { id: 'b', path: 'D:\\VR\\studio\\b.mp4' },
+    ], sources);
+    expect(index.get('d:/VR/studio').videos.map((v) => v.id)).toEqual(['a', 'b']);
+  });
+
+  it('descendantsOf collects the folder plus every nested subfolder', () => {
+    const videos = [
+      { id: 'a', path: 'D:\\VR\\japanese\\studio-x\\a.mp4' },
+      { id: 'b', path: 'D:\\VR\\japanese\\b.mp4' },
+      { id: 'c', path: 'D:\\VR\\c.mp4' },
+    ];
+    const index = buildFolderIndex(videos, sources);
+    expect(descendantsOf(index, 'd:/VR').map((v) => v.id).sort()).toEqual(['a', 'b', 'c']);
+    expect(descendantsOf(index, 'd:/VR/japanese').map((v) => v.id).sort()).toEqual(['a', 'b']);
+    expect(descendantsOf(index, 'd:/VR/japanese/studio-x').map((v) => v.id)).toEqual(['a']);
+    expect(descendantsOf(index, 'z:/nowhere')).toEqual([]);
   });
 });

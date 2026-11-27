@@ -8,7 +8,7 @@
  * window of items to paint onto a UIPanel.
  */
 
-import { filterVideos, sortVideos, folderGroups } from './util.js';
+import { filterVideos, sortVideos, canonicalPath, buildFolderIndex, descendantsOf } from './util.js';
 
 export async function fetchVideos() {
   const res = await fetch('/api/remote/videos', { cache: 'no-store' });
@@ -17,9 +17,20 @@ export async function fetchVideos() {
   return Array.isArray(data.videos) ? data.videos : [];
 }
 
+/** Library source folders (already filtered to enabled ones server-side). */
+export async function fetchSources() {
+  const res = await fetch('/api/remote/sources', { cache: 'no-store' });
+  if (!res.ok) throw new Error(`sources ${res.status}`);
+  const data = await res.json();
+  return Array.isArray(data.sources) ? data.sources : [];
+}
+
 export class LibraryModel {
-  constructor(videos = []) {
+  constructor(videos = [], sources = []) {
     this.videos = videos;
+    // Configured library sources — the roots of the folder tree, matching
+    // the desktop 「フォルダを閲覧」 view (renderer/js/folder-index.js).
+    this.sources = sources;
     this.query = '';
     this.sort = 'name';
     // Scrolling replaces paging (right thumbstick drives scrollBy in
@@ -29,8 +40,11 @@ export class LibraryModel {
     // Folder browsing ('folderMode') and tile vs list presentation
     // ('viewMode') are pure view state; both reset the scroll window.
     this.folderMode = false;
-    this.folder = null; // normalized directory path, null = auto root
+    this.folder = null; // canonical folder path, null = root (source cards)
     this.viewMode = 'list'; // 'list' | 'grid'
+    // Folder tree (buildFolderIndex over videos+sources); rebuilt whenever
+    // the video/source sets change.
+    this._folderIndex = buildFolderIndex(videos, sources);
     // view() memoization. With thousands of videos the filter+sort is not
     // free, and main.js asks for the view every XR frame (OSD refresh);
     // recompute only when the model actually changed. Callers must treat
@@ -43,6 +57,23 @@ export class LibraryModel {
 
   setVideos(videos) {
     this.videos = videos;
+    this._folderIndex = buildFolderIndex(videos, this.sources);
+    if (this.folder !== null && !this._folderIndex.has(this.folder)) {
+      this.folder = null;
+    }
+    this.scrollTo(0);
+    this._version += 1;
+  }
+
+  setSources(sources) {
+    this.sources = sources;
+    this._folderIndex = buildFolderIndex(this.videos, sources);
+    // A refresh can remove the folder we are standing in; fall back to the
+    // source-root list in that case (the desktop keeps the folder only if
+    // it still exists in the index).
+    if (this.folder !== null && !this._folderIndex.has(this.folder)) {
+      this.folder = null;
+    }
     this.scrollTo(0);
     this._version += 1;
   }
@@ -59,18 +90,35 @@ export class LibraryModel {
     const next = Boolean(on);
     if (next !== this.folderMode) {
       this.folderMode = next;
-      this.folder = null;
+      // Toggle preserves the drilled-into folder when it still exists,
+      // same as the desktop _toggleFolderBrowse().
+      if (!next || (this.folder !== null && !this._folderIndex.has(this.folder))) {
+        this.folder = null;
+      }
       this.scrollTo(0);
       this._version += 1;
     }
   }
 
   setFolder(path) {
-    if (path !== this.folder) {
-      this.folder = path == null ? null : String(path);
+    const next = path == null ? null : canonicalPath(String(path));
+    if (next !== this.folder) {
+      this.folder = next;
       this.scrollTo(0);
       this._version += 1;
     }
+  }
+
+  /** Label of the current folder (source name at a source root). '' at root. */
+  folderLabel() {
+    if (this.folder === null) return '';
+    return this._folderIndex.get(this.folder)?.label || this.folder;
+  }
+
+  /** Parent folder to navigate 'up' to; null = source-root card list. */
+  folderParent() {
+    if (this.folder === null) return null;
+    return this._folderIndex.get(this.folder)?.parent ?? null;
   }
 
   setViewMode(mode) {
@@ -96,6 +144,46 @@ export class LibraryModel {
   }
 
   /**
+   * Folder cards + direct videos for the current folder, desktop rules:
+   * root = one card per source (label = source name), a drill = the node's
+   * child folders (label = basename) followed by its direct videos; empty
+   * (post-query) cards are hidden; counts are filtered descendant totals.
+   */
+  _folderItems() {
+    const index = this._folderIndex;
+    // Defensive: a refresh can drop the current folder; degrade to the root
+    // view (bump the version so the memoization stays coherent).
+    if (this.folder !== null && !index.has(this.folder)) {
+      this.folder = null;
+      this._version += 1;
+    }
+    const folders = [];
+    let direct = [];
+    if (this.folder === null) {
+      for (const node of index.values()) {
+        if (!node.isSourceRoot) continue;
+        const count = filterVideos(descendantsOf(index, node.path), this.query).length;
+        if (!count) continue; // desktop hides empty source cards
+        folders.push({ path: node.path, name: node.label, count });
+      }
+    } else {
+      const node = index.get(this.folder);
+      for (const childPath of node.childFolders) {
+        const child = index.get(childPath);
+        if (!child) continue;
+        const count = filterVideos(descendantsOf(index, childPath), this.query).length;
+        if (!count) continue; // desktop hides empty folder cards
+        folders.push({ path: childPath, name: child.label, count });
+      }
+      direct = node.videos;
+    }
+    // Folder labels sort Explorer-style (compareNames / naturalSortCollator
+    // on the desktop); numeric-aware, case-insensitive.
+    folders.sort((a, b) => a.name.localeCompare(b.name, 'en', { numeric: true, sensitivity: 'base' }));
+    return { folders, direct };
+  }
+
+  /**
    * Filter + sort (+ folder grouping), clamp the scroll window; returns
    * `{ items, total, start, end }` where each item is either
    * `{ folder: {path, name, count} }` or `{ video }`. Callers must treat
@@ -106,10 +194,10 @@ export class LibraryModel {
     const list = sortVideos(filterVideos(this.videos, this.query), this.sort);
     let items;
     if (this.folderMode) {
-      const groups = folderGroups(list, this.folder);
+      const groups = this._folderItems();
       items = [
         ...groups.folders.map((folder) => ({ folder })),
-        ...groups.direct.map((video) => ({ video })),
+        ...sortVideos(filterVideos(groups.direct, this.query), this.sort).map((video) => ({ video })),
       ];
     } else {
       items = list.map((video) => ({ video }));
