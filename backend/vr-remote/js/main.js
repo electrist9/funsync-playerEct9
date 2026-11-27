@@ -158,6 +158,20 @@ class VrApp {
     this.sync = { connected: false, script: null, devices: [] };
     this.slideshow = null; // { model, renderer, texture } while SS is on
     this._ssScriptCache = new Map(); // scriptUrl → actions[]
+    // Funscript variants: the desktop owns switching and echoes every
+    // change back as `variant-changed`; we mirror its active label here so
+    // the 🎢 button can cycle labels and ask for the next one (see
+    // _cycleVariant / _onSyncMessage).
+    this._variants = []; // video.variants ([] or 1 entry → no 🎢 button)
+    this._activeVariant = null; // label the desktop reports as active
+    this._pendingVariant = null; // label sent, awaiting the echo (button locks)
+    this._variantPendingUntil = 0; // pending-echo deadline (cleared in _frame)
+    // Slideshow inputs kept live so a variant switch can rebuild the model.
+    this._ssCfg = null; // corner/sizeDenom/imageOrder/transition/background/preset/presets
+    this._ssImageUrls = null; // image URLs of the running slideshow
+    // Modal slideshow-folder picker (built with the player rig).
+    this.folderPanel = null;
+    this._fp = null; // picker state { path, parent, dirs, page, loading, busy, error } while open
     this.toast = null; // { text, until }
     this._hover = null; // { controller, mesh, uv, distance }
     this._playerSig = ''; // player-panel refresh gate (see _playerSignature)
@@ -274,6 +288,7 @@ class VrApp {
     this.session = null;
     this.renderer.setAnimationLoop(null);
     this._disableSlideshow();
+    this._closeFolderPicker();
     if (this.vrScreen) {
       this.vrScreen.dispose();
       this.vrScreen = null;
@@ -346,6 +361,21 @@ class VrApp {
     this.playerPanel.mesh.material.depthWrite = false;
     this.playerPanel.setDraw(() => this._drawPlayerControls());
     this.playerGroup.add(this.playerPanel.mesh);
+
+    // Modal slideshow-folder picker: it REPLACES the control row while open
+    // (playerPanel is hidden then — the control row rides the screen's z,
+    // which the left thumbstick moves, while this panel stays put).
+    // depthTest off + top renderOrder keep it over the screen quad at any
+    // screen distance (0.5–4.0 m); opacity stays 1 (the _select ghost guard
+    // would otherwise swallow presses, and _updatePanelFade ignores it).
+    this.folderPanel = new UIPanel({ worldWidth: 1.7, pixelWidth: 1280, pixelHeight: 960 });
+    this.folderPanel.mesh.position.set(0, 1.45, -2.2);
+    this.folderPanel.mesh.material.depthWrite = false;
+    this.folderPanel.mesh.material.depthTest = false;
+    this.folderPanel.mesh.renderOrder = 4;
+    this.folderPanel.setDraw(() => this._drawFolderPicker());
+    this.folderPanel.mesh.visible = false;
+    this.playerGroup.add(this.folderPanel.mesh);
 
     this.playerGroup.visible = false;
     this.scene.add(this.playerGroup);
@@ -436,6 +466,13 @@ class VrApp {
       this._tickLibraryScroll();
       if (this.toast && Date.now() > this.toast.until) {
         this.toast = null;
+        this._redrawActivePanel();
+      }
+      if (this._pendingVariant && Date.now() > this._variantPendingUntil) {
+        // The desktop never echoed the switch back (e.g. it is on another
+        // video): unlock the 🎢 button instead of hanging "切替中…" forever.
+        this._pendingVariant = null;
+        this.toast = { text: 'バリアント切替の確認ができませんでした', until: Date.now() + 3000 };
         this._redrawActivePanel();
       }
       if (this.mode === 'player') {
@@ -640,7 +677,11 @@ class VrApp {
 
   _targets() {
     if (this.mode === 'library') return [this.libraryPanel.mesh];
-    const targets = [this.playerPanel.mesh, this.screenMesh];
+    const targets = [this.screenMesh];
+    // Raycasts hit invisible meshes too, so the hidden control row must be
+    // swapped OUT (not just overlaid) while the picker is open.
+    if (this.folderPanel && this._fp) targets.push(this.folderPanel.mesh);
+    else targets.push(this.playerPanel.mesh);
     if (this.vrScreen && this.vrScreen.sphere) targets.push(this.vrScreen.sphere);
     return targets;
   }
@@ -677,6 +718,7 @@ class VrApp {
 
     // Exactly one panel may show a hovered region at a time.
     const panels = [this.libraryPanel, this.playerPanel];
+    if (this.folderPanel && this._fp) panels.push(this.folderPanel);
     for (const panel of panels) {
       if (best && best.mesh === panel.mesh && best.uv) panel.handleHover(best.uv);
       else panel.clearHover();
@@ -904,6 +946,16 @@ class VrApp {
     // Fresh session per video: connection status belongs to the new socket.
     this.sync = { connected: false, script: null, devices: [] };
 
+    // Funscript variants: only videos with more than one script show the 🎢
+    // button. The desktop applies switches and echoes them as
+    // variant-changed; on open it activates variants[0], so mirror that.
+    this._variants = Array.isArray(video.variants) ? video.variants : [];
+    this._activeVariant = this._variants.length > 1 && this._variants[0]
+      ? this._variants[0].label
+      : null;
+    this._pendingVariant = null;
+    this._closeFolderPicker();
+
     // Projection mode: reset the manual override, then trust the backend's
     // filename-derived vrFormat (see vr_api / vr-mode.js).
     this.vrOverride = 'auto';
@@ -979,6 +1031,7 @@ class VrApp {
   _closePlayback(toastText) {
     this._flushPlayerSave();
     this._disableSlideshow();
+    this._closeFolderPicker();
     // Tear the surround sphere down so nothing hangs around in library mode.
     if (this.vrScreen) this.vrScreen.applyMode(this.renderer, { projection: 'flat', stereo: 'mono', fovDeg: 0 });
     this._updateGridVisibility();
@@ -1330,26 +1383,43 @@ class VrApp {
     ctx.fill();
 
     const playing = !this.player.paused;
-    const bw = 152;
+    // Button row: 8 base columns, +1 for the 🎢 variant picker when the
+    // video has more than one funscript. Columns split the width evenly;
+    // drawButton shrinks long labels automatically.
+    const hasVariant = this._variants.length > 1;
     const bh = 96;
     const gap = 10;
-    const total = bw * 7 + gap * 6;
+    const cols = hasVariant ? 9 : 8;
+    const bw = Math.floor((W - 2 * SEEK_SIDE - gap * (cols - 1)) / cols);
+    const total = bw * cols + gap * (cols - 1);
     const x0 = (W - total) / 2;
     const y0 = 152;
 
-    const mk = (i, id, label, onClick, disabled) => ({ x: x0 + i * (bw + gap), y: y0, w: bw, h: bh, id, label, onClick, disabled });
+    const mk = (id, label, onClick, disabled) => ({ x: 0, y: y0, w: bw, h: bh, id, label, onClick, disabled });
     const buttons = [
-      mk(0, 'back', '◀ ライブラリ', () => this._closePlayback()),
-      mk(1, 'rew', '-10 秒', () => { this.player.seekBy(-10); this.playerPanel.redraw(); }),
-      mk(2, 'playpause', playing ? '⏸ 一時停止' : '▶ 再生', () => { this.player.toggle(); this.playerPanel.redraw(); }),
-      mk(3, 'fwd', '+10 秒', () => { this.player.seekBy(10); this.playerPanel.redraw(); }),
-      mk(4, 'mute', this.player.muted ? '🔇 ミュート' : '🔊 音声', () => { this.player.toggleMute(); this.playerPanel.redraw(); }),
-      mk(5, 'slideshow', this.slideshow ? 'SS 停止' : 'SS 開始',
+      mk('back', '◀ ライブラリ', () => this._closePlayback()),
+      mk('rew', '-10 秒', () => { this.player.seekBy(-10); this.playerPanel.redraw(); }),
+      mk('playpause', playing ? '⏸ 一時停止' : '▶ 再生', () => { this.player.toggle(); this.playerPanel.redraw(); }),
+      mk('fwd', '+10 秒', () => { this.player.seekBy(10); this.playerPanel.redraw(); }),
+      mk('mute', this.player.muted ? '🔇 ミュート' : '🔊 音声', () => { this.player.toggleMute(); this.playerPanel.redraw(); }),
+      mk('slideshow', this.slideshow ? 'SS 停止' : 'SS 開始',
         () => this._toggleSlideshow(),
         !this._canSlideshow()),
-      mk(6, 'projection', overrideButtonLabel(this.vrOverride),
-        () => this._cycleProjectionOverride()),
+      // Slideshow folder picker (the folder is global; the picker restarts
+      // a running slideshow after a change).
+      mk('folder', '📷フォルダ', () => this._openFolderPicker(),
+        !(this.slideshow || this._canSlideshow())),
     ];
+    if (hasVariant) {
+      const variantLabel = this._pendingVariant
+        ? '🎢 切替中…'
+        : `🎢 ${this._activeVariant || ''}`.replace(/\s+$/, '');
+      buttons.push(mk('variant', variantLabel, () => this._cycleVariant(), !!this._pendingVariant));
+    }
+    // Projection override stays at the right edge, matching the header label.
+    buttons.push(mk('projection', overrideButtonLabel(this.vrOverride),
+      () => this._cycleProjectionOverride()));
+    buttons.forEach((r, i) => { r.x = x0 + i * (bw + gap); });
 
     for (const r of buttons) drawButton(ctx, r, this.playerPanel, { fontSize: 30 });
     // Seek strip first so a stray overlap can never steal a button press
@@ -1429,7 +1499,7 @@ class VrApp {
       if (!cfgRes.ok) throw new Error(`config ${cfgRes.status}`);
       const cfg = await cfgRes.json();
       if (!cfg.configured) {
-        this.toast = { text: 'スライドショーフォルダが未設定です。デスクトップで設定してください。', until: Date.now() + 5000 };
+        this.toast = { text: 'スライドショーフォルダが未設定です。📷フォルダ かデスクトップで設定してください。', until: Date.now() + 5000 };
         this.playerPanel.redraw();
         return;
       }
@@ -1446,16 +1516,17 @@ class VrApp {
         this.playerPanel.redraw();
         return;
       }
-      const actions = await this._fetchActions(v.scriptUrl);
+      const actions = await this._fetchActions(this._activeScriptUrl());
       if (!actions.length) {
         this.toast = { text: 'FunScript にアクションがありません。', until: Date.now() + 5000 };
         this.playerPanel.redraw();
         return;
       }
 
-      const model = new SlideshowModel({
-        canvasW: 1280,
-        canvasH: 720,
+      const imageUrls = listing.images.map((im) => im.url);
+      // Keep the inputs live so _rebuildSlideshowScript can swap in a new
+      // variant's actions without re-fetching config/images.
+      this._ssCfg = {
         corner: cfg.corner,
         sizeDenom: cfg.sizeDenom,
         imageOrder: cfg.imageOrder,
@@ -1463,7 +1534,13 @@ class VrApp {
         background: cfg.background,
         preset: cfg.preset,
         presets: cfg.presets,
-        imageUrls: listing.images.map((im) => im.url),
+      };
+      this._ssImageUrls = imageUrls;
+      const model = new SlideshowModel({
+        canvasW: 1280,
+        canvasH: 720,
+        ...this._ssCfg,
+        imageUrls,
         actions,
       });
       if (!model.switchTimes.length) {
@@ -1522,6 +1599,96 @@ class VrApp {
     const actions = Array.isArray(data.actions) ? data.actions : [];
     this._ssScriptCache.set(scriptUrl, actions);
     return actions;
+  }
+
+  /**
+   * Script URL for the active funscript variant. Videos with a single
+   * script always use the plain scriptUrl; variant URLs come from the
+   * video listing (?variant=<label>) and the _fetchActions cache keys them
+   * separately.
+   */
+  _activeScriptUrl() {
+    const v = this.player.info;
+    if (!v) return '';
+    if (this._variants.length > 1 && this._activeVariant) {
+      const hit = this._variants.find((x) => x && x.label === this._activeVariant);
+      if (hit && hit.scriptUrl) return hit.scriptUrl;
+    }
+    return v.scriptUrl || '';
+  }
+
+  /**
+   * Cycle the funscript variant (🎢 button), mirroring the desktop's chip:
+   * send switch-variant over the sync socket, then confirm via the
+   * variant-changed echo the desktop broadcasts to every client. Standalone
+   * (no desktop), only the slideshow's script can be switched locally — the
+   * funscript devices belong to the desktop.
+   */
+  _cycleVariant() {
+    const variants = this._variants;
+    if (variants.length < 2 || this._pendingVariant) return;
+    const labels = variants.map((x) => x && x.label).filter((s) => typeof s === 'string' && s);
+    if (labels.length < 2) return;
+    const at = labels.indexOf(this._activeVariant);
+    const next = labels[(at + 1) % labels.length];
+    if (this.player.sync && this.player.sync.switchVariant && this.player.wsConnected) {
+      this.player.sync.switchVariant(next);
+      this._pendingVariant = next;
+      this._variantPendingUntil = Date.now() + 5000;
+      this.toast = { text: `バリアント切替中… ${next}`, until: Date.now() + 3000 };
+    } else {
+      this._activeVariant = next;
+      this.toast = { text: `デスクトップ未接続 — スライドショーのみに適用: ${next}`, until: Date.now() + 4000 };
+      if (this.slideshow) this._rebuildSlideshowScript();
+    }
+    this.playerPanel.redraw();
+  }
+
+  /**
+   * A variant switch landed while the slideshow runs: the photo schedule
+   * belongs to the old script, so rebuild the model from the new variant's
+   * actions. Images and layout settings carry over from the live inputs.
+   */
+  async _rebuildSlideshowScript() {
+    const ss = this.slideshow;
+    if (!ss || !this._ssCfg || !this._ssImageUrls) return;
+    try {
+      const actions = await this._fetchActions(this._activeScriptUrl());
+      if (this.slideshow !== ss) return; // user toggled SS off meanwhile
+      if (!actions.length) {
+        this.toast = { text: '新しいバリアントにアクションがなく、スライドショーを停止しました。', until: Date.now() + 5000 };
+        this._disableSlideshow();
+        this._redrawActivePanel();
+        return;
+      }
+      const model = new SlideshowModel({
+        canvasW: 1280,
+        canvasH: 720,
+        ...this._ssCfg,
+        imageUrls: this._ssImageUrls,
+        actions,
+      });
+      if (this.slideshow !== ss) return;
+      if (!model.switchTimes.length) {
+        this.toast = { text: '新しいバリアントから切替ポイントを作成できず、スライドショーを停止しました。', until: Date.now() + 5000 };
+        this._disableSlideshow();
+        this._redrawActivePanel();
+        return;
+      }
+      // Same renderer + screen texture: only the schedule changes. Warm the
+      // photos around the current playhead before the next tick composites.
+      ss.model = model;
+      const st = model.frame(this.player.currentTime);
+      ss.renderer.loadImage(model.images, st.photoIndex);
+      ss.renderer.loadImage(model.images, st.toIndex >= 0 ? st.toIndex : st.photoIndex);
+      this.toast = { text: `スライドショーをバリアントに再同期（${model.switchTimes.length} 切替）`, until: Date.now() + 3500 };
+      this._redrawActivePanel();
+    } catch {
+      if (this.slideshow !== ss) return;
+      this.toast = { text: 'スライドショーの新バリアント再同期に失敗しました。', until: Date.now() + 5000 };
+      this._disableSlideshow();
+      this._redrawActivePanel();
+    }
   }
 
   /** Re-composite the slideshow canvas from the current video time. */
@@ -1593,6 +1760,274 @@ class VrApp {
   }
 
   // -------------------------------------------------------------------------
+  // Slideshow folder picker (modal panel over the player controls)
+  // -------------------------------------------------------------------------
+
+  /**
+   * The picker replaces the control row while open (the controls drift with
+   * the screen distance and would fight the modal for rays). Content is a
+   * server-side browse confined to media-source roots and real drives.
+   */
+  _openFolderPicker() {
+    if (!this.folderPanel || this._fp) return;
+    this._fp = { path: '', parent: null, dirs: [], page: 0, loading: true, busy: false, error: null, current: null };
+    if (this.playerPanel) this.playerPanel.mesh.visible = false;
+    this.folderPanel.clearHover();
+    this.folderPanel.mesh.visible = true;
+    this._fpLoad(null);
+    // Best effort: show which folder is configured right now.
+    fetch('/api/remote/slideshow/config', { cache: 'no-store' })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((cfg) => {
+        if (this._fp && cfg && typeof cfg.folder === 'string') {
+          this._fp.current = cfg.folder;
+          this.folderPanel.redraw();
+        }
+      })
+      .catch(() => { /* purely informational */ });
+  }
+
+  /** Safe to call even when the picker was never built/opened. */
+  _closeFolderPicker() {
+    this._fp = null;
+    if (this.folderPanel) {
+      this.folderPanel.clearHover();
+      this.folderPanel.mesh.visible = false;
+    }
+    if (this.playerPanel) this.playerPanel.mesh.visible = true;
+  }
+
+  /** Load one browse level (null path = root list). */
+  async _fpLoad(path) {
+    const st = this._fp;
+    if (!st || st.busy) return;
+    st.loading = true;
+    st.error = null;
+    this.folderPanel.redraw();
+    try {
+      const url = '/api/remote/slideshow/browse' + (path ? `?path=${encodeURIComponent(path)}` : '');
+      const res = await fetch(url, { cache: 'no-store' });
+      if (res.status === 403) throw new Error('この場所は参照できません。');
+      if (!res.ok) throw new Error(`browse ${res.status}`);
+      const data = await res.json();
+      if (this._fp !== st) return; // picker closed or reloaded meanwhile
+      st.path = typeof data.path === 'string' ? data.path : '';
+      st.parent = typeof data.parent === 'string' ? data.parent : null;
+      st.dirs = Array.isArray(data.dirs) ? data.dirs.filter((d) => d && typeof d.path === 'string') : [];
+      st.page = 0;
+      st.loading = false;
+      this.folderPanel.redraw();
+    } catch (err) {
+      console.error('[FunSync VR] folder browse failed', err);
+      if (this._fp !== st) return;
+      st.loading = false;
+      st.error = err && err.message && err.message.includes('参照') ? err.message : 'フォルダを読み込めませんでした。';
+      this.folderPanel.redraw();
+    }
+  }
+
+  /** Move the browse view up one level. */
+  _fpSetUp() {
+    const st = this._fp;
+    if (st && st.parent && !st.loading && !st.busy) this._fpLoad(st.parent);
+  }
+
+  /** Persist the selected folder as the slideshow folder (desktop is notified server-side). */
+  async _fpApplyFolder() {
+    const st = this._fp;
+    if (!st || !st.path || st.busy) return;
+    st.busy = true;
+    st.error = null;
+    this.folderPanel.redraw();
+    const chosen = st.path;
+    try {
+      const res = await fetch('/api/remote/slideshow/folder', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: chosen }),
+      });
+      if (!res.ok) {
+        let detail = '';
+        try {
+          const data = await res.json();
+          if (data && data.detail) detail = String(data.detail);
+        } catch { /* non-JSON error body */ }
+        throw new Error(detail || `HTTP ${res.status}`);
+      }
+      if (this.slideshow) {
+        // The running slideshow is showing the old folder's photos.
+        this._disableSlideshow();
+        await this._enableSlideshow();
+      }
+      this._closeFolderPicker();
+      this.toast = { text: `スライドショーフォルダを設定: ${chosen}`, until: Date.now() + 5000 };
+      this._redrawActivePanel();
+    } catch (err) {
+      const msg = `設定できませんでした: ${err && err.message ? err.message : err}`;
+      if (this._fp === st) {
+        st.busy = false;
+        st.error = msg;
+        this.folderPanel.redraw();
+      } else {
+        this.toast = { text: msg, until: Date.now() + 5000 };
+        this._redrawActivePanel();
+      }
+    }
+  }
+
+  _drawFolderPicker() {
+    const panel = this.folderPanel;
+    if (!panel) return;
+    const { ctx } = panel;
+    const W = panel.pixelWidth;
+    const H = panel.pixelHeight;
+    const st = this._fp;
+
+    drawPanelBackground(ctx, W, H, { fill: '#0e101a' });
+    ctx.save();
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#e8ecf8';
+    ctx.font = `600 40px ${FONT}`;
+    ctx.fillText('📷 スライドショーフォルダ', 40, 64);
+
+    // Action buttons, right to left: set / up / close.
+    ctx.font = `600 28px ${FONT}`;
+    const setLabel = st && st.busy ? '設定中…' : '✅ このフォルダを設定';
+    const setW = Math.max(180, ctx.measureText(setLabel).width + 40);
+    const setX = W - 40 - setW;
+    const upW = Math.max(130, ctx.measureText('◀ 上へ').width + 40);
+    const upX = setX - 14 - upW;
+    const closeW = Math.max(130, ctx.measureText('✕ とじる').width + 40);
+    const closeX = upX - 14 - closeW;
+    const actions = [
+      {
+        x: closeX, y: 34, w: closeW, h: 60, id: 'close', label: '✕ とじる',
+        onClick: () => this._closeFolderPicker(), disabled: !!(st && st.busy),
+      },
+      {
+        x: upX, y: 34, w: upW, h: 60, id: 'up', label: '◀ 上へ',
+        onClick: () => this._fpSetUp(),
+        disabled: !(st && st.parent) || !!(st && (st.loading || st.busy)),
+      },
+      {
+        x: setX, y: 34, w: setW, h: 60, id: 'set', label: setLabel,
+        onClick: () => this._fpApplyFolder(),
+        disabled: !(st && st.path) || !!(st && (st.loading || st.busy)),
+      },
+    ];
+    for (const r of actions) drawButton(ctx, r, panel, { fontSize: 28 });
+    const regions = actions.map((r) => ({ ...r }));
+
+    // Path line: what would be set right now, else what is configured.
+    ctx.font = `600 26px ${FONT}`;
+    ctx.fillStyle = '#c9d2e8';
+    const pathLine = st && st.path ? `選択中: ${st.path}`
+      : (st && st.current ? `現在: ${st.current}` : '現在: (未設定)');
+    ctx.fillText(ellipsize(ctx, pathLine, W - 80), 40, 124);
+
+    if (st && st.error) {
+      ctx.fillStyle = '#ff5d5d';
+      ctx.font = `600 24px ${FONT}`;
+      let ey = 164;
+      for (const ln of wrapLines(ctx, st.error, W - 80, 2)) {
+        ctx.fillText(ln, 40, ey);
+        ey += 30;
+      }
+    }
+
+    // Directory list.
+    const listTop = st && st.error ? 196 : 160;
+    const rowH = 74;
+    const rows = 8;
+    const dirs = st && !st.loading ? st.dirs : [];
+    const pageCount = Math.max(1, Math.ceil(dirs.length / rows));
+    const page = Math.min(Math.max(0, st ? st.page : 0), pageCount - 1);
+    if (st && st.loading) {
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#8b93ad';
+      ctx.font = `600 30px ${FONT}`;
+      ctx.fillText('読み込み中…', W / 2, listTop + 90);
+      ctx.textAlign = 'left';
+    } else if (!dirs.length) {
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#8b93ad';
+      ctx.font = `600 30px ${FONT}`;
+      ctx.fillText(
+        st && st.path ? '下位にフォルダはありません — 現在地を設定できます' : '参照できるフォルダがありません（メディアソース／ドライブ）',
+        W / 2, listTop + 90,
+      );
+      ctx.textAlign = 'left';
+    } else {
+      ctx.font = `600 30px ${FONT}`;
+      for (let i = 0; i < rows; i++) {
+        const d = dirs[page * rows + i];
+        if (!d) break;
+        const y = listTop + i * rowH;
+        const hovered = panel.hoverId === `dir${i}`;
+        roundRect(ctx, 40, y + 4, W - 80, rowH - 8, 12);
+        ctx.fillStyle = hovered ? '#3d4a7a' : '#232a40';
+        ctx.fill();
+        ctx.fillStyle = '#e8ecf8';
+        const name = ellipsize(ctx, `📁 ${d.name || d.path}`, W - 110);
+        ctx.fillText(name, 60, y + rowH / 2);
+        regions.push({
+          x: 40, y, w: W - 80, h: rowH, id: `dir${i}`, label: '',
+          disabled: !!(st && (st.loading || st.busy)),
+          onClick: () => this._fpLoad(d.path),
+        });
+      }
+    }
+
+    // Pager row (only with more than one page of folders).
+    if (dirs.length > rows) {
+      const py = 800;
+      const pager = [];
+      if (page > 0) {
+        pager.push({
+          x: 40, y: py, w: 160, h: 64, id: 'prev', label: '‹ 前へ',
+          onClick: () => {
+            if (this._fp) {
+              this._fp.page = Math.max(0, this._fp.page - 1);
+              this.folderPanel.redraw();
+            }
+          },
+        });
+      }
+      if (page < pageCount - 1) {
+        pager.push({
+          x: W - 200, y: py, w: 160, h: 64, id: 'next', label: '次へ ›',
+          onClick: () => {
+            if (this._fp) {
+              this._fp.page = Math.min(pageCount - 1, this._fp.page + 1);
+              this.folderPanel.redraw();
+            }
+          },
+        });
+      }
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#8b93ad';
+      ctx.font = `600 28px ${FONT}`;
+      ctx.fillText(`${page + 1} / ${pageCount}`, W / 2, py + 32);
+      ctx.textAlign = 'left';
+      for (const r of pager) drawButton(ctx, r, panel, { fontSize: 28 });
+      regions.push(...pager.map((r) => ({ ...r })));
+    }
+
+    // Toast strip, same as the player panel.
+    if (this.toast) {
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#ffd76a';
+      ctx.font = `600 26px ${FONT}`;
+      ctx.fillText(ellipsize(ctx, this.toast.text, W - 120), W / 2, H - 30);
+      ctx.textAlign = 'left';
+    }
+
+    ctx.restore();
+    panel.setRegions(regions);
+  }
+
+  // -------------------------------------------------------------------------
   // Sync status (drawn on the player panel / library footer)
   // -------------------------------------------------------------------------
 
@@ -1611,6 +2046,15 @@ class VrApp {
         break;
       case 'script-missing':
         this.sync.script = 'FunScript 見つかりません';
+        break;
+      case 'variant-changed':
+        // The desktop applied (or initially chose) a funscript variant;
+        // mirror it so the 🎢 button cycles from the right label again.
+        if (typeof msg.label === 'string') {
+          this._activeVariant = msg.label;
+          this._pendingVariant = null;
+          if (this.slideshow) this._rebuildSlideshowScript();
+        }
         break;
       default:
         break;
@@ -1644,6 +2088,12 @@ class VrApp {
 
   /** Redraw whichever panel the user is currently looking at. */
   _redrawActivePanel() {
+    if (this._fp && this.folderPanel) {
+      // Folder picker is modal: everything (toasts, sync echoes) paints
+      // onto it while it is open, never the hidden control row.
+      this.folderPanel.redraw();
+      return;
+    }
     const panel = this.mode === 'player' ? this.playerPanel : this.libraryPanel;
     if (panel) panel.redraw();
   }
@@ -1666,6 +2116,8 @@ class VrApp {
       this.toast ? this.toast.text : '',
       this.player.lastError || '',
       this.player.muted ? 'muted' : 'sound',
+      this._activeVariant || '-',
+      this._pendingVariant || '-',
       this._frameError || '',
     ].join('|');
   }
