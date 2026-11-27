@@ -69,6 +69,11 @@ const SEEK_HIT_H = 36;
 const STICK_AXIS_X = 2;
 const STICK_AXIS_Y = 3;
 const STICK_DEADZONE = 0.25;
+// Left thumbstick click (gamepad button 2, the xr-standard thumbstick
+// button) resets distance/size to the built-in defaults.
+const STICK_BUTTON = 2;
+const DEFAULT_SCREEN_DIST = 2.6;
+const DEFAULT_SCREEN_SCALE = 1;
 const SCREEN_DIST_MIN = 0.5;
 const SCREEN_DIST_MAX = 4.0;
 const SCREEN_SCALE_MIN = 0.2;
@@ -156,8 +161,8 @@ class VrApp {
     this._hover = null; // { controller, mesh, uv, distance }
     this._playerSig = ''; // player-panel refresh gate (see _playerSignature)
     this._scrubT = null;  // last scrub seek time (throttle; see _seekToUv)
-    this._screenDist = 2.6;  // flat-screen placement (left thumbstick; see _updateScreenControls)
-    this._screenScale = 1;
+    this._screenDist = DEFAULT_SCREEN_DIST; // flat-screen placement (left thumbstick; see _updateScreenControls)
+    this._screenScale = DEFAULT_SCREEN_SCALE;
     this._loadPlayerSettings(); // may override both from localStorage
     this._playerSaveTimer = null; // debounced placement save (see _schedulePlayerSave)
     this._panelActiveUntil = 0; // player-panel auto-hide deadline (see _updatePanelFade)
@@ -425,6 +430,7 @@ class VrApp {
       this._updateSubtitle();
       if (this.vrScreen) this.vrScreen.recenter(this.renderer);
       this._updateScreenControls();
+      this._updateStickButtons();
       this._updateLibraryScroll();
       this._tickLibraryScroll();
       if (this.toast && Date.now() > this.toast.until) {
@@ -548,6 +554,36 @@ class VrApp {
     this._screenScale = scale;
     this._applyScreenPlacement();
     this._schedulePlayerSave();
+  }
+
+  /**
+   * Edge-detect the thumbstick click buttons each frame (there is no XR
+   * event for them). Only the LEFT thumbstick has a binding; the press
+   * state lives on the controller itself so either hand can trigger it.
+   */
+  _updateStickButtons() {
+    for (const controller of this.controllers) {
+      const src = controller.userData.inputSource;
+      const gp = src && src.gamepad;
+      const btn = gp && gp.buttons && gp.buttons[STICK_BUTTON];
+      const pressed = !!(btn && btn.pressed);
+      const was = controller.userData._stickBtn === true;
+      controller.userData._stickBtn = pressed;
+      if (!pressed || was) continue;
+      if (src.handedness !== 'left') continue;
+      // No flat quad to reset in the library or in surround-sphere modes.
+      if (this.mode !== 'player' || !this.vrScreen || this.vrScreen.sphere) continue;
+      this._resetScreenPlacement();
+    }
+  }
+
+  _resetScreenPlacement() {
+    this._screenDist = DEFAULT_SCREEN_DIST;
+    this._screenScale = DEFAULT_SCREEN_SCALE;
+    this._applyScreenPlacement();
+    this._flushPlayerSave(); // a deliberate action: persist right away
+    this.toast = { text: '距離・拡大率をデフォルトに戻しました', until: Date.now() + 2500 };
+    this.playerPanel.redraw();
   }
 
   /**
