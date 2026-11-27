@@ -63,8 +63,8 @@ const SEEK_HIT_H = 36;
 const STICK_AXIS_X = 2;
 const STICK_AXIS_Y = 3;
 const STICK_DEADZONE = 0.25;
-const SCREEN_DIST_MIN = 1.6;
-const SCREEN_DIST_MAX = 6.0;
+const SCREEN_DIST_MIN = 0.5;
+const SCREEN_DIST_MAX = 4.0;
 const SCREEN_SCALE_MIN = 0.5;
 const SCREEN_SCALE_MAX = 2.2;
 
