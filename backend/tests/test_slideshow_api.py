@@ -6,6 +6,7 @@ Routes under test (see routes/slideshow.py):
   - GET /api/media/slideshow/image/{token}/{index}
   - GET /api/remote/slideshow/browse   (VR folder picker)
   - PUT /api/remote/slideshow/folder   (VR folder picker)
+  - GET /api/media/slideshow/thumb     (VR picker cover/photo thumbnails)
 
 The configured folder comes from config.json settings.player.slideshowFolder
 via the shared user-data-dir plumbing (same fixture style as test_locale.py).
@@ -360,6 +361,143 @@ async def test_folder_put_writes_config_preserving_siblings(client, tmp_user_dat
     body = (await client.get("/api/remote/slideshow/images")).json()
     assert body["count"] == 1
     assert body["token"] == slideshow.folder_token(photos)
+
+
+# --- /browse dir summaries (desktop-parity covers + photo counts) ----------
+
+async def test_browse_dirs_carry_cover_and_photo_counts(client, source_root, monkeypatch):
+    # sub: one shallow photo + two nested ones. The single shallow image
+    # makes the BFS cover deterministic regardless of readdir order.
+    sub = os.path.join(source_root, "sub")
+    make_photos(sub, ["a.png"])
+    make_photos(os.path.join(sub, "deep"), ["b.png", "c.png"])
+    with open(os.path.join(sub, "notes.txt"), "wb") as f:
+        f.write(PNG_BYTES)
+    make_photos(source_root, ["p2.png", "p1.png"])
+    monkeypatch.setattr(slideshow, "_browse_roots", lambda: [{"name": "S", "path": source_root}])
+    body = (await client.get(f"/api/remote/slideshow/browse?path={quote(source_root)}")).json()
+    assert body["dirs"] == [{
+        "name": "sub",
+        "path": sub,
+        "photoCount": 3,
+        "capped": False,
+        "coverPath": os.path.join(sub, "a.png"),
+    }]
+    # Shallow slideshow images ride along for the VR picker's photo tiles.
+    assert body["images"] == [
+        {"name": "p1.png", "path": os.path.join(source_root, "p1.png")},
+        {"name": "p2.png", "path": os.path.join(source_root, "p2.png")},
+    ]
+    assert body["truncated"] == {"dirs": False, "images": False}
+
+
+async def test_browse_photo_count_capped_and_images_truncated(client, source_root, monkeypatch):
+    monkeypatch.setattr(slideshow, "_browse_roots", lambda: [{"name": "S", "path": source_root}])
+    monkeypatch.setattr(slideshow, "_BROWSE_COUNT_CAP", 3)
+    monkeypatch.setattr(slideshow, "_BROWSE_MAX_IMAGES", 2)
+    sub = os.path.join(source_root, "sub")
+    make_photos(sub, ["a.png", "b.png", "c.png", "d.png"])
+    make_photos(source_root, ["p1.png", "p2.png", "p3.png"])
+    body = (await client.get(f"/api/remote/slideshow/browse?path={quote(source_root)}")).json()
+    assert body["dirs"][0]["photoCount"] == 3
+    assert body["dirs"][0]["capped"] is True
+    assert body["dirs"][0]["coverPath"]  # capped still yields a cover
+    assert [i["name"] for i in body["images"]] == ["p1.png", "p2.png"]
+    assert body["truncated"] == {"dirs": False, "images": True}
+
+
+async def test_browse_empty_dir_summary_has_no_cover(client, source_root, monkeypatch):
+    monkeypatch.setattr(slideshow, "_browse_roots", lambda: [{"name": "S", "path": source_root}])
+    empty = os.path.join(source_root, "empty")
+    os.makedirs(empty)
+    body = (await client.get(f"/api/remote/slideshow/browse?path={quote(source_root)}")).json()
+    assert body["dirs"][0]["photoCount"] == 0
+    assert body["dirs"][0]["coverPath"] is None
+    assert body["images"] == []
+
+
+async def test_browse_roots_view_shape_unchanged(client, source_root, monkeypatch):
+    # The roots view stays name/path-only (back-compat: the VR client
+    # tolerates dirs without photoCount/coverPath).
+    monkeypatch.setattr(slideshow, "_browse_roots", lambda: [{"name": "S", "path": source_root}])
+    body = (await client.get("/api/remote/slideshow/browse")).json()
+    assert [set(d.keys()) for d in body["dirs"]] == [{"name", "path"}]
+    assert "images" not in body or body.get("images") == []
+
+
+# --- /api/media/slideshow/thumb (VR picker thumbnails) ----------------------
+
+async def test_thumb_confined_to_roots(client, source_root, tmp_path, monkeypatch):
+    monkeypatch.setattr(slideshow, "_browse_roots", lambda: [{"name": "S", "path": source_root}])
+    outside = tmp_path / "outside.png"
+    outside.write_bytes(PNG_BYTES)
+    res = await client.get(f"/api/media/slideshow/thumb?path={quote(str(outside))}")
+    assert res.status_code == 403
+
+    txt = os.path.join(source_root, "notes.txt")
+    with open(txt, "wb") as f:
+        f.write(PNG_BYTES)
+    res = await client.get(f"/api/media/slideshow/thumb?path={quote(txt)}")
+    assert res.status_code == 404  # non-image extension never reaches ffmpeg
+
+    ghost = os.path.join(source_root, "ghost.png")
+    res = await client.get(f"/api/media/slideshow/thumb?path={quote(ghost)}")
+    assert res.status_code == 404  # missing file inside a root
+
+    res = await client.get("/api/media/slideshow/thumb?path=")
+    assert res.status_code == 400
+
+
+async def test_thumb_serves_jpeg_with_clamped_width_and_cache_header(client, source_root, tmp_path, monkeypatch):
+    photo = os.path.join(source_root, "cover.png")
+    make_photos(source_root, ["cover.png"])
+    monkeypatch.setattr(slideshow, "_browse_roots", lambda: [{"name": "S", "path": source_root}])
+
+    # Patch the module attribute — the endpoint's import is a lazy
+    # in-function one, and this keeps the suite ffmpeg-free.
+    import services.ffmpeg as ffmpeg_mod
+    dims = []
+
+    def fake_gen(image_path, max_dim):
+        assert image_path == photo
+        dims.append(max_dim)
+        out = tmp_path / "thumb.jpg"
+        out.write_bytes(b"\xff\xd8\xff\xe0fake")
+        return str(out)
+
+    monkeypatch.setattr(ffmpeg_mod, "generate_photo_thumbnail", fake_gen)
+
+    res = await client.get(f"/api/media/slideshow/thumb?path={quote(photo)}&w=384")
+    assert res.status_code == 200
+    assert res.headers["content-type"] == "image/jpeg"
+    assert res.headers["cache-control"] == "public, max-age=300"
+    assert res.content == b"\xff\xd8\xff\xe0fake"
+
+    await client.get(f"/api/media/slideshow/thumb?path={quote(photo)}&w=9999")
+    await client.get(f"/api/media/slideshow/thumb?path={quote(photo)}&w=10")
+    assert dims == [384, 512, 64]  # clamped into the 64..512 box
+
+
+async def test_thumb_maps_generation_failures(client, source_root, monkeypatch):
+    photo = os.path.join(source_root, "broken.webp")
+    make_photos(source_root, ["broken.webp"])
+    monkeypatch.setattr(slideshow, "_browse_roots", lambda: [{"name": "S", "path": source_root}])
+    import services.ffmpeg as ffmpeg_mod
+
+    def fake_missing(image_path, max_dim):
+        raise FileNotFoundError(image_path)
+
+    monkeypatch.setattr(ffmpeg_mod, "generate_photo_thumbnail", fake_missing)
+    res = await client.get(f"/api/media/slideshow/thumb?path={quote(photo)}")
+    assert res.status_code == 404
+
+    def fake_failed(image_path, max_dim):
+        raise RuntimeError("ffmpeg photo-thumbnail failed: boom")
+
+    monkeypatch.setattr(ffmpeg_mod, "generate_photo_thumbnail", fake_failed)
+    res = await client.get(f"/api/media/slideshow/thumb?path={quote(photo)}")
+    assert res.status_code == 502
+    assert "boom" not in res.text  # ffmpeg stderr never surfaced to clients
 
 
 # --- natural sort helper (unit level) ---------------------------------------

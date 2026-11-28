@@ -645,3 +645,115 @@ class TestRemuxToMp4:
         out_dir = os.path.join(str(tmp_path), "funsync_remux")
         leftovers = os.listdir(out_dir) if os.path.isdir(out_dir) else []
         assert leftovers == []
+
+
+# --- Still-photo thumbnails (VR slideshow folder-picker covers) ---
+#
+# generate_photo_thumbnail is the ffmpeg analogue of the desktop browser's
+# nativeImage-based cover data URLs: one decode, no seeking, alpha flattened
+# via format=rgb24, single frame (so GIF "photos" cannot spam the cache),
+# cached under funsync_thumbs/<path+size+mtime hash>/photo_v1_<dim>.jpg.
+
+class TestGeneratePhotoThumbnail:
+    def _patch_photo_ffmpeg(self, monkeypatch, tmp_path):
+        """Stub run_silent + tempfile.gettempdir so we can inspect the arg
+        list without a real ffmpeg binary (this suite must not require one)."""
+        from services import ffmpeg as ffmpeg_mod
+        from unittest.mock import MagicMock
+
+        monkeypatch.setattr(
+            ffmpeg_mod, "tempfile",
+            type("T", (), {"gettempdir": staticmethod(lambda: str(tmp_path))})
+        )
+
+        captured = {"args": None, "kwargs": None, "calls": 0}
+
+        def fake_run(args, **kw):
+            captured["args"] = args
+            captured["kwargs"] = kw
+            captured["calls"] += 1
+            with open(args[-1], "wb") as f:
+                f.write(b"\xff\xd8\xff")  # JPEG magic, enough to "exist"
+            return MagicMock(returncode=0, stderr="")
+
+        monkeypatch.setattr(ffmpeg_mod, "run_silent", fake_run)
+        return captured
+
+    def test_missing_and_empty_images_raise_file_not_found(self, tmp_path):
+        import pytest
+        from services.ffmpeg import generate_photo_thumbnail
+
+        with pytest.raises(FileNotFoundError):
+            generate_photo_thumbnail(str(tmp_path / "nope.png"))
+
+        empty = tmp_path / "empty.png"
+        empty.write_bytes(b"")
+        with pytest.raises(FileNotFoundError):
+            generate_photo_thumbnail(str(empty))
+
+    def test_scale_box_filter_and_single_frame(self, monkeypatch, tmp_path):
+        """The -vf must fit the photo inside a max_dim box without
+        upscaling and flatten alpha; -frames:v 1 keeps even a GIF input to
+        a single cached frame. No -ss: photos are not videos."""
+        from services.ffmpeg import generate_photo_thumbnail
+
+        photo = tmp_path / "cover.png"
+        photo.write_bytes(b"\x89PNG")  # non-zero so the size guard passes
+        captured = self._patch_photo_ffmpeg(monkeypatch, tmp_path)
+
+        out = generate_photo_thumbnail(str(photo), max_dim=384)
+        args = captured["args"]
+        assert "-ss" not in args
+        vf = args[args.index("-vf") + 1]
+        assert vf == "scale=384:384:force_original_aspect_ratio=decrease,format=rgb24"
+        assert args[args.index("-frames:v") + 1] == "1"
+        assert out.endswith("photo_v1_384.jpg")
+        assert os.path.exists(out)
+
+    def test_cache_hit_skips_ffmpeg(self, monkeypatch, tmp_path):
+        """Same path/size/mtime key as video thumbs: a second request at
+        the same max_dim must be served from disk, never re-decoded."""
+        from services.ffmpeg import generate_photo_thumbnail
+
+        photo = tmp_path / "cover.jpg"
+        photo.write_bytes(b"\xff\xd8\xff")
+        captured = self._patch_photo_ffmpeg(monkeypatch, tmp_path)
+
+        first = generate_photo_thumbnail(str(photo), max_dim=256)
+        second = generate_photo_thumbnail(str(photo), max_dim=256)
+        assert first == second
+        assert captured["calls"] == 1
+
+    def test_ffmpeg_failure_raises_and_cleans_partial(self, monkeypatch, tmp_path):
+        """A half-written JPEG must not poison the cache — the next
+        request has to retry, not serve the stub."""
+        import pytest
+        from services import ffmpeg as ffmpeg_mod
+        from services.ffmpeg import generate_photo_thumbnail
+        from unittest.mock import MagicMock
+
+        photo = tmp_path / "broken.webp"
+        photo.write_bytes(b"RIFF")
+
+        monkeypatch.setattr(
+            ffmpeg_mod, "tempfile",
+            type("T", (), {"gettempdir": staticmethod(lambda: str(tmp_path))})
+        )
+
+        def fake_run(args, **_kw):
+            with open(args[-1], "wb") as f:  # partial output...
+                f.write(b"partial")
+            return MagicMock(returncode=1, stderr="unsupported")
+
+        monkeypatch.setattr(ffmpeg_mod, "run_silent", fake_run)
+
+        with pytest.raises(RuntimeError, match="photo-thumbnail failed"):
+            generate_photo_thumbnail(str(photo))
+
+        thumbs_dir = os.path.join(str(tmp_path), "funsync_thumbs")
+        leftovers = []
+        if os.path.isdir(thumbs_dir):
+            for entry in os.scandir(thumbs_dir):
+                if entry.is_dir():
+                    leftovers.extend(os.listdir(entry.path))
+        assert leftovers == []

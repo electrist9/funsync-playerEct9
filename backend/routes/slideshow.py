@@ -293,13 +293,60 @@ def _root_for(path: str) -> str:
     return ""
 
 
+# Desktop-parity limits for the picker (mirrors electron/photo-browser.js:
+# BROWSE_MAX_DIRS / BROWSE_MAX_IMAGES / BROWSE_COUNT_CAP / BROWSE_TOTAL_STAT_CAP).
+_BROWSE_MAX_DIRS = 500
+_BROWSE_MAX_IMAGES = 1000
+_BROWSE_COUNT_CAP = 500
+_BROWSE_TOTAL_STAT_CAP = 2000
+
+
+def _summarize_dir(dir_path: str, count_cap: int, budget: list) -> tuple:
+    """(photo_count, capped, cover_path) for one sub-directory, counting
+    slideshow images with a breadth-first walk so shallow photos win. The
+    cover is the FIRST image in readdir BFS order (deliberately not natural
+    sort — same as the desktop's summarizeDir). `budget` is a one-element
+    list of readdir ops left, shared across the whole browse hop so a huge
+    tree can't make one /browse request drag. Unreadable sub-folders are
+    skipped, never fatal."""
+    cover = None
+    count = 0
+    queue = [dir_path]
+    while queue and budget[0] > 0:
+        current = queue.pop(0)
+        budget[0] -= 1
+        try:
+            with os.scandir(current) as it:
+                for e in it:
+                    if e.name.startswith("."):
+                        continue
+                    try:
+                        if e.is_dir():
+                            queue.append(e.path)
+                            continue
+                    except OSError:
+                        continue
+                    if not is_slideshow_image_name(e.name):
+                        continue
+                    count += 1
+                    if cover is None:
+                        cover = e.path
+                    if count >= count_cap:
+                        return (count, True, cover)
+        except OSError:
+            continue
+    return (count, False, cover)
+
+
 @router.get("/browse")
 async def slideshow_browse(path: str | None = None):
     """One level of the folder tree for the VR slideshow picker.
 
     No `path` → the browse roots (enabled video sources + drive roots).
-    Otherwise the immediate sub-directories of `path`, naturally sorted,
-    dot-directories skipped. Sub-paths outside the roots 403."""
+    Otherwise the immediate sub-directories AND slideshow images of `path`,
+    both naturally sorted, dot-entries skipped; each dir carries the
+    desktop's cover/photo-count summary (photoCount/capped/coverPath) so
+    the VR tiles can show thumbnails. Sub-paths outside the roots 403."""
     if not path:
         return {
             "path": "",
@@ -310,7 +357,8 @@ async def slideshow_browse(path: str | None = None):
         raise HTTPException(status_code=404, detail="folder not found")
     if not _root_for(path):
         raise HTTPException(status_code=403, detail="folder not browsable")
-    names = []
+    dir_names = []
+    image_names = []
     try:
         with os.scandir(path) as it:
             for e in it:
@@ -318,19 +366,42 @@ async def slideshow_browse(path: str | None = None):
                     continue
                 try:
                     if e.is_dir():
-                        names.append(e.name)
+                        dir_names.append(e.name)
+                    elif is_slideshow_image_name(e.name):
+                        image_names.append(e.name)
                 except OSError:
                     continue
     except OSError:
         raise HTTPException(status_code=404, detail="folder not readable")
-    names.sort(key=natural_compare_key)
+    dir_names.sort(key=natural_compare_key)
+    image_names.sort(key=natural_compare_key)
+    truncated = {
+        "dirs": len(dir_names) > _BROWSE_MAX_DIRS,
+        "images": len(image_names) > _BROWSE_MAX_IMAGES,
+    }
+    dir_names = dir_names[:_BROWSE_MAX_DIRS]
+    image_names = image_names[:_BROWSE_MAX_IMAGES]
+    budget = [_BROWSE_TOTAL_STAT_CAP]
+    dirs = []
+    for n in dir_names:
+        full = os.path.join(path, n)
+        photo_count, capped, cover = _summarize_dir(full, _BROWSE_COUNT_CAP, budget)
+        dirs.append({
+            "name": n,
+            "path": full,
+            "photoCount": photo_count,
+            "capped": capped,
+            "coverPath": cover,
+        })
     parent = os.path.dirname(os.path.normpath(path))
     if parent == os.path.normpath(path) or not _root_for(parent):
         parent = None  # stop the picker's "up" at the browse root (no 403 dead-end)
     return {
         "path": path,
         "parent": parent,
-        "dirs": [{"name": n, "path": os.path.join(path, n)} for n in names],
+        "dirs": dirs,
+        "images": [{"name": n, "path": os.path.join(path, n)} for n in image_names],
+        "truncated": truncated,
     }
 
 
@@ -414,3 +485,39 @@ async def slideshow_image(token: str, index: int):
     if not os.path.isfile(path):
         raise HTTPException(status_code=404)
     return FileResponse(path)
+
+
+@media_router.get("/thumb")
+def slideshow_thumb(path: str, w: int = 256):
+    """Scaled JPEG thumbnail of ONE photo file, for the VR picker's folder
+    cover tiles and photo tiles (the analogue of the desktop IPC's
+    read-slideshow-thumbnail). Plain `def` on purpose: the ffmpeg decode
+    blocks, so FastAPI must run it in its thread pool, not the event loop.
+
+    Security mirrors /browse: the file must live under a browse root, and
+    its extension must be a whitelisted slideshow image — raw paths stay
+    inside the LAN trust boundary already documented in _browse_roots."""
+    if not path:
+        raise HTTPException(status_code=400, detail="path required")
+    if not _root_for(path):
+        raise HTTPException(status_code=403, detail="file not browsable")
+    dot = path.rfind(".")
+    if dot <= 0 or path[dot:].lower() not in IMAGE_EXTS:
+        raise HTTPException(status_code=404)
+    if not os.path.isfile(path):
+        raise HTTPException(status_code=404)
+    max_dim = min(512, max(64, w))
+    from services.ffmpeg import generate_photo_thumbnail  # lazy import: keep server start lean
+    try:
+        thumb_path = generate_photo_thumbnail(path, max_dim)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404)
+    except RuntimeError:
+        raise HTTPException(status_code=502, detail="thumbnail generation failed")
+    # Short TTL: ffmpeg's own disk cache is mtime-keyed, so replacing the
+    # photo refreshes the bytes quickly even if an HTTP cache holds a bit.
+    return FileResponse(
+        thumb_path,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "public, max-age=300"},
+    )

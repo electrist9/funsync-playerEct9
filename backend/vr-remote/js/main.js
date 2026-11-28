@@ -754,7 +754,7 @@ class VrApp {
     // Clamp like LibraryModel.maxScroll in grid mode: the row-aligned
     // window still scrolls far enough to reveal the final partial row.
     // (An error strip shrinks the visible window to FP_ERROR_ROWS rows.)
-    const total = st.dirs ? st.dirs.length : 0;
+    const total = (st.dirs ? st.dirs.length : 0) + (st.images ? st.images.length : 0);
     const rowsVisible = st.error ? FP_ERROR_ROWS : FP_VISIBLE_ROWS;
     const pageSize = FP_COLS * rowsVisible;
     const aligned = Math.ceil(total / FP_COLS) * FP_COLS - pageSize;
@@ -1881,7 +1881,7 @@ class VrApp {
    */
   _openFolderPicker() {
     if (!this.folderPanel || this._fp) return;
-    const st = this._fp = { path: '', parent: null, dirs: [], scroll: 0, scrollTarget: 0, loading: true, busy: false, error: null, current: null };
+    const st = this._fp = { path: '', parent: null, dirs: [], images: [], scroll: 0, scrollTarget: 0, loading: true, busy: false, error: null, current: null };
     this._fpScrollAcc = 0;
     if (this.playerPanel) this.playerPanel.mesh.visible = false;
     this.folderPanel.clearHover();
@@ -1944,6 +1944,9 @@ class VrApp {
       st.path = typeof data.path === 'string' ? data.path : '';
       st.parent = typeof data.parent === 'string' ? data.parent : null;
       st.dirs = Array.isArray(data.dirs) ? data.dirs.filter((d) => d && typeof d.path === 'string') : [];
+      // Photos living directly in this folder — drawn as non-selectable
+      // cover tiles after the sub-folders (desktop browser parity).
+      st.images = Array.isArray(data.images) ? data.images.filter((p) => p && typeof p.path === 'string') : [];
       st.scroll = 0; st.scrollTarget = 0; this._fpScrollAcc = 0;
       st.loading = false;
       this.folderPanel.redraw();
@@ -2003,6 +2006,34 @@ class VrApp {
         this._redrawActivePanel();
       }
     }
+  }
+
+  /**
+   * Lazy cover/photo thumbnail for a picker tile — the folder-browser
+   * analogue of the library's _thumbFor, keyed by ABSOLUTE PATH (browse
+   * paths are unique) instead of video id. No retry ladder: the backend
+   * generates photo thumbnails synchronously, so a failure (unsupported
+   * format, no ffmpeg) is permanent and the tile just keeps its glyph.
+   */
+  _fpThumbFor(filePath) {
+    if (!filePath || typeof filePath !== 'string') return null;
+    if (!this._fpThumbs) this._fpThumbs = new Map();
+    let entry = this._fpThumbs.get(filePath);
+    if (!entry) {
+      if (this._fpThumbs.size > 400) this._fpThumbs.clear(); // bound the Image set
+      entry = { img: new Image(), state: 'loading' };
+      entry.img.onload = () => {
+        entry.state = entry.img.naturalWidth > 1 ? 'ready' : 'failed';
+        if (this._fp && this.folderPanel) this.folderPanel.redraw();
+      };
+      entry.img.onerror = () => {
+        entry.state = 'failed';
+        if (this._fp && this.folderPanel) this.folderPanel.redraw();
+      };
+      entry.img.src = `/api/media/slideshow/thumb?path=${encodeURIComponent(filePath)}&w=384`;
+      this._fpThumbs.set(filePath, entry);
+    }
+    return entry;
   }
 
   _drawFolderPicker() {
@@ -2080,6 +2111,11 @@ class VrApp {
     const rowPitch = tileH + 14;
     const bandBottom = gridTop + rows * rowPitch;
     const dirs = st && !st.loading ? st.dirs : [];
+    // Photos living directly in this folder: drawn after the sub-folders
+    // as non-selectable cover tiles (desktop browser parity).
+    const photos = st && !st.loading ? (st.images || []) : [];
+    const items = dirs.map((d) => ({ kind: 'd', d }));
+    for (const p of photos) items.push({ kind: 'p', p });
     const scroll = st ? st.scroll : 0;
     // Path equality for the "configured" highlight: separators and drive
     // letter case may differ between config and browse responses.
@@ -2087,13 +2123,31 @@ class VrApp {
       const n = (p) => String(p).replace(/[\\/]+/g, '/').replace(/\/+$/, '').toLowerCase();
       return n(a) === n(b);
     };
+    // Cover-crop a loaded thumbnail inside a rounded box (same geometry
+    // as the library grid); the flat placeholder stays if drawing fails.
+    const drawCover = (img, bx, by, bw, bh, radius) => {
+      ctx.save();
+      roundRect(ctx, bx, by, bw, bh, radius);
+      ctx.clip();
+      try {
+        const scale = Math.max(bw / img.naturalWidth, bh / img.naturalHeight);
+        const dw = img.naturalWidth * scale;
+        const dh = img.naturalHeight * scale;
+        ctx.drawImage(img, bx + (bw - dw) / 2, by + (bh - dh) / 2, dw, dh);
+      } catch (err) { /* decoding hiccup: keep the placeholder underneath */ }
+      ctx.restore();
+    };
+    const coverFor = (filePath) => {
+      const entry = this._fpThumbFor(filePath);
+      return entry && entry.state === 'ready' ? entry.img : null;
+    };
     if (st && st.loading) {
       ctx.textAlign = 'center';
       ctx.fillStyle = '#8b93ad';
       ctx.font = `600 30px ${FONT}`;
       ctx.fillText('読み込み中…', W / 2, gridTop + (rows * rowPitch) / 2);
       ctx.textAlign = 'left';
-    } else if (!dirs.length) {
+    } else if (!items.length) {
       ctx.textAlign = 'center';
       ctx.fillStyle = '#8b93ad';
       ctx.font = `600 30px ${FONT}`;
@@ -2110,13 +2164,36 @@ class VrApp {
       ctx.rect(24, gridTop, W - 48, bandBottom - gridTop);
       ctx.clip();
       const start = Math.max(0, Math.floor(scroll));
-      for (let gi = start; gi < dirs.length; gi++) {
-        const d = dirs[gi];
+      for (let gi = start; gi < items.length; gi++) {
+        const item = items[gi];
         const x = 32 + (gi % cols) * (tileW + gap);
         const y = gridTop + (Math.floor(gi / cols) - scroll / cols) * rowPitch;
         if (y >= bandBottom) break; // later rows are even lower
         if (y + tileH <= gridTop) continue; // row sliding out the top
         const cx = x + tileW / 2;
+        if (item.kind === 'p') {
+          // Photo tile: the cover fills the whole tile and there is NO
+          // hover region — the picker navigates folders, never into a photo.
+          roundRect(ctx, x, y, tileW, tileH, 12);
+          ctx.fillStyle = '#1a2136';
+          ctx.fill();
+          const img = coverFor(item.p.path);
+          if (img) {
+            drawCover(img, x, y, tileW, tileH, 12);
+          } else {
+            ctx.textAlign = 'center';
+            ctx.fillStyle = '#5c6584';
+            ctx.font = `600 44px ${FONT}`;
+            ctx.fillText('📷', cx, y + tileH / 2 + 14);
+            ctx.textAlign = 'left';
+          }
+          ctx.strokeStyle = 'rgba(255,255,255,0.10)';
+          ctx.lineWidth = 1;
+          roundRect(ctx, x + 0.5, y + 0.5, tileW - 1, tileH - 1, 12);
+          ctx.stroke();
+          continue;
+        }
+        const d = item.d;
         const hovered = panel.hoverId === `dir${gi}`;
         roundRect(ctx, x, y, tileW, tileH, 12);
         ctx.fillStyle = hovered ? '#3d4a7a' : '#232a40';
@@ -2130,17 +2207,36 @@ class VrApp {
           roundRect(ctx, x + 1.5, y + 1.5, tileW - 3, tileH - 3, 11);
           ctx.stroke();
         }
-        // Big folder glyph, name below — everything centered in the tile.
+        // Cover band with the folder's first photo (desktop parity); the
+        // folder glyph stands in while it loads or when there is no cover.
+        const bandX = x + 10, bandY = y + 10, bandW = tileW - 20, bandH = 82;
+        roundRect(ctx, bandX, bandY, bandW, bandH, 8);
+        ctx.fillStyle = '#1a2136';
+        ctx.fill();
+        const cover = d.coverPath ? coverFor(d.coverPath) : null;
+        if (cover) {
+          drawCover(cover, bandX, bandY, bandW, bandH, 8);
+        } else {
+          ctx.textAlign = 'center';
+          ctx.fillStyle = '#8b93ad';
+          ctx.font = `600 44px ${FONT}`;
+          ctx.fillText('📁', cx, bandY + bandH / 2 + 15);
+        }
+        // Name + photo-count line (「N 枚」, 「N+ 枚」 once capped); the
+        // gold 「設定済み」 badge folds into that same line.
+        let bottom = '';
+        if (typeof d.photoCount === 'number') {
+          bottom = d.capped ? `${d.photoCount}+ 枚` : `${d.photoCount} 枚`;
+        }
+        if (isCurrent) bottom = bottom ? `設定済み · ${bottom}` : '設定済み';
         ctx.textAlign = 'center';
         ctx.fillStyle = '#e8ecf8';
-        ctx.font = `600 56px ${FONT}`;
-        ctx.fillText('📁', cx, y + 62);
         ctx.font = `600 26px ${FONT}`;
-        ctx.fillText(ellipsize(ctx, d.name || d.path, tileW - 24), cx, y + tileH - 44);
-        if (isCurrent) {
-          ctx.fillStyle = '#ffd76a';
+        ctx.fillText(ellipsize(ctx, d.name || d.path, tileW - 24), cx, bottom ? y + 122 : y + 134);
+        if (bottom) {
+          ctx.fillStyle = isCurrent ? '#ffd76a' : '#8b93ad';
           ctx.font = `600 20px ${FONT}`;
-          ctx.fillText('設定済み', cx, y + tileH - 16);
+          ctx.fillText(ellipsize(ctx, bottom, tileW - 24), cx, y + 150);
         }
         ctx.textAlign = 'left';
         regions.push({
@@ -2152,13 +2248,13 @@ class VrApp {
       ctx.restore();
       // Scroll-position hint where the pager used to sit: visible range
       // out of the folder total, so deep lists still convey their size.
-      if (dirs.length > cols * rows) {
+      if (items.length > cols * rows) {
         const first = start + 1;
-        const last = Math.min(dirs.length, start + cols * rows);
+        const last = Math.min(items.length, start + cols * rows);
         ctx.textAlign = 'center';
         ctx.fillStyle = '#8b93ad';
         ctx.font = `600 24px ${FONT}`;
-        ctx.fillText(`${first}–${last} / ${dirs.length} フォルダ`, W / 2, bandBottom + 24);
+        ctx.fillText(`${first}–${last} / ${items.length} 件`, W / 2, bandBottom + 24);
         ctx.textAlign = 'left';
       }
     }

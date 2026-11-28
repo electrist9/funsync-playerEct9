@@ -819,3 +819,73 @@ def generate_single_thumbnail(
         "height": (round(width * out_height / out_width)
                    if out_width and out_height else 0),
     }
+
+
+def generate_photo_thumbnail(image_path: str, max_dim: int = 256) -> str:
+    """Shrink a STILL PHOTO to a `max_dim`-box JPEG for folder-browser cover
+    tiles (VR slideshow picker — the ffmpeg analogue of the desktop's
+    nativeImage-based slideshowDataUrl). No seeking: the whole image is
+    decoded once, alpha is flattened, and the result is written as a
+    single-frame JPEG.
+
+    Cached on disk with the same path+size+mtime key as video thumbs, so
+    repeat requests never re-invoke ffmpeg and replacing the photo
+    invalidates the entry by itself.
+
+    Returns the absolute path of the generated JPEG.
+
+    Raises:
+        FileNotFoundError: image missing or 0 bytes.
+        RuntimeError: ffmpeg failed (unsupported format in this build,
+            decode error, timeout).
+    """
+    if not os.path.exists(image_path):
+        raise FileNotFoundError(f"Image not found: {image_path}")
+    if os.path.getsize(image_path) == 0:
+        raise FileNotFoundError(f"Image is empty (0 bytes): {image_path}")
+
+    image_hash = _get_video_hash(image_path)
+    output_dir = os.path.join(tempfile.gettempdir(), "funsync_thumbs", image_hash)
+    os.makedirs(output_dir, exist_ok=True)
+    # v1 marker so a future change to this pipeline can bump it without
+    # colliding with earlier outputs (same idea as the single_* cache).
+    cache_name = f"photo_v1_{max_dim}.jpg"
+    output_path = os.path.join(output_dir, cache_name)
+    if os.path.exists(output_path):
+        return output_path
+
+    try:
+        result = run_silent(
+            [
+                FFMPEG,
+                "-y",
+                "-loglevel", "error",
+                "-i", image_path,
+                # Fit inside the max_dim box without upscaling; rgb24 drops
+                # alpha (PNG/WebP covers) so the JPEG encode can't fail on
+                # it. -frames:v keeps output to one frame even for GIFs.
+                "-vf",
+                f"scale={max_dim}:{max_dim}:force_original_aspect_ratio=decrease,format=rgb24",
+                "-frames:v", "1",
+                "-q:v", "4",
+                output_path,
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=THUMBNAIL_TIMEOUT_SEC,
+        )
+    except FileNotFoundError:
+        raise RuntimeError("ffmpeg not found. Install ffmpeg to use thumbnail features.")
+
+    if result.returncode != 0 or not os.path.exists(output_path):
+        # Leave no half-written file behind to poison the cache.
+        if os.path.exists(output_path):
+            try:
+                os.remove(output_path)
+            except OSError:
+                pass
+        raise RuntimeError(f"ffmpeg photo-thumbnail failed: {result.stderr}")
+
+    return output_path
