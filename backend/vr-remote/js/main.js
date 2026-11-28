@@ -280,6 +280,7 @@ class VrApp {
       this._frameError = null;
       this.toast = { text: 'コントローラーをパネルに向けてトリガーで選択します', until: Date.now() + 6000 };
       this._refreshLibrary(true);
+      await this._requestMaxFrameRate(session);
 
       this.renderer.setAnimationLoop(() => this._frame());
     } catch (err) {
@@ -290,10 +291,38 @@ class VrApp {
     }
   }
 
+  /**
+   * Quest Browser runs XR sessions at 72 Hz by default, which makes the
+   * slideshow cross-switches (max 0.5 s, so ~36 steps) look choppy. On a
+   * 90/120 Hz-capable headset ask the session for the fastest rate it
+   * exposes; the fps readout in the player panel shows the rate that
+   * actually landed.
+   */
+  async _requestMaxFrameRate(session) {
+    if (typeof session.updateTargetFrameRate !== 'function') {
+      this.toast = { text: 'リフレッシュレート切替は非対応です（ブラウザ既定の 72Hz で動作）', until: Date.now() + 5000 };
+      return;
+    }
+    const rates = Array.from(session.supportedFrameRates || [])
+      .filter((r) => Number.isFinite(r))
+      .sort((a, b) => b - a);
+    try {
+      await session.updateTargetFrameRate(rates[0] || 120);
+      const hz = Math.round(session.targetFrameRate || rates[0] || 120);
+      this.toast = { text: `XR リフレッシュレート: ${hz}Hz をリクエストしました`, until: Date.now() + 5000 };
+    } catch {
+      this.toast = { text: 'リフレッシュレートを変更できませんでした（ブラウザ既定で動作）', until: Date.now() + 5000 };
+    }
+  }
+
   _exitSession() {
     this._flushPlayerSave();
     this.session = null;
     this.renderer.setAnimationLoop(null);
+    this._fps = 0;
+    this._fpsEma = 0;
+    this._fpsLast = 0;
+    this._fpsShownAt = 0;
     this._disableSlideshow();
     this._closeFolderPicker();
     if (this.vrScreen) {
@@ -495,6 +524,7 @@ class VrApp {
 
   _frame() {
     try {
+      this._trackFps();
       this._updateHover();
       if (this.slideshow) this._slideshowTick();
       this._updateSubtitle();
@@ -1472,6 +1502,12 @@ class VrApp {
     if (this.slideshow) {
       ctx.fillStyle = '#7ea2ff';
       ctx.fillText('📷 スライドショー', metaX, 84);
+      metaX += ctx.measureText('📷 スライドショー').width + 24;
+    }
+    const fpsShown = this._fps | 0;
+    if (fpsShown > 0) {
+      ctx.fillStyle = '#8b93ad';
+      ctx.fillText(`${fpsShown} fps`, metaX, 84);
     }
 
     // Seek bar: tap to jump, or hold the trigger and slide the ray to scrub.
@@ -1815,6 +1851,23 @@ class VrApp {
     if (nextSwitch !== undefined && nextSwitch - this.player.currentTime < 2) {
       const upcoming = model.frame(Math.min(nextSwitch + 0.01, model.switchTimes[model.switchTimes.length - 1] + 1));
       renderer.loadImage(model.images, upcoming.toIndex >= 0 ? upcoming.toIndex : upcoming.photoIndex);
+    }
+  }
+
+  /** Rolling XR frame-rate meter, shown in the player info strip. */
+  _trackFps() {
+    const now = performance.now();
+    const dt = this._fpsLast ? now - this._fpsLast : 0;
+    this._fpsLast = now;
+    // Ignore huge gaps (tab hidden, session pause) — they are not frames.
+    if (dt > 0 && dt < 250) {
+      const inst = 1000 / dt;
+      this._fpsEma = this._fpsEma ? this._fpsEma * 0.9 + inst * 0.1 : inst;
+    }
+    // Only move the readout once a second so the panel redraw stays cheap.
+    if (!this._fpsShownAt || now - this._fpsShownAt >= 1000) {
+      this._fpsShownAt = now;
+      this._fps = Math.round(this._fpsEma || 0);
     }
   }
 
@@ -2377,6 +2430,7 @@ class VrApp {
       this.player.muted ? 'muted' : 'sound',
       this._activeVariant || '-',
       this._pendingVariant || '-',
+      String(this._fps | 0),
       this._frameError || '',
     ].join('|');
   }
