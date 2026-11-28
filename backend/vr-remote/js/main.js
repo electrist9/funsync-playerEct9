@@ -68,13 +68,13 @@ const SEEK_HIT_H = 36;
 // thumbs from drifting the screen.
 const STICK_AXIS_X = 2;
 const STICK_AXIS_Y = 3;
-// Folder-picker grid: 3 tile columns, 3 rows visible at rest — the right
-// thumbstick scrolls whole rows (step FP_COLS) over a 12-tile window,
-// exactly like the library grid. The error strip shifts the grid down
-// by 36px, which only leaves room for three rows then.
-const FP_COLS = 3;
-const FP_VISIBLE_ROWS = 4;
-const FP_ERROR_ROWS = 3;
+// Folder-picker grid: 4 square-cover tile columns, 2 rows visible — the
+// right thumbstick scrolls whole rows (step FP_COLS) over an 8-tile
+// window, exactly like the library grid. The error strip shifts the grid
+// down by 36px, which still fits the same row count.
+const FP_COLS = 4;
+const FP_VISIBLE_ROWS = 2;
+const FP_ERROR_ROWS = 2;
 const STICK_DEADZONE = 0.25;
 // Left thumbstick click resets distance/size to the built-in defaults.
 // Quest Browser reports it as gamepad button 3 (verified on-device; the
@@ -2100,14 +2100,17 @@ class VrApp {
       }
     }
 
-    // Directory tiles: a 3-column folder grid scrolled smoothly with the
+    // Directory tiles: a 4-column folder grid scrolled smoothly with the
     // right thumbstick (paging is gone) — same feel as the library grid.
+    // Covers are square (1:1) like the desktop photo browser's tiles, so
+    // the tile height follows the inset band width.
     const cols = FP_COLS;
     const rows = st && st.error ? FP_ERROR_ROWS : FP_VISIBLE_ROWS;
     const gridTop = st && st.error ? 196 : 160;
     const gap = 16;
     const tileW = Math.floor((W - 64 - gap * (cols - 1)) / cols);
-    const tileH = 166;
+    const bandSize = tileW - 20;
+    const tileH = bandSize + 78;
     const rowPitch = tileH + 14;
     const bandBottom = gridTop + rows * rowPitch;
     const dirs = st && !st.loading ? st.dirs : [];
@@ -2172,21 +2175,31 @@ class VrApp {
         if (y + tileH <= gridTop) continue; // row sliding out the top
         const cx = x + tileW / 2;
         if (item.kind === 'p') {
-          // Photo tile: the cover fills the whole tile and there is NO
-          // hover region — the picker navigates folders, never into a photo.
+          // Photo tile: inset square cover + file name (desktop parity),
+          // and NO hover region — the picker navigates folders, never
+          // into a photo.
           roundRect(ctx, x, y, tileW, tileH, 12);
+          ctx.fillStyle = '#232a40';
+          ctx.fill();
+          const pBandX = x + 10, pBandY = y + 10;
+          roundRect(ctx, pBandX, pBandY, bandSize, bandSize, 8);
           ctx.fillStyle = '#1a2136';
           ctx.fill();
           const img = coverFor(item.p.path);
           if (img) {
-            drawCover(img, x, y, tileW, tileH, 12);
+            drawCover(img, pBandX, pBandY, bandSize, bandSize, 8);
           } else {
             ctx.textAlign = 'center';
             ctx.fillStyle = '#5c6584';
             ctx.font = `600 44px ${FONT}`;
-            ctx.fillText('📷', cx, y + tileH / 2 + 14);
+            ctx.fillText('📷', cx, pBandY + bandSize / 2 + 15);
             ctx.textAlign = 'left';
           }
+          ctx.textAlign = 'center';
+          ctx.fillStyle = '#8b93ad';
+          ctx.font = `600 20px ${FONT}`;
+          ctx.fillText(ellipsize(ctx, item.p.name || item.p.path, tileW - 24), cx, y + bandSize + 48);
+          ctx.textAlign = 'left';
           ctx.strokeStyle = 'rgba(255,255,255,0.10)';
           ctx.lineWidth = 1;
           roundRect(ctx, x + 0.5, y + 0.5, tileW - 1, tileH - 1, 12);
@@ -2207,20 +2220,21 @@ class VrApp {
           roundRect(ctx, x + 1.5, y + 1.5, tileW - 3, tileH - 3, 11);
           ctx.stroke();
         }
-        // Cover band with the folder's first photo (desktop parity); the
-        // folder glyph stands in while it loads or when there is no cover.
-        const bandX = x + 10, bandY = y + 10, bandW = tileW - 20, bandH = 82;
-        roundRect(ctx, bandX, bandY, bandW, bandH, 8);
+        // Cover band with the folder's first photo (desktop parity), square
+        // 1:1 like the desktop tiles; the folder glyph stands in while it
+        // loads or when there is no cover.
+        const bandX = x + 10, bandY = y + 10;
+        roundRect(ctx, bandX, bandY, bandSize, bandSize, 8);
         ctx.fillStyle = '#1a2136';
         ctx.fill();
         const cover = d.coverPath ? coverFor(d.coverPath) : null;
         if (cover) {
-          drawCover(cover, bandX, bandY, bandW, bandH, 8);
+          drawCover(cover, bandX, bandY, bandSize, bandSize, 8);
         } else {
           ctx.textAlign = 'center';
           ctx.fillStyle = '#8b93ad';
           ctx.font = `600 44px ${FONT}`;
-          ctx.fillText('📁', cx, bandY + bandH / 2 + 15);
+          ctx.fillText('📁', cx, bandY + bandSize / 2 + 15);
         }
         // Name + photo-count line (「N 枚」, 「N+ 枚」 once capped); the
         // gold 「設定済み」 badge folds into that same line.
@@ -2232,11 +2246,11 @@ class VrApp {
         ctx.textAlign = 'center';
         ctx.fillStyle = '#e8ecf8';
         ctx.font = `600 26px ${FONT}`;
-        ctx.fillText(ellipsize(ctx, d.name || d.path, tileW - 24), cx, bottom ? y + 122 : y + 134);
+        ctx.fillText(ellipsize(ctx, d.name || d.path, tileW - 24), cx, bottom ? y + bandSize + 32 : y + bandSize + 48);
         if (bottom) {
           ctx.fillStyle = isCurrent ? '#ffd76a' : '#8b93ad';
           ctx.font = `600 20px ${FONT}`;
-          ctx.fillText(ellipsize(ctx, bottom, tileW - 24), cx, y + 150);
+          ctx.fillText(ellipsize(ctx, bottom, tileW - 24), cx, y + bandSize + 62);
         }
         ctx.textAlign = 'left';
         regions.push({
